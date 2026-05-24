@@ -285,6 +285,7 @@ export function MediaDetail() {
 
   // Metadata
   const [metadataRefreshing, setMetadataRefreshing] = useState(false)
+  const [metadataMessage, setMetadataMessage] = useState<string | null>(null)
   const [showMatchPanel, setShowMatchPanel] = useState(false)
   const [candidates, setCandidates] = useState<MetadataCandidate[] | null>(null)
   const [candidatesLoading, setCandidatesLoading] = useState(false)
@@ -337,12 +338,18 @@ export function MediaDetail() {
   async function handleRefreshMetadata() {
     if (!id) return
     setMetadataRefreshing(true)
+    setMetadataMessage(null)
     const res = await refreshMetadata(id)
     setMetadataRefreshing(false)
     if (res.ok) {
-      // Reload the item to pick up updated fields
-      const itemRes = await getMediaItem(id)
-      if (itemRes.ok) setItem(itemRes.data)
+      const result = res.data as any
+      if (result.status === 'parent_unmatched') {
+        setMetadataMessage(result.message ?? 'Match the parent show first to enable episode enrichment.')
+      } else {
+        // Reload the item to pick up updated fields
+        const itemRes = await getMediaItem(id)
+        if (itemRes.ok) setItem(itemRes.data)
+      }
     }
   }
 
@@ -559,6 +566,22 @@ export function MediaDetail() {
           </button>
         )}
       </div>
+
+      {/* Metadata message (e.g. parent_unmatched for episodes) */}
+      {metadataMessage && (
+        <div
+          style={{
+            padding: '10px 16px',
+            background: 'rgba(255, 170, 0, 0.08)',
+            border: '1px solid rgba(255, 170, 0, 0.3)',
+            borderRadius: 'var(--radius)',
+            fontSize: 13,
+            color: '#ffaa00',
+          }}
+        >
+          {metadataMessage}
+        </div>
+      )}
 
       {/* Match panel */}
       {showMatchPanel && (

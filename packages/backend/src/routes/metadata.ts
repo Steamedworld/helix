@@ -70,6 +70,43 @@ export async function metadataItemRoutes(
       return err('Media item not found')
     }
 
+    // Episodes and seasons: direct search is not useful — parent show must be matched first
+    if (item.kind === 'episode' || item.kind === 'season') {
+      return ok({
+        candidates: [],
+        message: 'Match the parent show first to enrich episodes automatically.',
+      })
+    }
+
+    // Shows: use searchShows
+    if (item.kind === 'show') {
+      const providers = metadataRegistry.getEnabledProvidersForKind('show')
+        .filter((p) => typeof p.searchShows === 'function')
+
+      if (providers.length === 0) {
+        return ok({ candidates: [] })
+      }
+
+      const query = { title: item.title, year: item.year ?? undefined }
+      const allCandidates: MetadataCandidate[] = []
+
+      for (const provider of providers) {
+        try {
+          const rawCandidates = await provider.searchShows!(item.title, item.year ?? undefined)
+          for (const candidate of rawCandidates) {
+            const score = scoreCandidate(candidate, query)
+            allCandidates.push({ ...candidate, score })
+          }
+        } catch {
+          // Provider error — skip
+        }
+      }
+
+      allCandidates.sort((a, b) => b.score - a.score)
+      return ok({ candidates: allCandidates })
+    }
+
+    // Movies (and other kinds): use searchMovies
     const providers = metadataRegistry.getEnabledProvidersForKind(item.kind as any)
     if (providers.length === 0) {
       return ok({ candidates: [] })

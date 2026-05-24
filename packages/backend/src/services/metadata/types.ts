@@ -28,6 +28,45 @@ export interface EnrichedMovieMetadata {
   genres?: string[]
 }
 
+// ─── TV enriched types ───────────────────────────────────────────────────────
+
+export interface EnrichedShowMetadata {
+  externalId: string
+  providerId: string
+  title: string
+  originalTitle?: string
+  firstAirDate?: string        // YYYY-MM-DD
+  overview?: string
+  contentRating?: string
+  posterUrl?: string           // remote URL
+  backdropUrl?: string         // remote URL
+  genres?: string[]
+  status?: string              // Returning Series, Ended, Canceled, etc.
+}
+
+export interface EnrichedSeasonMetadata {
+  externalShowId: string
+  seasonNumber: number
+  title?: string               // e.g. "Season 1" or TMDB season name
+  overview?: string
+  airDate?: string
+  posterUrl?: string
+}
+
+export interface EnrichedEpisodeMetadata {
+  externalShowId: string
+  seasonNumber: number
+  episodeNumber: number
+  title?: string
+  overview?: string
+  airDate?: string
+  runtimeMinutes?: number
+  absoluteEpisodeNumber?: number
+  stillUrl?: string            // episode still image (optional)
+}
+
+// ─── Artwork ─────────────────────────────────────────────────────────────────
+
 export interface ArtworkCandidate {
   kind: 'poster' | 'backdrop'
   url: string
@@ -52,4 +91,10 @@ export interface MetadataProvider {
   getMovieDetails(externalId: string): Promise<EnrichedMovieMetadata | null>
   getArtwork?(externalId: string): Promise<ArtworkCandidate[]>
   isConfigured(): boolean
+  // ─── Optional TV methods (movie-only providers need not implement) ─────────
+  searchShows?(title: string, year?: number): Promise<MetadataCandidate[]>
+  getShowDetails?(externalShowId: string): Promise<EnrichedShowMetadata | null>
+  getSeasonDetails?(externalShowId: string, seasonNumber: number): Promise<EnrichedSeasonMetadata | null>
+  getEpisodeDetails?(externalShowId: string, seasonNumber: number, episodeNumber: number): Promise<EnrichedEpisodeMetadata | null>
+  getShowArtwork?(externalShowId: string): Promise<ArtworkCandidate[]>
 }

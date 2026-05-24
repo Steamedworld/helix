@@ -22,6 +22,7 @@ export interface SeasonSummary {
   seasonNumber: number
   episodeCount: number
   posterUrl: string | null
+  overview: string | null
 }
 
 export interface ShowDetail {
@@ -32,6 +33,7 @@ export interface ShowDetail {
   backdropUrl: string | null
   overview: string | null
   contentRating: string | null
+  metadataStatus: string
   seasons: SeasonSummary[]
 }
 
@@ -55,6 +57,9 @@ export interface EpisodeDetail extends EpisodeListItem {
   showId: string
   showTitle: string
   seasonId: string
+  metadataStatus: string
+  showMetadataStatus: string
+  airDate: string | null
   playbackSource?: unknown
 }
 
@@ -158,6 +163,7 @@ export async function tvRoutes(
           seasonNumber: season.season_number ?? 0,
           episodeCount: c,
           posterUrl: artworkUrl(season.id, 'poster', !!season.poster_path, baseUrl),
+          overview: season.overview,
         }
       })
     )
@@ -170,6 +176,7 @@ export async function tvRoutes(
       backdropUrl: artworkUrl(show.id, 'backdrop', !!show.backdrop_path, baseUrl),
       overview: show.overview,
       contentRating: show.content_rating,
+      metadataStatus: show.metadata_status,
       seasons: seasonSummaries,
     }
 
@@ -205,6 +212,7 @@ export async function tvRoutes(
           seasonNumber: season.season_number ?? 0,
           episodeCount: c,
           posterUrl: artworkUrl(season.id, 'poster', !!season.poster_path, baseUrl),
+          overview: season.overview,
         }
       })
     )
@@ -333,6 +341,9 @@ export async function episodeRoutes(
       showId: show.id,
       showTitle: show.title,
       seasonId: season.id,
+      metadataStatus: episode.metadata_status,
+      showMetadataStatus: show.metadata_status,
+      airDate: episode.release_date,
       watchState: null,
     }
 

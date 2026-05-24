@@ -15,6 +15,23 @@ A modern, lightweight, self-hosted media hub. Simpler than Plex, prettier than J
 - Node status indicator in sidebar (polls `/api/v1/health`)
 - Bootstrap: first-launch creates local node + admin user automatically
 - Federation seams: all multi-node hooks are stubbed and documented
+- **Phase 6 — TMDB-TV metadata enrichment:**
+  - `MetadataProvider` interface extended with optional TV methods: `searchShows`, `getShowDetails`, `getSeasonDetails`, `getEpisodeDetails`, `getShowArtwork`
+  - TMDB provider now covers `movie`, `show`, `season`, `episode` — single provider, both capabilities
+  - `enrichShow()`: searches TMDB TV, scores candidates (same 0.85 threshold), fetches show details, caches artwork, and automatically enriches child seasons
+  - `enrichSeason()`: fetches season overview, air date, and poster from TMDB — called automatically during show enrichment
+  - `enrichEpisode()`: requires parent show to be `matched`; fetches episode title, overview, air date, runtime, and absolute episode number from TMDB
+  - `enrichMediaItem()` dispatches by kind: `movie` → existing path, `show` → `enrichShow`, `episode` → `enrichEpisode`, `season` → skip-with-message
+  - `enrichBatch()` processes shows before episodes so parent is always matched first
+  - `applyMatch()` for shows: calls `getShowDetails`, writes fields, enriches child seasons
+  - `GET /api/v1/media/:id/metadata/search`: show items → `searchShows`; episode/season items → returns guidance message; movies unchanged
+  - `POST /api/v1/metadata/providers`: TMDB now lists `supportedKinds: ['movie', 'show', 'season', 'episode']`
+  - Show detail API (`GET /api/v1/shows/:id`) now returns `metadataStatus` and season `overview`
+  - Episode detail API (`GET /api/v1/episodes/:id`) now returns `metadataStatus`, `showMetadataStatus`, `airDate`
+  - Frontend ShowDetail: "Refresh Metadata" button, "Needs Review" amber banner, full match-candidate panel for shows
+  - Frontend ShowDetail: season overview displayed when available
+  - Frontend MediaDetail: episode refresh shows amber "Match parent show first" message when parent is unmatched
+  - Registry: `deregister(id)` method added for clean test isolation
 - **Phase 5 — TV show/season/episode hierarchy:**
   - Scanner builds full show → season → episode hierarchy from SxxEyy filename patterns
   - Show, season, episode are distinct `media_items` rows linked by `parent_id`
@@ -112,28 +129,59 @@ On any re-scan, if a media item's `metadata_status` is `matched` or `needs_revie
 | GET | `/api/v1/media/:id/metadata/search` | Return scored candidates without committing |
 | POST | `/api/v1/media/:id/metadata/match` | Commit a specific candidate (`body: { providerId, externalId }`) |
 
-### Limitations (Phase 4)
+### TMDB-TV enrichment (Phase 6)
 
-- TV shows, seasons, episodes — enrichment skipped (no TVDB integration yet; `metadata_status` stays `local`)
+TMDB now supports TV shows, seasons, and episodes in addition to movies — same single provider, both capabilities.
+
+**Supported TV metadata fields:**
+
+| Item | Fields populated |
+|------|-----------------|
+| Show | title, originalTitle, overview, firstAirDate/year, contentRating, posterUrl, backdropUrl, genres, status |
+| Season | overview, airDate/year, posterUrl |
+| Episode | episodeTitle, overview, airDate/year, runtimeSeconds, absoluteEpisodeNumber |
+
+**Enrichment cascade:**
+
+1. Match a show via `POST /api/v1/media/:showId/metadata/refresh` or the "Find show match" panel
+2. On high-confidence match (score ≥ 0.85), show fields are written and child seasons are enriched automatically
+3. Episode enrichment runs on demand: `POST /api/v1/media/:episodeId/metadata/refresh`
+   - Requires parent show `metadata_status = 'matched'` — episodes cannot be enriched without a matched parent
+   - Episode data is fetched using the show's TMDB ID + season/episode numbers
+
+**Parent show matching requirement:**
+
+`GET /api/v1/media/:episodeId/metadata/search` and `GET /api/v1/media/:seasonId/metadata/search` return an empty candidates list with a guidance message: "Match the parent show first to enrich episodes automatically." Refreshing an episode whose parent show is unmatched returns `{ status: 'parent_unmatched', message: '...' }` — no DB write occurs.
+
+**Local artwork precedence:**
+
+Downloaded posters/backdrops are only written when `poster_path`/`backdrop_path` is null. Local scanner-detected artwork always wins.
+
+**Scanner protection:**
+
+Re-scanning after enrichment does not overwrite `overview`, `content_rating`, `release_date`, `poster_path`, or `backdrop_path` on `matched` or `needs_review` items.
+
+### Remaining limitations (after Phase 6)
+
 - Music tracks/albums — not enriched (no MusicBrainz yet)
-- Only movie kind is enriched via TMDB
 - No scheduled/background enrichment — call `POST /api/v1/metadata/enrich` manually or from UI
-- Per-episode artwork not handled
+- Episode still images (thumbnails) — `stillUrl` is fetched from TMDB but not cached to disk; episode `poster_path` is never set
 - No user-uploaded artwork
+- TVDB not integrated — `external_tvdb_id` column is reserved for a future provider
 
 ### Future providers
 
 The registry is ready to accept additional providers:
-- **TVDB** — TV show and episode metadata
+- **TVDB** — alternate TV show/episode metadata (richer episode stills, alternate titles)
 - **MusicBrainz** — music track and album metadata
 - **OpenSubtitles** — subtitle discovery
-- Any custom provider implementing `MetadataProvider`
+- Any custom provider implementing `MetadataProvider` (including the optional TV methods)
 
 ---
 
 ## Metadata and Artwork
 
-### Local-only metadata (no TMDB/TVDB yet)
+### Local-only metadata (filename-derived)
 
 Helix derives metadata entirely from filenames and local artwork files. No external API calls are made.
 
@@ -413,19 +461,18 @@ If episode files are flat (not in season subdirectories), artwork is looked up o
 
 ### What is not yet implemented (TV)
 
-- **TMDB-TV enrichment** — show/episode overview, cast, poster from TMDB. Schema columns (`external_tvdb_id`) are ready.
-- **TVDB integration** — no TVDB provider yet.
-- **Per-episode artwork download** — episode thumbnails not fetched from any provider.
-- **Episode-level metadata refresh** — the metadata refresh button on episode detail runs against TMDB movie API and will not match; a TV-specific enrichment path is needed.
+- **TVDB integration** — no TVDB provider yet; `external_tvdb_id` column is reserved.
+- **Episode still image caching** — `stillUrl` is resolved from TMDB but not downloaded to disk; episodes have no locally-served `poster_path`.
 - **Next episode navigation** — no "play next episode" button yet.
-- **Absolute episode numbering** — column stored, not populated.
+- **Cast / crew metadata** — not fetched from any provider.
 
 ### Recommended next phase
 
-Phase 6 options:
-1. TMDB-TV enrichment (show/season/episode overview, posters, cast via TMDB TV API)
-2. Next-episode continuity (auto-advance to next episode, up-next row)
+Phase 7 options:
+1. Next-episode continuity (auto-advance to next episode, up-next row on Show Detail)
+2. Episode still image download and caching (extend `cacheArtwork` for `still` kind)
 3. Music track/album hierarchy (same `parent_id` pattern, using MusicBrainz)
+4. TVDB provider (alternate/richer TV data, especially episode stills and alternate titles)
 
 ---
 

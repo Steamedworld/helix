@@ -8,6 +8,10 @@ export class MetadataProviderRegistry {
     this.providers.set(provider.id, provider)
   }
 
+  deregister(id: string): void {
+    this.providers.delete(id)
+  }
+
   getProvider(id: string): MetadataProvider | undefined {
     return this.providers.get(id)
   }

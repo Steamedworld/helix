@@ -16,6 +16,7 @@ export interface SeasonSummary {
   seasonNumber: number
   episodeCount: number
   posterUrl: string | null
+  overview: string | null
 }
 
 export interface ShowDetail {
@@ -26,6 +27,7 @@ export interface ShowDetail {
   backdropUrl: string | null
   overview: string | null
   contentRating: string | null
+  metadataStatus: string
   seasons: SeasonSummary[]
 }
 
@@ -51,6 +53,9 @@ export interface EpisodeDetail extends EpisodeListItem {
   showId: string
   showTitle: string
   seasonId: string
+  metadataStatus: string
+  showMetadataStatus: string
+  airDate: string | null
 }
 
 export function listShows(libraryId?: string) {

@@ -2,6 +2,9 @@ import type {
   MetadataProvider,
   MetadataCandidate,
   EnrichedMovieMetadata,
+  EnrichedShowMetadata,
+  EnrichedSeasonMetadata,
+  EnrichedEpisodeMetadata,
   ArtworkCandidate,
   ProviderConfigurationStatus,
 } from '../types'
@@ -71,11 +74,75 @@ interface TmdbImagesResponse {
   backdrops: TmdbImageEntry[]
 }
 
+// ─── TMDB TV API response types ─────────────────────────────────────────────────
+
+interface TmdbTvSearchResult {
+  id: number
+  name: string
+  original_name: string
+  overview: string
+  first_air_date: string // "YYYY-MM-DD"
+  poster_path: string | null
+  backdrop_path: string | null
+  vote_average: number
+  popularity: number
+}
+
+interface TmdbTvSearchResponse {
+  results: TmdbTvSearchResult[]
+  total_results: number
+  total_pages: number
+  page: number
+}
+
+interface TmdbContentRatingEntry {
+  iso_3166_1: string
+  rating: string
+}
+
+interface TmdbContentRatings {
+  results: TmdbContentRatingEntry[]
+}
+
+interface TmdbTvDetails {
+  id: number
+  name: string
+  original_name: string
+  overview: string
+  first_air_date: string
+  poster_path: string | null
+  backdrop_path: string | null
+  genres: Array<{ id: number; name: string }>
+  status: string
+  content_ratings?: TmdbContentRatings
+}
+
+interface TmdbSeasonDetails {
+  id: number
+  name: string
+  overview: string
+  air_date: string | null
+  poster_path: string | null
+  season_number: number
+}
+
+interface TmdbEpisodeDetails {
+  id: number
+  name: string
+  overview: string
+  air_date: string | null
+  runtime: number | null
+  episode_number: number
+  season_number: number
+  still_path: string | null
+}
+
 // ─── Constants ──────────────────────────────────────────────────────────────────
 
 const TMDB_BASE = 'https://api.themoviedb.org/3'
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/w500'
 const TMDB_IMAGE_ORIGINAL = 'https://image.tmdb.org/t/p/original'
+const TMDB_IMAGE_STILL = 'https://image.tmdb.org/t/p/w300'
 
 const MAX_RETRIES = 2
 const RETRY_DELAY_MS = 1000
@@ -117,6 +184,20 @@ function extractContentRating(releaseDates: TmdbReleaseDates | undefined): strin
   return undefined
 }
 
+// ─── TV content rating extraction ──────────────────────────────────────────────
+
+function extractTvContentRating(contentRatings: TmdbContentRatings | undefined): string | undefined {
+  if (!contentRatings?.results) return undefined
+
+  // Prefer US rating
+  const us = contentRatings.results.find((c) => c.iso_3166_1 === 'US')
+  if (us?.rating) return us.rating
+
+  // Fallback to first available
+  const first = contentRatings.results.find((c) => c.rating)
+  return first?.rating ?? undefined
+}
+
 // ─── Fetch with retry ───────────────────────────────────────────────────────────
 
 async function fetchWithRetry(
@@ -152,7 +233,7 @@ function yearFromReleaseDate(releaseDate: string | undefined): number | undefine
 export class TmdbProvider implements MetadataProvider {
   readonly id = 'tmdb'
   readonly label = 'The Movie Database'
-  readonly supportedKinds: MediaItemKind[] = ['movie']
+  readonly supportedKinds: MediaItemKind[] = ['movie', 'show', 'season', 'episode']
 
   private readonly readToken: string | null
   private readonly apiKey: string | null
@@ -259,6 +340,130 @@ export class TmdbProvider implements MetadataProvider {
 
   async getArtwork(tmdbId: string): Promise<ArtworkCandidate[]> {
     const data = await this.fetchJson<TmdbImagesResponse>(`/movie/${tmdbId}/images`)
+
+    const results: ArtworkCandidate[] = []
+
+    for (const img of data.posters ?? []) {
+      results.push({
+        kind: 'poster',
+        url: `${TMDB_IMAGE_BASE}${img.file_path}`,
+        width: img.width,
+        height: img.height,
+        language: img.iso_639_1 ?? undefined,
+      })
+    }
+
+    for (const img of data.backdrops ?? []) {
+      results.push({
+        kind: 'backdrop',
+        url: `${TMDB_IMAGE_ORIGINAL}${img.file_path}`,
+        width: img.width,
+        height: img.height,
+        language: img.iso_639_1 ?? undefined,
+      })
+    }
+
+    return results
+  }
+
+  // ─── TV methods ─────────────────────────────────────────────────────────────
+
+  async searchShows(title: string, year?: number): Promise<MetadataCandidate[]> {
+    const params = new URLSearchParams({ query: title })
+    if (year) params.set('first_air_date_year', String(year))
+
+    const data = await this.fetchJson<TmdbTvSearchResponse>('/search/tv', params)
+
+    return data.results.map((r) => ({
+      providerId: this.id,
+      externalId: String(r.id),
+      title: r.name,
+      originalTitle: r.original_name !== r.name ? r.original_name : undefined,
+      year: yearFromReleaseDate(r.first_air_date),
+      overview: r.overview || undefined,
+      score: 0, // set by scoring layer
+      posterUrl: r.poster_path ? `${TMDB_IMAGE_BASE}${r.poster_path}` : undefined,
+      backdropUrl: r.backdrop_path ? `${TMDB_IMAGE_ORIGINAL}${r.backdrop_path}` : undefined,
+    }))
+  }
+
+  async getShowDetails(externalShowId: string): Promise<EnrichedShowMetadata | null> {
+    const params = new URLSearchParams({ append_to_response: 'content_ratings' })
+
+    let data: TmdbTvDetails
+    try {
+      data = await this.fetchJson<TmdbTvDetails>(`/tv/${externalShowId}`, params)
+    } catch (e) {
+      if (e instanceof Error && e.message.includes('404')) return null
+      throw e
+    }
+
+    // Extract content rating — prefer US, fallback to first available
+    const contentRating = extractTvContentRating(data.content_ratings)
+
+    return {
+      externalId: String(data.id),
+      providerId: this.id,
+      title: data.name,
+      originalTitle: data.original_name !== data.name ? data.original_name : undefined,
+      firstAirDate: data.first_air_date || undefined,
+      overview: data.overview || undefined,
+      contentRating,
+      posterUrl: data.poster_path ? `${TMDB_IMAGE_BASE}${data.poster_path}` : undefined,
+      backdropUrl: data.backdrop_path ? `${TMDB_IMAGE_ORIGINAL}${data.backdrop_path}` : undefined,
+      genres: data.genres?.map((g) => g.name) ?? [],
+      status: data.status || undefined,
+    }
+  }
+
+  async getSeasonDetails(externalShowId: string, seasonNumber: number): Promise<EnrichedSeasonMetadata | null> {
+    let data: TmdbSeasonDetails
+    try {
+      data = await this.fetchJson<TmdbSeasonDetails>(`/tv/${externalShowId}/season/${seasonNumber}`)
+    } catch (e) {
+      if (e instanceof Error && e.message.includes('404')) return null
+      throw e
+    }
+
+    return {
+      externalShowId,
+      seasonNumber: data.season_number,
+      title: data.name || undefined,
+      overview: data.overview || undefined,
+      airDate: data.air_date || undefined,
+      posterUrl: data.poster_path ? `${TMDB_IMAGE_BASE}${data.poster_path}` : undefined,
+    }
+  }
+
+  async getEpisodeDetails(
+    externalShowId: string,
+    seasonNumber: number,
+    episodeNumber: number,
+  ): Promise<EnrichedEpisodeMetadata | null> {
+    let data: TmdbEpisodeDetails
+    try {
+      data = await this.fetchJson<TmdbEpisodeDetails>(
+        `/tv/${externalShowId}/season/${seasonNumber}/episode/${episodeNumber}`,
+      )
+    } catch (e) {
+      if (e instanceof Error && e.message.includes('404')) return null
+      throw e
+    }
+
+    return {
+      externalShowId,
+      seasonNumber: data.season_number,
+      episodeNumber: data.episode_number,
+      title: data.name || undefined,
+      overview: data.overview || undefined,
+      airDate: data.air_date || undefined,
+      runtimeMinutes: data.runtime ?? undefined,
+      stillUrl: data.still_path ? `${TMDB_IMAGE_STILL}${data.still_path}` : undefined,
+    }
+  }
+
+  async getShowArtwork(externalShowId: string): Promise<ArtworkCandidate[]> {
+    const data = await this.fetchJson<TmdbImagesResponse>(`/tv/${externalShowId}/images`)
 
     const results: ArtworkCandidate[] = []
 
