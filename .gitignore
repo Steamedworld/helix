@@ -1,5 +1,6 @@
-# Dependencies
+# Dependencies (root and all workspace packages)
 node_modules/
+**/node_modules/
 
 # Build output
 dist/
