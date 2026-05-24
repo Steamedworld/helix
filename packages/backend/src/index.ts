@@ -1,3 +1,5 @@
+import { mkdirSync } from 'fs'
+import { dirname } from 'path'
 import { config } from './config'
 import { createDb } from './db/client'
 import { runMigrations, getMigrationsFolder } from './db/migrate'
@@ -5,6 +7,10 @@ import { bootstrap } from './bootstrap'
 import { buildServer } from './server'
 
 async function main() {
+  // Ensure data directory exists before opening SQLite
+  mkdirSync(dirname(config.dbPath), { recursive: true })
+  mkdirSync(config.metadataCacheDir, { recursive: true })
+
   // Create DB
   const db = createDb(config.dbPath)
 

@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createDb } from '../src/db/client'
-import { runMigrations } from '../src/db/migrate'
+import { runMigrations, getMigrationsFolder } from '../src/db/migrate'
 import { bootstrap } from '../src/bootstrap'
 import { nodes, users } from '../src/db/schema'
 import { join } from 'path'
-import { mkdirSync, rmSync } from 'fs'
+import { existsSync, mkdirSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 
 function createTestDb(testDir: string) {
@@ -14,6 +14,15 @@ function createTestDb(testDir: string) {
   runMigrations(db, join(__dirname, '../drizzle'))
   return db
 }
+
+describe('getMigrationsFolder', () => {
+  it('resolves to a path ending in /drizzle that exists on disk', () => {
+    const folder = getMigrationsFolder()
+    expect(folder.endsWith('drizzle')).toBe(true)
+    expect(existsSync(folder)).toBe(true)
+    expect(existsSync(join(folder, 'meta/_journal.json'))).toBe(true)
+  })
+})
 
 describe('bootstrap', () => {
   let testDir: string

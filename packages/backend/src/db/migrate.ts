@@ -7,11 +7,8 @@ export function runMigrations(db: DrizzleDB, migrationsFolder: string) {
 }
 
 export function getMigrationsFolder() {
-  // In production (compiled), migrations are relative to the dist folder
-  // In development, they're relative to the src folder
-  const isDev = process.env.NODE_ENV !== 'production'
-  if (isDev) {
-    return join(__dirname, '../../drizzle')
-  }
-  return join(__dirname, '../drizzle')
+  // Resolve relative to process.cwd(), which is the package root when
+  // the server is started as documented (cd packages/backend && node ...).
+  // This avoids __dirname path depth differences between ts-node and compiled output.
+  return join(process.cwd(), 'drizzle')
 }
