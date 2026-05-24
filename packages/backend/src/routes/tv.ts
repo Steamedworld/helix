@@ -1,8 +1,13 @@
 import type { FastifyInstance } from 'fastify'
-import { eq, and, sql, count } from 'drizzle-orm'
-import { mediaItems, watchStates } from '../db/schema'
+import { eq, and, sql, count, isNull } from 'drizzle-orm'
+import { mediaItems, mediaFiles, watchStates, users } from '../db/schema'
 import { ok, err } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
+import {
+  getUpNextEpisode,
+  getNextEpisode,
+  getShowProgress,
+} from '../services/episodeOrder'
 
 // ─── Response Types ────────────────────────────────────────────────────────────
 
@@ -46,6 +51,8 @@ export interface EpisodeListItem {
   overview: string | null
   runtime: number | null
   posterUrl: string | null
+  /** True if at least one media_file for this episode has missing_at IS NULL */
+  hasPlayableFile: boolean
   watchState?: {
     position_seconds: number
     duration_seconds: number | null
@@ -183,6 +190,78 @@ export async function tvRoutes(
     return ok(detail)
   })
 
+  // GET /api/v1/shows/:id/up-next — up-next episode for a show
+  app.get<{ Params: { id: string }; Querystring: { user_id?: string } }>(
+    '/:id/up-next',
+    async (req, reply) => {
+      const { user_id } = req.query
+      // Resolve userId: use provided or fall back to the first user in DB (default admin)
+      let resolvedUserId = user_id
+      if (!resolvedUserId) {
+        const [defaultUser] = await db.select({ id: users.id }).from(users).limit(1)
+        if (!defaultUser) {
+          reply.status(500)
+          return err('No user found — bootstrap may not have run')
+        }
+        resolvedUserId = defaultUser.id
+      }
+
+      const [show] = await db
+        .select({ id: mediaItems.id })
+        .from(mediaItems)
+        .where(and(eq(mediaItems.id, req.params.id), eq(mediaItems.kind, 'show')))
+
+      if (!show) {
+        reply.status(404)
+        return err('Show not found')
+      }
+
+      const episode = await getUpNextEpisode(db, req.params.id, resolvedUserId, baseUrl)
+
+      if (episode === null) {
+        // Check if the show has any playable episodes at all
+        const progress = await getShowProgress(db, req.params.id, resolvedUserId, baseUrl)
+        if (progress.allCompleted && progress.totalEpisodes > 0) {
+          return ok({ allCompleted: true as const, totalEpisodes: progress.totalEpisodes })
+        }
+        // No playable episodes at all
+        return ok({ allCompleted: false as const, totalEpisodes: 0 })
+      }
+
+      return ok({ episode })
+    }
+  )
+
+  // GET /api/v1/shows/:id/progress — watch progress summary
+  app.get<{ Params: { id: string }; Querystring: { user_id?: string } }>(
+    '/:id/progress',
+    async (req, reply) => {
+      const { user_id } = req.query
+      let resolvedUserId = user_id
+      if (!resolvedUserId) {
+        const [defaultUser] = await db.select({ id: users.id }).from(users).limit(1)
+        if (!defaultUser) {
+          reply.status(500)
+          return err('No user found — bootstrap may not have run')
+        }
+        resolvedUserId = defaultUser.id
+      }
+
+      const [show] = await db
+        .select({ id: mediaItems.id })
+        .from(mediaItems)
+        .where(and(eq(mediaItems.id, req.params.id), eq(mediaItems.kind, 'show')))
+
+      if (!show) {
+        reply.status(404)
+        return err('Show not found')
+      }
+
+      const progress = await getShowProgress(db, req.params.id, resolvedUserId, baseUrl)
+      return ok(progress)
+    }
+  )
+
   // GET /api/v1/shows/:id/seasons — seasons for a show
   app.get<{ Params: { id: string } }>('/:id/seasons', async (req, reply) => {
     const [show] = await db
@@ -273,6 +352,22 @@ export async function seasonRoutes(
       }
     }
 
+    // Determine which episodes have at least one non-missing file
+    const playableFileSet = new Set<string>()
+    if (episodeIds.length > 0) {
+      const { inArray } = await import('drizzle-orm')
+      const playableRows = await db
+        .select({ media_item_id: mediaFiles.media_item_id })
+        .from(mediaFiles)
+        .where(and(
+          inArray(mediaFiles.media_item_id, episodeIds),
+          isNull(mediaFiles.missing_at)
+        ))
+      for (const row of playableRows) {
+        if (row.media_item_id) playableFileSet.add(row.media_item_id)
+      }
+    }
+
     const result: EpisodeListItem[] = episodes.map((ep) => ({
       id: ep.id,
       episodeNumber: ep.episode_number ?? 0,
@@ -282,6 +377,7 @@ export async function seasonRoutes(
       overview: ep.overview,
       runtime: ep.runtime_seconds,
       posterUrl: artworkUrl(ep.id, 'poster', !!ep.poster_path, baseUrl),
+      hasPlayableFile: playableFileSet.has(ep.id),
       watchState: watchStateMap.get(ep.id) ?? null,
     }))
 
@@ -294,6 +390,42 @@ export async function episodeRoutes(
   opts: { db: DrizzleDB; localNodeId?: string; baseUrl?: string | null }
 ) {
   const { db, baseUrl } = opts
+
+  // GET /api/v1/episodes/:id/next — next episode after this one
+  app.get<{ Params: { id: string }; Querystring: { user_id?: string } }>(
+    '/:id/next',
+    async (req, reply) => {
+      const { user_id } = req.query
+      let resolvedUserId = user_id
+      if (!resolvedUserId) {
+        const [defaultUser] = await db.select({ id: users.id }).from(users).limit(1)
+        if (!defaultUser) {
+          reply.status(500)
+          return err('No user found — bootstrap may not have run')
+        }
+        resolvedUserId = defaultUser.id
+      }
+
+      const [episode] = await db
+        .select({ id: mediaItems.id })
+        .from(mediaItems)
+        .where(and(eq(mediaItems.id, req.params.id), eq(mediaItems.kind, 'episode')))
+
+      if (!episode) {
+        reply.status(404)
+        return err('Episode not found')
+      }
+
+      const next = await getNextEpisode(db, req.params.id, resolvedUserId, baseUrl)
+
+      if (next === null) {
+        reply.status(404)
+        return err('No next episode')
+      }
+
+      return ok({ episode: next })
+    }
+  )
 
   // GET /api/v1/episodes/:id — episode detail
   app.get<{ Params: { id: string } }>('/:id', async (req, reply) => {
@@ -329,6 +461,13 @@ export async function episodeRoutes(
       return err('Show not found for episode')
     }
 
+    // Check if episode has at least one non-missing media file
+    const [playableFileRow] = await db
+      .select({ id: mediaFiles.id })
+      .from(mediaFiles)
+      .where(and(eq(mediaFiles.media_item_id, episode.id), isNull(mediaFiles.missing_at)))
+      .limit(1)
+
     const detail: EpisodeDetail = {
       id: episode.id,
       episodeNumber: episode.episode_number ?? 0,
@@ -338,6 +477,7 @@ export async function episodeRoutes(
       overview: episode.overview,
       runtime: episode.runtime_seconds,
       posterUrl: artworkUrl(episode.id, 'poster', !!episode.poster_path, baseUrl),
+      hasPlayableFile: !!playableFileRow,
       showId: show.id,
       showTitle: show.title,
       seasonId: season.id,

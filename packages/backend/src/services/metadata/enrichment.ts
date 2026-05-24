@@ -474,6 +474,14 @@ export async function enrichEpisode(
     })
     .where(eq(mediaItems.id, episodeItemId))
 
+  // Cache episode still image using poster_path slot (episodes don't have traditional posters).
+  // The artwork endpoint already serves poster_path for kind=poster, so episode stills
+  // are accessible via /api/v1/media/:id/artwork/poster — no schema change required.
+  if (episodeDetails.stillUrl) {
+    await cacheArtwork(db, episodeItemId, 'poster', episodeDetails.stillUrl, config.metadataCacheDir)
+      .catch((e) => logger.warn({ err: e }, 'Episode still cache failed'))
+  }
+
   return { mediaItemId: episodeItemId, status: 'matched' }
 }
 

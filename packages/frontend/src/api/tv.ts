@@ -46,6 +46,7 @@ export interface EpisodeListItem {
   overview: string | null
   runtime: number | null
   posterUrl: string | null
+  hasPlayableFile: boolean
   watchState?: EpisodeWatchState | null
 }
 
@@ -56,6 +57,7 @@ export interface EpisodeDetail extends EpisodeListItem {
   metadataStatus: string
   showMetadataStatus: string
   airDate: string | null
+  // hasPlayableFile is inherited from EpisodeListItem
 }
 
 export function listShows(libraryId?: string) {
@@ -78,4 +80,54 @@ export function getSeasonEpisodes(seasonId: string, userId?: string) {
 
 export function getEpisode(id: string) {
   return apiFetch<EpisodeDetail>(`/api/v1/episodes/${id}`)
+}
+
+// ─── Continuity types ──────────────────────────────────────────────────────────
+
+export interface PlayableEpisode {
+  id: string
+  showId: string
+  showTitle: string
+  seasonId: string
+  seasonNumber: number
+  episodeNumber: number
+  title: string
+  overview?: string
+  airDate?: string
+  runtimeSeconds?: number
+  posterUrl: string | null
+  watchState?: {
+    position: number
+    duration: number
+    completed: boolean
+    updatedAt: number
+  }
+  hasPlayableFile: boolean
+}
+
+export interface ShowProgressData {
+  totalEpisodes: number
+  completedEpisodes: number
+  inProgressEpisode: PlayableEpisode | null
+  percentComplete: number
+  allCompleted: boolean
+}
+
+export type UpNextResponse =
+  | { episode: PlayableEpisode; allCompleted?: never }
+  | { allCompleted: true; totalEpisodes: number; episode?: never }
+  | { allCompleted: false; totalEpisodes: number; episode?: never }
+
+// ─── Continuity API calls ─────────────────────────────────────────────────────
+
+export function getShowUpNext(showId: string) {
+  return apiFetch<UpNextResponse>(`/api/v1/shows/${showId}/up-next`)
+}
+
+export function getShowProgress(showId: string) {
+  return apiFetch<ShowProgressData>(`/api/v1/shows/${showId}/progress`)
+}
+
+export function getNextEpisode(episodeId: string) {
+  return apiFetch<{ episode: PlayableEpisode }>(`/api/v1/episodes/${episodeId}/next`)
 }

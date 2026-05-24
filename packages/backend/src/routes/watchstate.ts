@@ -44,12 +44,32 @@ export async function watchStateRoutes(
       .limit(1)
 
     if (existing) {
+      // Completion protection: never un-complete a previously completed item
+      // unless the caller explicitly requests completed=false AND the position
+      // is before the halfway mark (i.e. a deliberate rewatch from the start).
+      // This prevents a brief position=0 update at rewatch from clearing the
+      // completed flag that was earned by watching to 90%.
+      let resolvedCompleted: boolean
+      if (existing.completed) {
+        const dur = duration_seconds ?? existing.duration_seconds ?? 0
+        const halfwayPoint = dur > 0 ? dur * 0.5 : Infinity
+        // Only un-complete if explicitly set to false AND position is before halfway
+        if (completed === false && position_seconds < halfwayPoint) {
+          resolvedCompleted = false
+        } else {
+          // Keep completed=true; the item stays watched even on rewatch
+          resolvedCompleted = true
+        }
+      } else {
+        resolvedCompleted = completed ?? existing.completed
+      }
+
       await db
         .update(watchStates)
         .set({
           position_seconds,
           duration_seconds: duration_seconds ?? existing.duration_seconds,
-          completed: completed ?? existing.completed,
+          completed: resolvedCompleted,
           updated_at: now,
         })
         .where(eq(watchStates.id, existing.id))
@@ -78,6 +98,10 @@ export async function watchStateRoutes(
   })
 
   // GET /watchstate/continue-watching
+  // Only returns non-completed items (completed=false). Because completed episodes
+  // stay completed (see completion-protection logic in PUT above), a finished episode
+  // will never appear here — it is naturally replaced by a "Start Next Episode" CTA
+  // on the ShowDetail page via GET /api/v1/shows/:id/up-next.
   app.get<{
     Querystring: { user_id: string; limit?: string }
   }>('/continue-watching', async (req, reply) => {

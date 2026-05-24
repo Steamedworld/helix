@@ -8,9 +8,11 @@ import {
   updatePlaybackSession,
 } from '../api/playback'
 import { searchMetadata, matchMetadata, refreshMetadata } from '../api/metadata'
+import { getNextEpisode } from '../api/tv'
 import type { MediaItemDetail } from '../api/media'
 import type { PlaybackSource } from '../api/playback'
 import type { MetadataCandidate } from '../api/metadata'
+import type { PlayableEpisode } from '../api/tv'
 import type { WatchState } from '@helix/shared'
 
 const DEFAULT_USER_ID = 'default'
@@ -41,16 +43,162 @@ function formatDuration(seconds: number | null) {
   return `${m}m ${s}s`
 }
 
+// ─── Up Next panel ─────────────────────────────────────────────────────────────
+
+interface UpNextPanelProps {
+  nextEpisode: PlayableEpisode | null
+  showFinished: boolean
+  onPlayNext: () => void
+  onDismiss: () => void
+}
+
+function UpNextPanel({ nextEpisode, showFinished, onPlayNext, onDismiss }: UpNextPanelProps) {
+  const [countdown, setCountdown] = useState(10)
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Start countdown if we have a next episode
+  useEffect(() => {
+    if (!nextEpisode) return
+    countdownRef.current = setInterval(() => {
+      setCountdown((n) => {
+        if (n <= 1) {
+          clearInterval(countdownRef.current!)
+          onPlayNext()
+          return 0
+        }
+        return n - 1
+      })
+    }, 1000)
+    return () => {
+      if (countdownRef.current) clearInterval(countdownRef.current)
+    }
+  }, [nextEpisode, onPlayNext])
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        inset: 0,
+        background: 'rgba(8, 8, 9, 0.88)',
+        borderRadius: 'var(--radius-lg)',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 16,
+        padding: 24,
+        zIndex: 10,
+      }}
+    >
+      {showFinished ? (
+        <>
+          <span style={{ fontSize: 32 }}>✓</span>
+          <p style={{ fontSize: 16, fontWeight: 600, textAlign: 'center' }}>
+            You&apos;ve finished the show!
+          </p>
+          <button
+            onClick={onDismiss}
+            style={{
+              padding: '8px 20px',
+              background: 'var(--bg-elevated)',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--radius)',
+              color: 'var(--text)',
+              fontSize: 13,
+              cursor: 'pointer',
+            }}
+          >
+            Close
+          </button>
+        </>
+      ) : nextEpisode ? (
+        <>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>
+            Up Next
+          </p>
+          {nextEpisode.posterUrl && (
+            <img
+              src={nextEpisode.posterUrl}
+              alt={nextEpisode.title}
+              style={{
+                width: 120,
+                aspectRatio: '16/9',
+                objectFit: 'cover',
+                borderRadius: 'var(--radius)',
+                border: '1px solid var(--border)',
+              }}
+            />
+          )}
+          <div style={{ textAlign: 'center' }}>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 4 }}>
+              {nextEpisode.showTitle}
+            </p>
+            <p style={{ fontSize: 15, fontWeight: 600 }}>
+              S{String(nextEpisode.seasonNumber).padStart(2, '0')}E{String(nextEpisode.episodeNumber).padStart(2, '0')} — {nextEpisode.title}
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button
+              onClick={() => {
+                if (countdownRef.current) clearInterval(countdownRef.current)
+                onPlayNext()
+              }}
+              style={{
+                padding: '8px 20px',
+                background: 'var(--accent)',
+                border: 'none',
+                borderRadius: 'var(--radius)',
+                color: '#fff',
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Play Next ({countdown}s)
+            </button>
+            <button
+              onClick={() => {
+                if (countdownRef.current) clearInterval(countdownRef.current)
+                onDismiss()
+              }}
+              style={{
+                padding: '8px 16px',
+                background: 'var(--bg-elevated)',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius)',
+                color: 'var(--text-muted)',
+                fontSize: 13,
+                cursor: 'pointer',
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </>
+      ) : null}
+    </div>
+  )
+}
+
 // ─── Inline video player ───────────────────────────────────────────────────────
 
 interface PlayerProps {
   source: PlaybackSource
   mediaItemId: string
+  mediaItemKind: string
   initialPosition: number
   onProgressSaved: (ws: WatchState) => void
+  onEpisodeEnded?: (nextEpisode: PlayableEpisode | null, showFinished: boolean) => void
 }
 
-function DirectPlayer({ source, mediaItemId, initialPosition, onProgressSaved }: PlayerProps) {
+function DirectPlayer({
+  source,
+  mediaItemId,
+  mediaItemKind,
+  initialPosition,
+  onProgressSaved,
+  onEpisodeEnded,
+}: PlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const sessionIdRef = useRef<string | null>(null)
   const lastSavedRef = useRef<number>(0)
@@ -136,15 +284,27 @@ function DirectPlayer({ source, mediaItemId, initialPosition, onProgressSaved }:
     saveProgress(video.currentTime, completed)
   }, [saveProgress])
 
-  const handleEnded = useCallback(() => {
+  const handleEnded = useCallback(async () => {
     const video = videoRef.current
     if (!video) return
 
     if (sessionIdRef.current) {
       updatePlaybackSession(sessionIdRef.current, { state: 'stopped' })
     }
-    saveProgress(video.currentTime, true)
-  }, [saveProgress])
+    // Mark episode/movie as completed
+    await saveProgress(video.currentTime, true)
+
+    // Only fetch next episode for episode items
+    if (mediaItemKind === 'episode' && onEpisodeEnded) {
+      const res = await getNextEpisode(mediaItemId)
+      if (res.ok) {
+        onEpisodeEnded(res.data.episode, false)
+      } else {
+        // 404 = no next episode (show finished)
+        onEpisodeEnded(null, true)
+      }
+    }
+  }, [saveProgress, mediaItemId, mediaItemKind, onEpisodeEnded])
 
   const handleError = useCallback(() => {
     if (sessionIdRef.current) {
@@ -283,6 +443,11 @@ export function MediaDetail() {
   const [sourceLoading, setSourceLoading] = useState(true)
   const [isMissingFile, setIsMissingFile] = useState(false)
 
+  // Up Next panel (episodes only)
+  const [upNextEpisode, setUpNextEpisode] = useState<PlayableEpisode | null>(null)
+  const [showFinished, setShowFinished] = useState(false)
+  const [showUpNextPanel, setShowUpNextPanel] = useState(false)
+
   // Metadata
   const [metadataRefreshing, setMetadataRefreshing] = useState(false)
   const [metadataMessage, setMetadataMessage] = useState<string | null>(null)
@@ -333,6 +498,28 @@ export function MediaDetail() {
     })
     setMarking(false)
     if (res.ok) setWatchState(res.data)
+  }
+
+  // Called by DirectPlayer when an episode ends
+  function handleEpisodeEnded(next: PlayableEpisode | null, finished: boolean) {
+    setUpNextEpisode(next)
+    setShowFinished(finished)
+    setShowUpNextPanel(true)
+  }
+
+  // Navigate to the next episode page
+  function handlePlayNext() {
+    if (!upNextEpisode) return
+    setShowUpNextPanel(false)
+    setUpNextEpisode(null)
+    setShowFinished(false)
+    navigate(`/media/${upNextEpisode.id}`)
+  }
+
+  function handleDismissUpNext() {
+    setShowUpNextPanel(false)
+    setUpNextEpisode(null)
+    setShowFinished(false)
   }
 
   async function handleRefreshMetadata() {
@@ -756,20 +943,31 @@ export function MediaDetail() {
       )}
 
       {/* Player area */}
-      <section>
+      <section style={{ position: 'relative' }}>
         {sourceLoading ? (
           <PlayerLoading />
         ) : playbackSource ? (
           <DirectPlayer
             source={playbackSource}
             mediaItemId={item.id}
+            mediaItemKind={item.kind}
             initialPosition={savedPosition}
             onProgressSaved={setWatchState}
+            onEpisodeEnded={item.kind === 'episode' ? handleEpisodeEnded : undefined}
           />
         ) : (
           <PlayerUnavailable
             reason={sourceUnavailable ?? 'Unknown error'}
             isMissing={isMissingFile}
+          />
+        )}
+        {/* Up Next / Show Finished overlay */}
+        {showUpNextPanel && (
+          <UpNextPanel
+            nextEpisode={upNextEpisode}
+            showFinished={showFinished}
+            onPlayNext={handlePlayNext}
+            onDismiss={handleDismissUpNext}
           />
         )}
       </section>
