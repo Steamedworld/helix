@@ -16,6 +16,7 @@ A self-hosted media hub. Simpler than Plex, prettier than Jellyfin. Scans your l
 - **Up-next auto-advance** — 10-second countdown after an episode ends, navigates automatically to the next
 - **Multi-user auth** — bcrypt passwords, HTTP-only session cookies, admin and user roles
 - **Radarr / Sonarr integration** — read-only: surfaces monitored status and quality profile on media detail pages
+- **Webhook auto-sync** — Radarr/Sonarr push events (MovieAdded, Download, Rename, etc.) trigger instant catalog sync; Helix never sends write commands
 - **API key encryption** — AES-256-GCM at rest; the browser never receives a plaintext key
 - **Federation-ready** — architecture and DB schema designed for future multi-node support; seams are stubbed and documented
 
@@ -122,9 +123,43 @@ On movie and show detail pages, a subtle badge shows:
 - Monitored status (green = monitored)
 - Quality profile name
 
+### Webhook auto-sync
+
+Instead of periodic polling, you can configure Radarr/Sonarr to push events to Helix so the catalog syncs instantly when something changes.
+
+**Setup (Radarr example — Sonarr is identical):**
+
+1. In Helix → **Integrations**, find your Radarr entry and click **Generate secret**.
+2. Copy the webhook URL shown — it looks like:
+   ```
+   http://your-helix-host:3001/api/v1/webhooks/{integrationId}/{token}
+   ```
+3. In Radarr → **Settings → Connect → + → Webhook**:
+   - Notification triggers: enable all (or at minimum: _On Download_, _On Movie Added_, _On Movie Delete_, _On Rename_)
+   - URL: paste the Helix webhook URL
+   - Method: **POST**
+   - Click **Test** (Radarr sends a Test event; Helix responds 204 and records it)
+   - Click **Save**
+
+The token is shown **exactly once**. If you lose it, click **Regenerate secret** to issue a new one (the old URL stops working immediately).
+
+**Supported Radarr events:** `MovieAdded`, `MovieDelete`, `Download`, `Rename`, `Test`
+
+**Supported Sonarr events:** `SeriesAdd`, `SeriesDelete`, `EpisodeFileDelete`, `Download`, `Rename`, `Test`
+
+**Read-only guarantee:** Helix never sends add, search, grab, or download commands to Radarr or Sonarr. Webhooks only trigger Helix to fetch the current catalog state.
+
+**Debounce:** if multiple webhook events arrive while a sync is already running, Helix queues one additional sync to run after the current one finishes — no duplicate syncs pile up.
+
+**Troubleshooting:**
+- `401` — token is wrong or the URL was regenerated; re-copy the webhook URL from Helix.
+- `403 Webhook not enabled` — toggle **Enable webhook** back on in the integration card.
+- `403 Integration is disabled` — re-enable the integration.
+- The **Last webhook** timestamp and event type are displayed in the integration card.
+
 ### Security
 
-API keys are encrypted at rest with AES-256-GCM. The browser only ever sees a masked key (`ab••••••yz`). See [SECURITY.md](SECURITY.md) for details.
+API keys are encrypted at rest with AES-256-GCM. The browser only ever sees a masked key (`ab••••••yz`). Webhook tokens are SHA-256 hashed before storage and never retrievable after creation. See [SECURITY.md](SECURITY.md) for details.
 
 ---
 
@@ -141,7 +176,7 @@ pnpm start            # run built backend
 
 ```bash
 cd packages/backend
-pnpm test             # run all Vitest tests (381 tests)
+pnpm test             # run all Vitest tests (399 tests)
 pnpm test -- --run tests/auth.test.ts   # run a single test file
 ```
 
@@ -157,7 +192,7 @@ pnpm -r run check     # type-check all packages
 helix/
 ├── packages/
 │   ├── backend/          # Fastify API server
-│   │   ├── drizzle/      # SQL migrations (5 files)
+│   │   ├── drizzle/      # SQL migrations (6 files)
 │   │   ├── src/
 │   │   │   ├── routes/   # HTTP route handlers
 │   │   │   ├── services/ # Business logic (scanner, metadata, auth, integrations)
@@ -187,7 +222,7 @@ Browser (React + Vite :5173)
                          (fs walk)    (TMDB)       (bcrypt + sessions)
                              │
                          SQLite via Drizzle ORM
-                         (5 migrations, 9 tables)
+                         (6 migrations, 9 tables)
 ```
 
 The DB schema is federation-aware from day one: every `media_file` carries a `node_id`. When multi-node support ships, remote nodes register files without schema changes. Five federation seams are stubbed in `packages/backend/src/services/federation/`.
@@ -249,6 +284,13 @@ The DB schema is federation-aware from day one: every `media_file` carries a `no
 | GET/PATCH/DELETE | `/api/v1/integrations/:id` | Get / update / delete |
 | POST | `/api/v1/integrations/:id/test` | Test connection |
 | POST | `/api/v1/integrations/:id/sync` | Run sync |
+| POST | `/api/v1/integrations/:id/webhook-secret` | Generate (or regenerate) webhook secret — returns token once |
+
+### Webhooks (public, token-authenticated)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/webhooks/:integrationId/:token` | Radarr/Sonarr push endpoint; triggers read-only sync |
 
 ### Watch state
 
@@ -282,7 +324,7 @@ The DB schema is federation-aware from day one: every `media_file` carries a `no
 - [ ] Multi-node federation (catalog sync, remote playback signing)
 - [ ] User request management (non-admin users request missing content)
 - [ ] Lidarr integration for music
-- [ ] Webhook-driven auto-sync from Arr events
+- [x] Webhook-driven auto-sync from Arr events
 
 ---
 

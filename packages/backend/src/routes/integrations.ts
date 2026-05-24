@@ -8,6 +8,7 @@ import { encryptApiKey, decryptApiKey, maskApiKey } from '../services/integratio
 import { testConnection as radarrTest } from '../services/integrations/providers/radarr'
 import { testConnection as sonarrTest } from '../services/integrations/providers/sonarr'
 import { syncIntegration } from '../services/integrations/service'
+import { generateWebhookToken } from '../services/integrations/webhook'
 
 function formatIntegration(row: typeof integrations.$inferSelect, dataDir: string) {
   let apiKeyMasked = '****'
@@ -29,6 +30,11 @@ function formatIntegration(row: typeof integrations.$inferSelect, dataDir: strin
     lastCheckedAt: row.last_checked_at,
     lastSyncedAt: row.last_synced_at,
     lastError: row.last_error,
+    webhookEnabled: row.webhook_enabled === 1,
+    webhookConfigured: row.webhook_secret_hash !== null,
+    lastWebhookAt: row.last_webhook_at,
+    lastWebhookEvent: row.last_webhook_event,
+    lastWebhookError: row.last_webhook_error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -119,6 +125,7 @@ export async function integrationRoutes(
       baseUrl?: string
       apiKey?: string
       enabled?: boolean
+      webhookEnabled?: boolean
     }
   }>('/:id', { preHandler: requireAdmin }, async (req, reply) => {
     const [row] = await db.select().from(integrations).where(eq(integrations.id, req.params.id))
@@ -127,7 +134,7 @@ export async function integrationRoutes(
       return err('Integration not found')
     }
 
-    const { name, baseUrl, apiKey, enabled } = req.body ?? {}
+    const { name, baseUrl, apiKey, enabled, webhookEnabled } = req.body ?? {}
     const updates: Partial<typeof integrations.$inferInsert> = {
       updated_at: Date.now(),
     }
@@ -135,6 +142,7 @@ export async function integrationRoutes(
     if (name !== undefined) updates.name = name
     if (baseUrl !== undefined) updates.base_url = baseUrl
     if (enabled !== undefined) updates.enabled = enabled ? 1 : 0
+    if (webhookEnabled !== undefined) updates.webhook_enabled = webhookEnabled ? 1 : 0
     if (apiKey !== undefined) {
       try {
         updates.api_key_encrypted = encryptApiKey(apiKey, dataDir)
@@ -213,6 +221,34 @@ export async function integrationRoutes(
 
     const syncResult = await syncIntegration(db, req.params.id, dataDir)
     return ok(syncResult)
+  })
+
+  // POST /api/v1/integrations/:id/webhook-secret — generate (or regenerate) webhook secret (admin only)
+  // Returns the plaintext token exactly once. Store it in Radarr/Sonarr; it is not retrievable again.
+  app.post<{ Params: { id: string } }>('/:id/webhook-secret', { preHandler: requireAdmin }, async (req, reply) => {
+    const [row] = await db.select().from(integrations).where(eq(integrations.id, req.params.id))
+    if (!row) {
+      reply.status(404)
+      return err('Integration not found')
+    }
+
+    const { token, hash } = generateWebhookToken()
+    const now = Date.now()
+
+    await db.update(integrations).set({
+      webhook_secret_hash: hash,
+      webhook_enabled: 1,
+      updated_at: now,
+    }).where(eq(integrations.id, row.id))
+
+    const [updated] = await db.select().from(integrations).where(eq(integrations.id, row.id))
+
+    return ok({
+      integration: formatIntegration(updated, dataDir),
+      webhookToken: token,
+      webhookUrl: `/api/v1/webhooks/${row.id}/${token}`,
+      note: 'This token will not be shown again. Copy it now and configure it in Radarr or Sonarr.',
+    })
   })
 
   // GET /api/v1/integrations/:id/items — list external_media_links (admin only)

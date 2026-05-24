@@ -7,6 +7,7 @@ import {
   deleteIntegration,
   testIntegration,
   syncIntegration,
+  generateWebhookSecret,
 } from '../api/integrations'
 import type { Integration, IntegrationKind, SyncResult } from '../api/integrations'
 
@@ -167,6 +168,10 @@ function IntegrationCard({ integration, onUpdated, onDeleted }: IntegrationCardP
   const [testMessage, setTestMessage] = useState<string | null>(null)
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [generatingWebhook, setGeneratingWebhook] = useState(false)
+  const [webhookToken, setWebhookToken] = useState<string | null>(null)
+  const [webhookUrl, setWebhookUrl] = useState<string | null>(null)
+  const [webhookCopied, setWebhookCopied] = useState(false)
 
   async function handleTest() {
     setTesting(true)
@@ -213,6 +218,33 @@ function IntegrationCard({ integration, onUpdated, onDeleted }: IntegrationCardP
     if (res.ok) onUpdated(res.data)
   }
 
+  async function handleToggleWebhook() {
+    const res = await updateIntegration(integration.id, { webhookEnabled: !integration.webhookEnabled })
+    if (res.ok) onUpdated(res.data)
+  }
+
+  async function handleGenerateWebhookSecret() {
+    setGeneratingWebhook(true)
+    setWebhookToken(null)
+    setWebhookUrl(null)
+    setWebhookCopied(false)
+    const res = await generateWebhookSecret(integration.id)
+    setGeneratingWebhook(false)
+    if (res.ok) {
+      onUpdated(res.data.integration)
+      setWebhookToken(res.data.webhookToken)
+      setWebhookUrl(res.data.webhookUrl)
+    }
+  }
+
+  async function handleCopyWebhookUrl() {
+    if (!webhookUrl) return
+    const fullUrl = `${window.location.origin}${webhookUrl}`
+    await navigator.clipboard.writeText(fullUrl)
+    setWebhookCopied(true)
+    setTimeout(() => setWebhookCopied(false), 2000)
+  }
+
   return (
     <div
       className="surface"
@@ -252,11 +284,129 @@ function IntegrationCard({ integration, onUpdated, onDeleted }: IntegrationCardP
         <span>
           Last synced: <RelativeTime ts={integration.lastSyncedAt} />
         </span>
+        {integration.lastWebhookAt && (
+          <span>
+            Last webhook: <RelativeTime ts={integration.lastWebhookAt} />
+            {integration.lastWebhookEvent && (
+              <span className="mono" style={{ fontSize: 10, marginLeft: 4 }}>
+                ({integration.lastWebhookEvent})
+              </span>
+            )}
+          </span>
+        )}
       </div>
 
       {integration.lastError && (
         <p style={{ fontSize: 12, color: 'var(--bad)', margin: 0 }}>{integration.lastError}</p>
       )}
+
+      {integration.lastWebhookError && (
+        <p style={{ fontSize: 12, color: 'var(--bad)', margin: 0 }}>
+          Webhook error: {integration.lastWebhookError}
+        </p>
+      )}
+
+      {/* Webhook section */}
+      <div
+        style={{
+          padding: '10px 12px',
+          background: 'var(--bg-3)',
+          borderRadius: 'var(--r-2)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink-2)' }}>Webhook auto-sync</span>
+          {integration.webhookEnabled
+            ? <span className="chip chip-accent" style={{ fontSize: 10 }}>Enabled</span>
+            : <span className="chip chip-ghost" style={{ fontSize: 10 }}>Disabled</span>
+          }
+          {integration.webhookConfigured && !integration.webhookEnabled && (
+            <span className="chip chip-ghost" style={{ fontSize: 10 }}>Secret configured</span>
+          )}
+        </div>
+
+        {!integration.webhookConfigured && (
+          <p style={{ fontSize: 11, color: 'var(--ink-4)', margin: 0 }}>
+            Generate a webhook secret to enable push-based sync from {integration.kind === 'radarr' ? 'Radarr' : 'Sonarr'}.
+            Helix remains read-only — no write commands are sent.
+          </p>
+        )}
+
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <button
+            onClick={handleGenerateWebhookSecret}
+            disabled={generatingWebhook}
+            className="btn btn-sm btn-ghost"
+            style={{ fontSize: 11, opacity: generatingWebhook ? 0.6 : 1 }}
+          >
+            {generatingWebhook
+              ? 'Generating…'
+              : integration.webhookConfigured
+                ? 'Regenerate secret'
+                : 'Generate secret'
+            }
+          </button>
+          {integration.webhookConfigured && (
+            <button
+              onClick={handleToggleWebhook}
+              className="btn btn-sm btn-ghost"
+              style={{ fontSize: 11 }}
+            >
+              {integration.webhookEnabled ? 'Disable webhook' : 'Enable webhook'}
+            </button>
+          )}
+        </div>
+
+        {/* One-time token display */}
+        {webhookToken && webhookUrl && (
+          <div
+            style={{
+              padding: '10px 12px',
+              background: 'oklch(0.55 0.14 145 / 0.08)',
+              border: '1px solid oklch(0.55 0.14 145 / 0.25)',
+              borderRadius: 'var(--r-2)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+            }}
+          >
+            <p style={{ fontSize: 11, color: 'var(--ok)', margin: 0, fontWeight: 600 }}>
+              Secret generated — copy this URL now. It will not be shown again.
+            </p>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <code
+                className="mono"
+                style={{
+                  fontSize: 10,
+                  color: 'var(--ink-2)',
+                  background: 'var(--bg-2)',
+                  padding: '4px 8px',
+                  borderRadius: 'var(--r-1)',
+                  flex: 1,
+                  overflowX: 'auto',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {window.location.origin}{webhookUrl}
+              </code>
+              <button
+                onClick={handleCopyWebhookUrl}
+                className="btn btn-sm btn-ghost"
+                style={{ fontSize: 11, flexShrink: 0 }}
+              >
+                {webhookCopied ? 'Copied!' : 'Copy'}
+              </button>
+            </div>
+            <p style={{ fontSize: 10, color: 'var(--ink-4)', margin: 0 }}>
+              Paste this URL into {integration.kind === 'radarr' ? 'Radarr' : 'Sonarr'} → Settings → Connect → Webhook.
+              Use method POST. No additional headers required.
+            </p>
+          </div>
+        )}
+      </div>
 
       {/* Actions */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -447,13 +597,23 @@ export function Integrations() {
           fontSize: 12,
           color: 'var(--ink-3)',
           lineHeight: 1.6,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 6,
         }}
       >
-        <strong style={{ color: 'var(--ink-1)' }}>API key security:</strong> Keys are encrypted
-        at rest with AES-256-GCM and never returned to the browser in plaintext. The key file
-        is stored at{' '}
-        <code className="mono" style={{ fontSize: 11 }}>data/.helix_key</code>{' '}
-        (not committed to git).
+        <div>
+          <strong style={{ color: 'var(--ink-1)' }}>API key security:</strong> Keys are encrypted
+          at rest with AES-256-GCM and never returned to the browser in plaintext. The key file
+          is stored at{' '}
+          <code className="mono" style={{ fontSize: 11 }}>data/.helix_key</code>{' '}
+          (not committed to git).
+        </div>
+        <div>
+          <strong style={{ color: 'var(--ink-1)' }}>Webhook security:</strong> Webhook tokens are
+          SHA-256 hashed before storage and never retrievable after creation. Helix is strictly
+          read-only — webhooks trigger catalog sync but never send write commands to Radarr or Sonarr.
+        </div>
       </div>
     </div>
   )

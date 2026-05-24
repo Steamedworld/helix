@@ -136,6 +136,11 @@ export const integrations = sqliteTable('integrations', {
   last_checked_at: integer('last_checked_at'),
   last_synced_at: integer('last_synced_at'),
   last_error: text('last_error'),
+  webhook_enabled: integer('webhook_enabled').notNull().default(0),
+  webhook_secret_hash: text('webhook_secret_hash'),
+  last_webhook_at: integer('last_webhook_at'),
+  last_webhook_event: text('last_webhook_event'),
+  last_webhook_error: text('last_webhook_error'),
   created_at: integer('created_at').notNull(),
   updated_at: integer('updated_at').notNull(),
 })

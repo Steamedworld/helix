@@ -14,8 +14,20 @@ export interface Integration {
   lastCheckedAt: number | null
   lastSyncedAt: number | null
   lastError: string | null
+  webhookEnabled: boolean
+  webhookConfigured: boolean
+  lastWebhookAt: number | null
+  lastWebhookEvent: string | null
+  lastWebhookError: string | null
   createdAt: number
   updatedAt: number
+}
+
+export interface WebhookSecretResult {
+  integration: Integration
+  webhookToken: string
+  webhookUrl: string
+  note: string
 }
 
 export interface IntegrationTestResult {
@@ -58,6 +70,7 @@ export interface UpdateIntegrationParams {
   baseUrl?: string
   apiKey?: string
   enabled?: boolean
+  webhookEnabled?: boolean
 }
 
 export function listIntegrations() {
@@ -103,4 +116,10 @@ export function syncIntegration(id: string) {
 
 export function listIntegrationItems(id: string) {
   return apiFetch<ExternalLink[]>(`/api/v1/integrations/${id}/items`)
+}
+
+export function generateWebhookSecret(id: string) {
+  return apiFetch<WebhookSecretResult>(`/api/v1/integrations/${id}/webhook-secret`, {
+    method: 'POST',
+  })
 }

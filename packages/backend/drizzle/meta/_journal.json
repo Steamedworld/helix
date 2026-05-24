@@ -39,5 +39,13 @@
       "tag": "0004_integrations",
       "breakpoints": true
     }
+    ,
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1748563200000,
+      "tag": "0005_webhook_fields",
+      "breakpoints": true
+    }
   ]
 }

@@ -15,6 +15,7 @@ import { tvRoutes, seasonRoutes, episodeRoutes } from './routes/tv'
 import { authRoutes } from './routes/auth'
 import { userRoutes } from './routes/users'
 import { integrationRoutes } from './routes/integrations'
+import { webhookRoutes } from './routes/webhooks'
 import { err } from './lib/response'
 import type { DrizzleDB } from './db/client'
 import { metadataRegistry } from './services/metadata/registry'
@@ -125,6 +126,13 @@ export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string
     db,
     dataDir: resolvedDataDir,
   } as Parameters<typeof integrationRoutes>[1] & { prefix: string })
+
+  // Webhook routes — no session auth, authenticated by token in path
+  app.register(webhookRoutes, {
+    prefix: '/api/v1/webhooks',
+    db,
+    dataDir: resolvedDataDir,
+  } as Parameters<typeof webhookRoutes>[1] & { prefix: string })
 
   // TV hierarchy routes
   app.register(tvRoutes, {
