@@ -414,6 +414,38 @@ export function ShowDetail() {
             </p>
           )}
 
+          {/* Integration links — subtle badges */}
+          {show.integrationLinks && show.integrationLinks.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+              {show.integrationLinks.map((link, i) => (
+                <div
+                  key={i}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    padding: '3px 9px',
+                    background: 'rgba(100,120,200,0.08)',
+                    border: '1px solid rgba(100,120,200,0.25)',
+                    borderRadius: 4,
+                    fontSize: 11,
+                    color: 'var(--text-muted)',
+                  }}
+                >
+                  <span style={{ fontWeight: 500, color: 'var(--text)' }}>
+                    Managed by {link.integrationName}
+                  </span>
+                  {link.monitored && (
+                    <span style={{ color: '#4caf7d', fontWeight: 500 }}>· Monitored</span>
+                  )}
+                  {link.qualityProfile && (
+                    <span>· {link.qualityProfile}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Continue / Start Watching button */}
           {upNext && (
             <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>

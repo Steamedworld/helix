@@ -14,6 +14,7 @@ import { metadataCollectionRoutes, metadataItemRoutes } from './routes/metadata'
 import { tvRoutes, seasonRoutes, episodeRoutes } from './routes/tv'
 import { authRoutes } from './routes/auth'
 import { userRoutes } from './routes/users'
+import { integrationRoutes } from './routes/integrations'
 import { err } from './lib/response'
 import type { DrizzleDB } from './db/client'
 import { metadataRegistry } from './services/metadata/registry'
@@ -27,8 +28,10 @@ function setupMetadataProviders() {
   }
 }
 
-export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string | null) {
+export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string | null, dataDir?: string) {
   setupMetadataProviders()
+
+  const resolvedDataDir = dataDir ?? './data'
 
   const app = Fastify({
     logger:
@@ -115,6 +118,13 @@ export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string
     prefix: '/api/v1/media',
     db,
   } as Parameters<typeof metadataItemRoutes>[1] & { prefix: string })
+
+  // Integration routes (Radarr, Sonarr, etc.)
+  app.register(integrationRoutes, {
+    prefix: '/api/v1/integrations',
+    db,
+    dataDir: resolvedDataDir,
+  } as Parameters<typeof integrationRoutes>[1] & { prefix: string })
 
   // TV hierarchy routes
   app.register(tvRoutes, {

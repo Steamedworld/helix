@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { eq, and, like, sql } from 'drizzle-orm'
-import { mediaItems, mediaVersions, mediaFiles } from '../db/schema'
+import { mediaItems, mediaVersions, mediaFiles, externalMediaLinks, integrations } from '../db/schema'
 import { ok, err } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
 import type { MediaItemKind } from '@helix/shared'
@@ -92,6 +92,32 @@ export async function mediaRoutes(
       .from(mediaFiles)
       .where(eq(mediaFiles.media_item_id, item.id))
 
+    // Integration links — left-join external_media_links + integrations
+    const linkRows = await db
+      .select({
+        kind: integrations.kind,
+        name: integrations.name,
+        monitored: externalMediaLinks.monitored,
+        qualityProfile: externalMediaLinks.quality_profile,
+        externalTitle: externalMediaLinks.external_title,
+      })
+      .from(externalMediaLinks)
+      .innerJoin(integrations, eq(externalMediaLinks.integration_id, integrations.id))
+      .where(
+        and(
+          eq(externalMediaLinks.media_item_id, item.id),
+          eq(integrations.enabled, 1)
+        )
+      )
+
+    const integrationLinks = linkRows.map((r) => ({
+      kind: r.kind,
+      integrationName: r.name,
+      monitored: r.monitored === 1,
+      qualityProfile: r.qualityProfile,
+      externalTitle: r.externalTitle,
+    }))
+
     return ok({
       ...item,
       poster_path: undefined,
@@ -100,6 +126,7 @@ export async function mediaRoutes(
       backdropUrl: artworkUrl(item.id, 'backdrop', !!item.backdrop_path, baseUrl),
       versions,
       files,
+      integrationLinks,
     })
   })
 

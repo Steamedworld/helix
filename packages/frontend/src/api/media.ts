@@ -1,11 +1,20 @@
 import type { MediaItem, MediaVersion, MediaFile, MediaItemKind } from '@helix/shared'
 import { apiFetch } from './client'
 
+export interface IntegrationLink {
+  kind: string
+  integrationName: string
+  monitored: boolean
+  qualityProfile: string | null
+  externalTitle: string | null
+}
+
 export interface MediaItemDetail extends MediaItem {
   versions: MediaVersion[]
   files: MediaFile[]
   posterUrl: string | null
   backdropUrl: string | null
+  integrationLinks: IntegrationLink[]
 }
 
 export interface ListMediaParams {

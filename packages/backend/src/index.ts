@@ -23,7 +23,7 @@ async function main() {
 
   // Build and start the server
   const baseUrl = process.env.BASE_URL ?? `http://${config.host === '0.0.0.0' ? 'localhost' : config.host}:${config.port}`
-  const app = buildServer(db, localNodeId, baseUrl)
+  const app = buildServer(db, localNodeId, baseUrl, config.dataDir)
 
   try {
     await app.listen({ port: config.port, host: config.host })

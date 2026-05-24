@@ -16,6 +16,10 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Settings', href: '/settings', icon: '⚙' },
 ]
 
+const ADMIN_NAV_ITEMS: NavItem[] = [
+  { label: 'Integrations', href: '/integrations', icon: '⇄' },
+]
+
 interface SidebarProps {
   open: boolean
   onClose: () => void
@@ -114,6 +118,46 @@ export function Sidebar({ open, onClose }: SidebarProps) {
               {item.label}
             </NavLink>
           ))}
+          {/* Admin-only nav items */}
+          {user?.role === 'admin' && (
+            <>
+              <div
+                style={{
+                  fontSize: 10,
+                  color: 'var(--text-muted)',
+                  padding: '8px 16px 2px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                  opacity: 0.6,
+                }}
+              >
+                Admin
+              </div>
+              {ADMIN_NAV_ITEMS.map((item) => (
+                <NavLink
+                  key={item.href}
+                  to={item.href}
+                  style={({ isActive }) => ({
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    padding: '9px 16px',
+                    color: isActive ? 'var(--text)' : 'var(--text-muted)',
+                    background: isActive ? 'var(--bg-elevated)' : 'transparent',
+                    borderRadius: 6,
+                    margin: '1px 8px',
+                    fontSize: 14,
+                    fontWeight: isActive ? 500 : 400,
+                    transition: 'background 0.15s, color 0.15s',
+                    textDecoration: 'none',
+                  })}
+                >
+                  <span style={{ fontSize: 14, width: 18, textAlign: 'center' }}>{item.icon}</span>
+                  {item.label}
+                </NavLink>
+              ))}
+            </>
+          )}
         </nav>
 
         <NodeStatus />

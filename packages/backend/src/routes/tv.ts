@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { eq, and, sql, count, isNull } from 'drizzle-orm'
-import { mediaItems, mediaFiles, watchStates } from '../db/schema'
+import { mediaItems, mediaFiles, watchStates, externalMediaLinks, integrations } from '../db/schema'
 import { ok, err } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
 import {
@@ -32,6 +32,14 @@ export interface SeasonSummary {
   overview: string | null
 }
 
+export interface IntegrationLinkSummary {
+  kind: string
+  integrationName: string
+  monitored: boolean
+  qualityProfile: string | null
+  externalTitle: string | null
+}
+
 export interface ShowDetail {
   id: string
   title: string
@@ -42,6 +50,7 @@ export interface ShowDetail {
   contentRating: string | null
   metadataStatus: string
   seasons: SeasonSummary[]
+  integrationLinks: IntegrationLinkSummary[]
 }
 
 export interface EpisodeListItem {
@@ -177,6 +186,32 @@ export async function tvRoutes(
       })
     )
 
+    // Integration links for this show
+    const linkRows = await db
+      .select({
+        kind: integrations.kind,
+        name: integrations.name,
+        monitored: externalMediaLinks.monitored,
+        qualityProfile: externalMediaLinks.quality_profile,
+        externalTitle: externalMediaLinks.external_title,
+      })
+      .from(externalMediaLinks)
+      .innerJoin(integrations, eq(externalMediaLinks.integration_id, integrations.id))
+      .where(
+        and(
+          eq(externalMediaLinks.media_item_id, show.id),
+          eq(integrations.enabled, 1)
+        )
+      )
+
+    const integrationLinkSummaries: IntegrationLinkSummary[] = linkRows.map((r) => ({
+      kind: r.kind,
+      integrationName: r.name,
+      monitored: r.monitored === 1,
+      qualityProfile: r.qualityProfile,
+      externalTitle: r.externalTitle,
+    }))
+
     const detail: ShowDetail = {
       id: show.id,
       title: show.title,
@@ -187,6 +222,7 @@ export async function tvRoutes(
       contentRating: show.content_rating,
       metadataStatus: show.metadata_status,
       seasons: seasonSummaries,
+      integrationLinks: integrationLinkSummaries,
     }
 
     return ok(detail)

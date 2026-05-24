@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core'
+import { sqliteTable, text, integer, real, uniqueIndex, index } from 'drizzle-orm/sqlite-core'
 
 export const nodes = sqliteTable('nodes', {
   id: text('id').primaryKey(),
@@ -123,4 +123,35 @@ export const playbackSessions = sqliteTable('playback_sessions', {
   state: text('state', { enum: ['starting', 'playing', 'paused', 'stopped', 'error'] }).notNull().default('starting'),
   started_at: text('started_at').notNull(),
   updated_at: text('updated_at').notNull(),
+})
+
+export const integrations = sqliteTable('integrations', {
+  id: text('id').primaryKey(),
+  kind: text('kind', { enum: ['radarr', 'sonarr', 'lidarr', 'prowlarr', 'other'] }).notNull(),
+  name: text('name').notNull(),
+  base_url: text('base_url').notNull(),
+  api_key_encrypted: text('api_key_encrypted').notNull(),
+  enabled: integer('enabled').notNull().default(1),
+  status: text('status', { enum: ['unknown', 'online', 'offline', 'error'] }).notNull().default('unknown'),
+  last_checked_at: integer('last_checked_at'),
+  last_synced_at: integer('last_synced_at'),
+  last_error: text('last_error'),
+  created_at: integer('created_at').notNull(),
+  updated_at: integer('updated_at').notNull(),
+})
+
+export const externalMediaLinks = sqliteTable('external_media_links', {
+  id: text('id').primaryKey(),
+  media_item_id: text('media_item_id').notNull().references(() => mediaItems.id, { onDelete: 'cascade' }),
+  integration_id: text('integration_id').notNull().references(() => integrations.id, { onDelete: 'cascade' }),
+  external_kind: text('external_kind', { enum: ['radarr_movie', 'sonarr_series', 'sonarr_episode'] }).notNull(),
+  external_id: text('external_id').notNull(),
+  external_guid: text('external_guid'),
+  external_title: text('external_title'),
+  monitored: integer('monitored'),
+  quality_profile: text('quality_profile'),
+  root_path: text('root_path'),
+  last_synced_at: integer('last_synced_at'),
+  created_at: integer('created_at').notNull(),
+  updated_at: integer('updated_at').notNull(),
 })

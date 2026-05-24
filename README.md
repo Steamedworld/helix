@@ -324,6 +324,87 @@ To recover, restore the file and re-scan the library.
 - Artwork download or caching from external sources
 - User-uploaded artwork replacement
 
+## Servarr integrations (Phase 9)
+
+Helix supports read-only integrations with Radarr and Sonarr to surface download management status alongside your media catalog.
+
+### Philosophy
+
+Helix is the player, not an Arr console. Integrations are strictly read-only:
+
+- Helix never sends POST/PUT/DELETE to Radarr or Sonarr
+- No queue management, search, or add-to-arr from Helix
+- Monitored status and quality profiles are displayed as informational context only
+- Syncing is manual — trigger from Settings → Integrations
+
+### Radarr setup
+
+1. Open Radarr → Settings → General → Security
+2. Copy the **API Key**
+3. In Helix: Settings → Integrations → Add Integration
+4. Choose **Radarr**, enter the base URL (e.g. `http://localhost:7878`) and paste the API key
+5. Click **Test** to verify, then **Sync** to link movies
+
+### Sonarr setup
+
+Same process — choose **Sonarr** and use the Sonarr base URL (e.g. `http://localhost:8989`).
+
+### API key security
+
+API keys are encrypted at rest with **AES-256-GCM**:
+
+- If `HELIX_ENCRYPTION_KEY` env var is set: key is derived via scrypt from that value
+- Otherwise: a 32-byte random key is auto-generated and stored at `data/.helix_key` (covered by `.gitignore`)
+- Encrypted format is `iv:authTag:ciphertext` (all hex)
+- The browser **never** receives a decrypted key — only a masked form (`abcd****wxyz`)
+
+### What syncing does
+
+- Fetches all movies from Radarr (or series from Sonarr)
+- Maps them to Helix catalog entries by TMDB ID, then by normalized title + year
+- Creates or updates `external_media_links` records (idempotent)
+- Max 1000 items per sync run
+- Helix metadata fields (title, overview, artwork) are never overwritten by Arr data
+
+### What appears in the UI
+
+On movie/show detail pages, if a match exists, a subtle badge shows:
+- "Managed by [Integration Name]"
+- Monitored status chip (green if monitored)
+- Quality profile chip (e.g. "HD-1080p")
+
+### Integration API endpoints (admin only)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/integrations` | List all integrations |
+| POST | `/api/v1/integrations` | Create integration |
+| GET | `/api/v1/integrations/:id` | Get integration |
+| PATCH | `/api/v1/integrations/:id` | Update name/URL/key/enabled |
+| DELETE | `/api/v1/integrations/:id` | Delete integration and its links |
+| POST | `/api/v1/integrations/:id/test` | Test connection |
+| POST | `/api/v1/integrations/:id/sync` | Run sync, returns SyncResult |
+| GET | `/api/v1/integrations/:id/items` | List external media links |
+
+### Read-only scope
+
+| Supported | Not supported |
+|-----------|---------------|
+| View monitored status | Change monitored status |
+| View quality profile | Change quality profile |
+| View mapped entries | Add media to Radarr/Sonarr |
+| View sync timestamps | Trigger Radarr/Sonarr searches |
+
+### Future plan
+
+Once stronger permissions are established (separate admin scopes or explicit write-consent), Phase 10 may add:
+- Add-to-arr from Helix media detail
+- Request management for non-admin users
+- Lidarr support for music
+- Webhook-driven auto-sync on Arr events
+
+---
+
 ## What is intentionally NOT implemented
 
 - Remote access / reverse proxy / HTTPS setup

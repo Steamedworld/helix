@@ -715,6 +715,57 @@ export function MediaDetail() {
         </div>
       )}
 
+      {/* Integration links — subtle badge row */}
+      {item.integrationLinks && item.integrationLinks.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {item.integrationLinks.map((link, i) => (
+            <div
+              key={i}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '4px 10px',
+                background: 'rgba(100,120,200,0.08)',
+                border: '1px solid rgba(100,120,200,0.25)',
+                borderRadius: 4,
+                fontSize: 11,
+                color: 'var(--text-muted)',
+              }}
+            >
+              <span style={{ fontWeight: 500, color: 'var(--text)' }}>
+                Managed by {link.integrationName}
+              </span>
+              {link.monitored && (
+                <span
+                  style={{
+                    padding: '1px 5px',
+                    background: 'rgba(76,175,125,0.12)',
+                    borderRadius: 3,
+                    color: '#4caf7d',
+                    fontWeight: 500,
+                  }}
+                >
+                  Monitored
+                </span>
+              )}
+              {link.qualityProfile && (
+                <span
+                  style={{
+                    padding: '1px 5px',
+                    background: 'var(--bg-elevated)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 3,
+                  }}
+                >
+                  {link.qualityProfile}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Metadata action row — refresh button (always visible) */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <button

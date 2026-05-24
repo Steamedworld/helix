@@ -31,5 +31,13 @@
       "tag": "0003_auth",
       "breakpoints": true
     }
+    ,
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1748476800000,
+      "tag": "0004_integrations",
+      "breakpoints": true
+    }
   ]
 }

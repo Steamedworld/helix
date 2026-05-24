@@ -19,6 +19,14 @@ export interface SeasonSummary {
   overview: string | null
 }
 
+export interface ShowIntegrationLink {
+  kind: string
+  integrationName: string
+  monitored: boolean
+  qualityProfile: string | null
+  externalTitle: string | null
+}
+
 export interface ShowDetail {
   id: string
   title: string
@@ -29,6 +37,7 @@ export interface ShowDetail {
   contentRating: string | null
   metadataStatus: string
   seasons: SeasonSummary[]
+  integrationLinks?: ShowIntegrationLink[]
 }
 
 export interface EpisodeWatchState {
