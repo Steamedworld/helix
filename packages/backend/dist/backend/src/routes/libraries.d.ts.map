@@ -1,1 +1,0 @@
-{"version":3,"file":"libraries.d.ts","sourceRoot":"","sources":["../../../../src/routes/libraries.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,eAAe,EAAE,MAAM,SAAS,CAAA;AAK9C,OAAO,KAAK,EAAE,SAAS,EAAE,MAAM,cAAc,CAAA;AAI7C,wBAAsB,aAAa,CACjC,GAAG,EAAE,eAAe,EACpB,IAAI,EAAE;IAAE,EAAE,EAAE,SAAS,CAAC;IAAC,WAAW,EAAE,MAAM,CAAA;CAAE,iBA8H7C"}

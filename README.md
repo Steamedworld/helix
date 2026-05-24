@@ -4,6 +4,75 @@ A modern, lightweight, self-hosted media hub. Simpler than Plex, prettier than J
 
 ---
 
+## Quick start
+
+### Prerequisites
+
+- Node.js 20+
+- pnpm 9+
+
+### Install dependencies
+
+```bash
+pnpm install
+```
+
+### Development (hot reload)
+
+```bash
+pnpm dev
+# Backend: http://localhost:3001
+# Frontend: http://localhost:5173
+```
+
+### Production build
+
+```bash
+pnpm build          # compiles shared → backend → frontend
+pnpm start          # runs the built backend on :3001
+```
+
+`pnpm start` is equivalent to:
+```bash
+cd packages/backend
+node dist/backend/src/index.js
+```
+
+The backend must run from `packages/backend/` as its working directory so that the `drizzle/` migrations folder is found correctly.
+
+### First-run setup
+
+On first start the server prints `setupRequired: true` from `GET /api/v1/auth/status`.  
+Open the frontend at `http://localhost:5173` (or serve `packages/frontend/dist/` behind a reverse proxy) and complete the setup wizard to create the admin account.
+
+### Environment variables
+
+Copy `.env.example` to `packages/backend/.env` and fill in your values:
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `3001` | Backend listen port |
+| `HOST` | `0.0.0.0` | Backend listen host |
+| `NODE_ENV` | `development` | Set to `production` for prod |
+| `DB_PATH` | `./data/helix.db` | SQLite database path (relative to `packages/backend/`) |
+| `DATA_DIR` | `./data` | Root data directory |
+| `TMDB_READ_ACCESS_TOKEN` | *(unset)* | TMDB API Read Access Token (preferred) |
+| `TMDB_API_KEY` | *(unset)* | TMDB API key v3 (fallback if token not set) |
+| `METADATA_CACHE_DIR` | `./data/metadata_cache` | Artwork/metadata download cache |
+| `METADATA_ENRICHMENT_ENABLED` | `true` | Set to `false` to disable TMDB enrichment |
+
+The app runs fully without TMDB credentials — enrichment is simply disabled.
+
+### Data directories
+
+On startup the backend automatically creates:
+- `packages/backend/data/` — SQLite database and WAL files
+- `packages/backend/data/metadata_cache/` — downloaded artwork cache
+
+**Do not commit these directories.** They are covered by `.gitignore`.
+
+---
+
 ## What works in this phase
 
 - Create and manage media libraries (movies, TV, music, photos)

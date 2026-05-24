@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Local runtime data (SQLite databases, metadata cache, artwork cache)
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Environment secrets — copy .env.example to .env and fill in values
+.env
+packages/backend/.env
+
+# Vitest cache
+.vitest-cache/
+packages/backend/node_modules/.vite/
+
+# Editor / OS
+.DS_Store
+.vscode/settings.json
+*.swp
+*.swo
