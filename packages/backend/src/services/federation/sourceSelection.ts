@@ -1,5 +1,5 @@
 import { existsSync } from 'fs'
-import { eq } from 'drizzle-orm'
+import { eq, isNotNull } from 'drizzle-orm'
 import type { DrizzleDB } from '../../db/client'
 import { mediaFiles, mediaVersions, nodes } from '../../db/schema'
 
@@ -76,9 +76,12 @@ export async function selectBestLocalSource(
 
   if (rows.length === 0) return null
 
-  // Filter to local node only, and files that exist on disk
+  // Filter to local node only, files that exist on disk, and not marked missing in DB
   const localRows = rows.filter(
-    (r) => r.file.node_id === localNodeId && existsSync(r.file.path)
+    (r) =>
+      r.file.node_id === localNodeId &&
+      r.file.missing_at === null &&
+      existsSync(r.file.path)
   )
 
   if (localRows.length === 0) return null
@@ -122,7 +125,7 @@ export async function getPlaybackSource(
 ): Promise<PlaybackSourceOrUnavailable> {
   // Check if media item has any files at all
   const allFiles = await db
-    .select({ id: mediaFiles.id, node_id: mediaFiles.node_id, path: mediaFiles.path })
+    .select({ id: mediaFiles.id, node_id: mediaFiles.node_id, path: mediaFiles.path, missing_at: mediaFiles.missing_at })
     .from(mediaFiles)
     .where(eq(mediaFiles.media_item_id, mediaItemId))
 
@@ -136,8 +139,17 @@ export async function getPlaybackSource(
     return { unavailable: true, reason: 'No files available on the local node' }
   }
 
+  // Check if all local files are marked missing
+  const missingFiles = localFiles.filter((f) => f.missing_at !== null)
+  if (missingFiles.length === localFiles.length) {
+    return {
+      unavailable: true,
+      reason: 'All files for this item were present but have gone missing — library may need re-scan',
+    }
+  }
+
   // Check that at least one exists on disk
-  const existingFiles = localFiles.filter((f) => existsSync(f.path))
+  const existingFiles = localFiles.filter((f) => f.missing_at === null && existsSync(f.path))
   if (existingFiles.length === 0) {
     return { unavailable: true, reason: 'File(s) found in catalog but not on disk — library may need re-scan' }
   }

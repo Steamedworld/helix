@@ -3,6 +3,7 @@ export type NodeStatus = 'online' | 'offline' | 'unknown'
 export type LibraryKind = 'movies' | 'tv' | 'music' | 'photos' | 'other'
 export type ScanStatus = 'idle' | 'scanning' | 'error'
 export type MediaItemKind = 'movie' | 'show' | 'season' | 'episode' | 'track' | 'album' | 'photo' | 'other'
+export type MetadataStatus = 'unknown' | 'local' | 'matched' | 'needs_review' | 'error'
 export type UserRole = 'admin' | 'user'
 export type PlaybackState = 'starting' | 'playing' | 'paused' | 'stopped' | 'error'
 
@@ -29,15 +30,29 @@ export interface Library {
 
 export interface MediaItem {
   id: string
+  library_id: string
   kind: MediaItemKind
   title: string
   sort_title: string | null
   year: number | null
+  overview: string | null
+  poster_path: string | null
+  backdrop_path: string | null
+  original_title: string | null
+  release_date: string | null
+  content_rating: string | null
+  runtime_seconds: number | null
+  metadata_status: MetadataStatus
+  metadata_source: string | null
+  metadata_updated_at: number | null
   external_tmdb_id: string | null
   external_tvdb_id: string | null
   external_musicbrainz_id: string | null
   created_at: string
   updated_at: string
+  // Derived URL fields (computed by API, not stored)
+  posterUrl?: string | null
+  backdropUrl?: string | null
 }
 
 export interface MediaVersion {
@@ -66,6 +81,7 @@ export interface MediaFile {
   extension: string
   size_bytes: number | null
   file_hash: string | null
+  missing_at: number | null
   discovered_at: string
   updated_at: string
 }

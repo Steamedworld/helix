@@ -4,6 +4,8 @@ import { apiFetch } from './client'
 export interface MediaItemDetail extends MediaItem {
   versions: MediaVersion[]
   files: MediaFile[]
+  posterUrl: string | null
+  backdropUrl: string | null
 }
 
 export interface ListMediaParams {

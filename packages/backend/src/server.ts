@@ -4,6 +4,7 @@ import { config } from './config'
 import { healthRoutes } from './routes/health'
 import { libraryRoutes } from './routes/libraries'
 import { mediaRoutes } from './routes/media'
+import { artworkRoutes } from './routes/artwork'
 import { nodeRoutes } from './routes/nodes'
 import { watchStateRoutes } from './routes/watchstate'
 import { streamRoutes } from './routes/stream'
@@ -48,6 +49,10 @@ export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string
     localNodeId,
     baseUrl: baseUrl ?? null,
   } as Parameters<typeof mediaRoutes>[1] & { prefix: string })
+  app.register(artworkRoutes, {
+    prefix: '/api/v1/media',
+    db,
+  } as Parameters<typeof artworkRoutes>[1] & { prefix: string })
   app.register(nodeRoutes, {
     prefix: '/api/v1/nodes',
     db,

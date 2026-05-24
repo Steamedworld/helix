@@ -193,12 +193,12 @@ function DirectPlayer({ source, mediaItemId, initialPosition, onProgressSaved }:
 
 // ─── Unavailable state ─────────────────────────────────────────────────────────
 
-function PlayerUnavailable({ reason }: { reason: string }) {
+function PlayerUnavailable({ reason, isMissing }: { reason: string; isMissing?: boolean }) {
   return (
     <div
       style={{
         background: 'var(--bg-elevated)',
-        border: '1px solid var(--border)',
+        border: `1px solid ${isMissing ? 'var(--danger)' : 'var(--border)'}`,
         borderRadius: 'var(--radius-lg)',
         aspectRatio: '16/9',
         display: 'flex',
@@ -209,9 +209,16 @@ function PlayerUnavailable({ reason }: { reason: string }) {
         color: 'var(--text-muted)',
       }}
     >
-      <span style={{ fontSize: 32 }}>⊘</span>
-      <span style={{ fontSize: 14, fontWeight: 500 }}>File unavailable</span>
-      <span style={{ fontSize: 12, maxWidth: 300, textAlign: 'center' }}>{reason}</span>
+      <span style={{ fontSize: 32 }}>{isMissing ? '⚠' : '⊘'}</span>
+      <span style={{ fontSize: 14, fontWeight: 500, color: isMissing ? 'var(--danger)' : undefined }}>
+        {isMissing ? 'File went missing' : 'File unavailable'}
+      </span>
+      <span style={{ fontSize: 12, maxWidth: 340, textAlign: 'center' }}>{reason}</span>
+      {isMissing && (
+        <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+          Re-scan the library to update file status.
+        </span>
+      )}
     </div>
   )
 }
@@ -238,6 +245,26 @@ function PlayerLoading() {
   )
 }
 
+// ─── Chip ──────────────────────────────────────────────────────────────────────
+
+function Chip({ label }: { label: string }) {
+  return (
+    <span
+      style={{
+        fontSize: 11,
+        padding: '2px 8px',
+        background: 'var(--bg-elevated)',
+        border: '1px solid var(--border)',
+        borderRadius: 4,
+        color: 'var(--text-muted)',
+        fontWeight: 500,
+      }}
+    >
+      {label}
+    </span>
+  )
+}
+
 // ─── MediaDetail page ──────────────────────────────────────────────────────────
 
 export function MediaDetail() {
@@ -252,6 +279,7 @@ export function MediaDetail() {
   const [playbackSource, setPlaybackSource] = useState<PlaybackSource | null>(null)
   const [sourceUnavailable, setSourceUnavailable] = useState<string | null>(null)
   const [sourceLoading, setSourceLoading] = useState(true)
+  const [isMissingFile, setIsMissingFile] = useState(false)
 
   useEffect(() => {
     if (!id) return
@@ -269,6 +297,11 @@ export function MediaDetail() {
         const data = res.data
         if (data.unavailable) {
           setSourceUnavailable(data.reason)
+          // Detect the "went missing" case by looking for the specific reason text
+          setIsMissingFile(
+            typeof data.reason === 'string' &&
+            data.reason.toLowerCase().includes('missing')
+          )
         } else {
           setPlaybackSource(data.source)
         }
@@ -308,8 +341,11 @@ export function MediaDetail() {
 
   const savedPosition = watchState && !watchState.completed ? watchState.position_seconds : 0
 
+  const backdropUrl = item.backdropUrl ?? null
+  const posterUrl = item.posterUrl ?? null
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 28, maxWidth: 800 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 28, maxWidth: 860 }}>
       <button
         onClick={() => navigate(-1)}
         style={{
@@ -328,27 +364,84 @@ export function MediaDetail() {
         ← Back
       </button>
 
-      {/* Header */}
-      <div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-          <h1 style={{ fontSize: 28, fontWeight: 700 }}>{item.title}</h1>
-          <span
+      {/* Hero backdrop */}
+      {backdropUrl && (
+        <div
+          style={{
+            width: '100%',
+            aspectRatio: '16/5',
+            borderRadius: 'var(--radius-lg)',
+            overflow: 'hidden',
+            position: 'relative',
+          }}
+        >
+          <img
+            src={backdropUrl}
+            alt=""
             style={{
-              fontSize: 11,
-              padding: '3px 8px',
-              background: 'var(--bg-elevated)',
-              border: '1px solid var(--border)',
-              borderRadius: 4,
-              color: 'var(--text-muted)',
-              fontWeight: 500,
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              display: 'block',
+              opacity: 0.6,
             }}
-          >
-            {item.kind}
-          </span>
+          />
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              background: 'linear-gradient(to bottom, transparent 40%, var(--bg) 100%)',
+            }}
+          />
         </div>
-        {item.year && (
-          <p style={{ fontSize: 14, color: 'var(--text-muted)' }}>{item.year}</p>
+      )}
+
+      {/* Header — poster + title info */}
+      <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+        {posterUrl && (
+          <img
+            src={posterUrl}
+            alt={item.title}
+            style={{
+              width: 100,
+              aspectRatio: '2/3',
+              objectFit: 'cover',
+              borderRadius: 'var(--radius)',
+              border: '1px solid var(--border)',
+              flexShrink: 0,
+            }}
+          />
         )}
+        <div style={{ flex: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
+            <h1 style={{ fontSize: 28, fontWeight: 700 }}>{item.title}</h1>
+            <span
+              style={{
+                fontSize: 11,
+                padding: '3px 8px',
+                background: 'var(--bg-elevated)',
+                border: '1px solid var(--border)',
+                borderRadius: 4,
+                color: 'var(--text-muted)',
+                fontWeight: 500,
+              }}
+            >
+              {item.kind}
+            </span>
+          </div>
+          {/* Metadata chips */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+            {item.year && <Chip label={String(item.year)} />}
+            {item.release_date && !item.year && <Chip label={item.release_date} />}
+            {item.content_rating && <Chip label={item.content_rating} />}
+          </div>
+          {/* Overview */}
+          {item.overview && (
+            <p style={{ fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.6, maxWidth: 600 }}>
+              {item.overview}
+            </p>
+          )}
+        </div>
       </div>
 
       {/* Player area */}
@@ -363,7 +456,10 @@ export function MediaDetail() {
             onProgressSaved={setWatchState}
           />
         ) : (
-          <PlayerUnavailable reason={sourceUnavailable ?? 'Unknown error'} />
+          <PlayerUnavailable
+            reason={sourceUnavailable ?? 'Unknown error'}
+            isMissing={isMissingFile}
+          />
         )}
       </section>
 
@@ -444,7 +540,7 @@ export function MediaDetail() {
                   <span style={{ color: 'var(--text-muted)' }}>{v.container.toUpperCase()}</span>
                 )}
                 {v.quality_label && (
-                  <span style={{ color: 'var(--text-muted)' }}>{v.quality_label}</span>
+                  <span style={{ color: 'var(--accent)', fontWeight: 500 }}>{v.quality_label}</span>
                 )}
                 {v.resolution_width && v.resolution_height && (
                   <span style={{ color: 'var(--text-muted)' }}>
@@ -453,6 +549,9 @@ export function MediaDetail() {
                 )}
                 {v.video_codec && (
                   <span style={{ color: 'var(--text-muted)' }}>{v.video_codec}</span>
+                )}
+                {v.audio_codec && (
+                  <span style={{ color: 'var(--text-muted)' }}>{v.audio_codec}</span>
                 )}
                 {v.duration_seconds != null && (
                   <span style={{ color: 'var(--text-muted)' }}>
@@ -475,7 +574,7 @@ export function MediaDetail() {
                 key={f.id}
                 style={{
                   background: 'var(--bg-surface)',
-                  border: '1px solid var(--border)',
+                  border: `1px solid ${f.missing_at ? 'var(--danger)' : 'var(--border)'}`,
                   borderRadius: 'var(--radius)',
                   padding: '12px 16px',
                 }}
@@ -483,12 +582,27 @@ export function MediaDetail() {
                 <div
                   style={{
                     fontSize: 13,
-                    color: 'var(--text)',
+                    color: f.missing_at ? 'var(--danger)' : 'var(--text)',
                     wordBreak: 'break-all',
                     marginBottom: 4,
                   }}
                 >
-                  {f.path}
+                  {f.filename}
+                  {f.missing_at && (
+                    <span
+                      style={{
+                        marginLeft: 8,
+                        fontSize: 11,
+                        padding: '1px 6px',
+                        background: 'rgba(255,95,95,0.12)',
+                        border: '1px solid var(--danger)',
+                        borderRadius: 3,
+                        color: 'var(--danger)',
+                      }}
+                    >
+                      missing
+                    </span>
+                  )}
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', gap: 12 }}>
                   <span>{f.extension.toUpperCase()}</span>

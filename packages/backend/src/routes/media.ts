@@ -6,6 +6,18 @@ import type { DrizzleDB } from '../db/client'
 import type { MediaItemKind } from '@helix/shared'
 import { getPlaybackSource } from '../services/federation/sourceSelection'
 
+// Build public artwork URL — never expose raw filesystem path to client
+function artworkUrl(
+  mediaItemId: string,
+  kind: 'poster' | 'backdrop',
+  hasPath: boolean,
+  baseUrl: string | null | undefined
+): string | null {
+  if (!hasPath) return null
+  const base = baseUrl ?? ''
+  return `${base}/api/v1/media/${mediaItemId}/artwork/${kind}`
+}
+
 export async function mediaRoutes(
   app: FastifyInstance,
   opts: { db: DrizzleDB; localNodeId?: string; baseUrl?: string | null }
@@ -37,7 +49,15 @@ export async function mediaRoutes(
       .offset(parseInt(offset, 10))
       .orderBy(sql`${mediaItems.created_at} DESC`)
 
-    return ok(rows)
+    const enriched = rows.map((item) => ({
+      ...item,
+      poster_path: undefined,
+      backdrop_path: undefined,
+      posterUrl: artworkUrl(item.id, 'poster', !!item.poster_path, baseUrl),
+      backdropUrl: artworkUrl(item.id, 'backdrop', !!item.backdrop_path, baseUrl),
+    }))
+
+    return ok(enriched)
   })
 
   // GET /media/:id
@@ -61,7 +81,15 @@ export async function mediaRoutes(
       .from(mediaFiles)
       .where(eq(mediaFiles.media_item_id, item.id))
 
-    return ok({ ...item, versions, files })
+    return ok({
+      ...item,
+      poster_path: undefined,
+      backdrop_path: undefined,
+      posterUrl: artworkUrl(item.id, 'poster', !!item.poster_path, baseUrl),
+      backdropUrl: artworkUrl(item.id, 'backdrop', !!item.backdrop_path, baseUrl),
+      versions,
+      files,
+    })
   })
 
   // GET /media/:id/versions

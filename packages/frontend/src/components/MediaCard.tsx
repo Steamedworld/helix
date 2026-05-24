@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { MediaItem } from '@helix/shared'
 
@@ -6,8 +7,20 @@ interface MediaCardProps {
   compact?: boolean
 }
 
+function kindIcon(kind: MediaItem['kind']): string {
+  switch (kind) {
+    case 'movie': return '▶'
+    case 'track': return '♪'
+    case 'photo': return '◻'
+    default: return '▶'
+  }
+}
+
 export function MediaCard({ item, compact = false }: MediaCardProps) {
   const navigate = useNavigate()
+  const [imgError, setImgError] = useState(false)
+  const posterUrl = (item as MediaItem & { posterUrl?: string | null }).posterUrl ?? null
+  const showImage = posterUrl && !imgError
 
   return (
     <div
@@ -21,7 +34,7 @@ export function MediaCard({ item, compact = false }: MediaCardProps) {
         overflow: 'hidden',
       }}
     >
-      {/* Poster placeholder */}
+      {/* Poster area */}
       <div
         style={{
           width: '100%',
@@ -29,11 +42,13 @@ export function MediaCard({ item, compact = false }: MediaCardProps) {
           background: 'var(--bg-elevated)',
           border: '1px solid var(--border)',
           borderRadius: 'var(--radius)',
+          overflow: 'hidden',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           color: 'var(--text-muted)',
           fontSize: compact ? 24 : 36,
+          position: 'relative',
           transition: 'border-color 0.15s',
         }}
         onMouseEnter={(e) => {
@@ -43,7 +58,21 @@ export function MediaCard({ item, compact = false }: MediaCardProps) {
           ;(e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border)'
         }}
       >
-        {item.kind === 'movie' ? '▶' : item.kind === 'track' ? '♪' : item.kind === 'photo' ? '◻' : '▶'}
+        {showImage ? (
+          <img
+            src={posterUrl}
+            alt={item.title}
+            onError={() => setImgError(true)}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              display: 'block',
+            }}
+          />
+        ) : (
+          <span>{kindIcon(item.kind)}</span>
+        )}
       </div>
 
       {/* Info */}
