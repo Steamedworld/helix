@@ -5,18 +5,22 @@ import type { MediaItem } from '@helix/shared'
 interface MediaCardProps {
   item: MediaItem
   compact?: boolean
+  subtitle?: string
 }
 
 function kindIcon(kind: MediaItem['kind']): string {
   switch (kind) {
     case 'movie': return '▶'
+    case 'show': return '▭'
+    case 'season': return '▭'
+    case 'episode': return '▶'
     case 'track': return '♪'
     case 'photo': return '◻'
     default: return '▶'
   }
 }
 
-export function MediaCard({ item, compact = false }: MediaCardProps) {
+export function MediaCard({ item, compact = false, subtitle }: MediaCardProps) {
   const navigate = useNavigate()
   const [imgError, setImgError] = useState(false)
   const posterUrl = (item as MediaItem & { posterUrl?: string | null }).posterUrl ?? null
@@ -89,8 +93,22 @@ export function MediaCard({ item, compact = false }: MediaCardProps) {
         >
           {item.title}
         </div>
-        {item.year && (
-          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{item.year}</div>
+        {subtitle ? (
+          <div
+            style={{
+              fontSize: 11,
+              color: 'var(--text-muted)',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {subtitle}
+          </div>
+        ) : (
+          item.year && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{item.year}</div>
+          )
         )}
       </div>
     </div>

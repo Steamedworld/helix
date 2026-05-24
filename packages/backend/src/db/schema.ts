@@ -32,6 +32,7 @@ export const libraries = sqliteTable('libraries', {
 export const mediaItems = sqliteTable('media_items', {
   id: text('id').primaryKey(),
   library_id: text('library_id').notNull().references(() => libraries.id, { onDelete: 'cascade' }),
+  parent_id: text('parent_id'),
   kind: text('kind', { enum: ['movie', 'show', 'season', 'episode', 'track', 'album', 'photo', 'other'] }).notNull().default('movie'),
   title: text('title').notNull(),
   sort_title: text('sort_title'),
@@ -43,6 +44,10 @@ export const mediaItems = sqliteTable('media_items', {
   release_date: text('release_date'),
   content_rating: text('content_rating'),
   runtime_seconds: integer('runtime_seconds'),
+  season_number: integer('season_number'),
+  episode_number: integer('episode_number'),
+  episode_title: text('episode_title'),
+  absolute_episode_number: integer('absolute_episode_number'),
   metadata_status: text('metadata_status', { enum: ['unknown', 'local', 'matched', 'needs_review', 'error'] }).notNull().default('unknown'),
   metadata_source: text('metadata_source'),
   metadata_updated_at: integer('metadata_updated_at'),

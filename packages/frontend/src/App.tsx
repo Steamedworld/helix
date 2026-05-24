@@ -5,6 +5,8 @@ import { Libraries } from './pages/Libraries'
 import { AddLibrary } from './pages/AddLibrary'
 import { LibraryDetail } from './pages/LibraryDetail'
 import { MediaDetail } from './pages/MediaDetail'
+import { Shows } from './pages/Shows'
+import { ShowDetail } from './pages/ShowDetail'
 import { Settings } from './pages/Settings'
 
 const router = createBrowserRouter([
@@ -17,6 +19,8 @@ const router = createBrowserRouter([
       { path: 'libraries/new', element: <AddLibrary /> },
       { path: 'libraries/:id', element: <LibraryDetail /> },
       { path: 'media/:id', element: <MediaDetail /> },
+      { path: 'shows', element: <Shows /> },
+      { path: 'shows/:id', element: <ShowDetail /> },
       { path: 'settings', element: <Settings /> },
     ],
   },

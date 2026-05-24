@@ -12,7 +12,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', href: '/', icon: '⊞' },
   { label: 'Libraries', href: '/libraries', icon: '⊟' },
   { label: 'Movies', href: '/libraries?kind=movies', icon: '▶' },
-  { label: 'TV Shows', href: '/libraries?kind=tv', icon: '▭' },
+  { label: 'TV Shows', href: '/shows', icon: '▭' },
   { label: 'Settings', href: '/settings', icon: '⚙' },
 ]
 

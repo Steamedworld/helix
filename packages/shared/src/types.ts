@@ -31,6 +31,7 @@ export interface Library {
 export interface MediaItem {
   id: string
   library_id: string
+  parent_id: string | null
   kind: MediaItemKind
   title: string
   sort_title: string | null
@@ -42,6 +43,10 @@ export interface MediaItem {
   release_date: string | null
   content_rating: string | null
   runtime_seconds: number | null
+  season_number: number | null
+  episode_number: number | null
+  episode_title: string | null
+  absolute_episode_number: number | null
   metadata_status: MetadataStatus
   metadata_source: string | null
   metadata_updated_at: number | null

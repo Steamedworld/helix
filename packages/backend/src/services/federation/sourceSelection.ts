@@ -1,7 +1,7 @@
 import { existsSync } from 'fs'
 import { eq, isNotNull } from 'drizzle-orm'
 import type { DrizzleDB } from '../../db/client'
-import { mediaFiles, mediaVersions, nodes } from '../../db/schema'
+import { mediaFiles, mediaVersions, nodes, mediaItems } from '../../db/schema'
 
 export interface PlaybackSource {
   nodeId: string
@@ -123,6 +123,21 @@ export async function getPlaybackSource(
   localNodeId: string,
   baseUrl: string | null
 ): Promise<PlaybackSourceOrUnavailable> {
+  // Check the item kind — containers (show, season) cannot be played directly
+  const [item] = await db
+    .select({ kind: mediaItems.kind })
+    .from(mediaItems)
+    .where(eq(mediaItems.id, mediaItemId))
+
+  if (item) {
+    if (item.kind === 'show') {
+      return { unavailable: true, reason: 'Cannot play a show container — select a specific episode.' }
+    }
+    if (item.kind === 'season') {
+      return { unavailable: true, reason: 'Cannot play a season container — select a specific episode.' }
+    }
+  }
+
   // Check if media item has any files at all
   const allFiles = await db
     .select({ id: mediaFiles.id, node_id: mediaFiles.node_id, path: mediaFiles.path, missing_at: mediaFiles.missing_at })

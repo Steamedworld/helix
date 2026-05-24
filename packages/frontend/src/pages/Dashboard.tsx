@@ -4,6 +4,7 @@ import { listMedia } from '../api/media'
 import { listLibraries } from '../api/libraries'
 import { getContinueWatching } from '../api/watchstate'
 import type { MediaItem, Library } from '@helix/shared'
+import type { MediaItemWithWatchState } from '../api/watchstate'
 import { MediaCard } from '../components/MediaCard'
 import { PosterGrid } from '../components/PosterGrid'
 import { EmptyState } from '../components/EmptyState'
@@ -77,11 +78,26 @@ export function Dashboard() {
               paddingBottom: 8,
             }}
           >
-            {continueItems.map((item) => (
-              <div key={item.id} style={{ flexShrink: 0, width: 200 }}>
-                <MediaCard item={item} compact />
-              </div>
-            ))}
+            {continueItems.map((item) => {
+              const cwItem = item as MediaItemWithWatchState & {
+                showTitle?: string
+                showId?: string
+                seasonNumber?: number
+                episodeNumber?: number
+              }
+              // Build subtitle for episodes: "Breaking Bad · S01E02"
+              let subtitle: string | undefined
+              if (cwItem.kind === 'episode' && cwItem.showTitle) {
+                const sNum = String(cwItem.seasonNumber ?? 0).padStart(2, '0')
+                const eNum = String(cwItem.episodeNumber ?? 0).padStart(2, '0')
+                subtitle = `${cwItem.showTitle} · S${sNum}E${eNum}`
+              }
+              return (
+                <div key={item.id} style={{ flexShrink: 0, width: 200 }}>
+                  <MediaCard item={item} compact subtitle={subtitle} />
+                </div>
+              )
+            })}
           </div>
         </section>
       )}

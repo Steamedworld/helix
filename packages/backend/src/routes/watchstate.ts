@@ -4,6 +4,7 @@ import { watchStates, mediaItems } from '../db/schema'
 import { ok, err } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
 import { sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/sqlite-core'
 
 export async function watchStateRoutes(
   app: FastifyInstance,
@@ -102,11 +103,42 @@ export async function watchStateRoutes(
       .orderBy(sql`${watchStates.updated_at} DESC`)
       .limit(parseInt(limit, 10))
 
-    const items = rows.map(({ watchState, mediaItem }) => ({
-      ...mediaItem,
-      watch_state: watchState,
-    }))
+    // Enrich episodes with show/season context
+    const enrichedItems = await Promise.all(
+      rows.map(async ({ watchState, mediaItem }) => {
+        let showId: string | null = null
+        let showTitle: string | null = null
+        let seasonNumber: number | null = mediaItem.season_number
+        let episodeNumber: number | null = mediaItem.episode_number
 
-    return ok(items)
+        if (mediaItem.kind === 'episode' && mediaItem.parent_id) {
+          // parent is season
+          const [season] = await db
+            .select({ id: mediaItems.id, parent_id: mediaItems.parent_id, season_number: mediaItems.season_number })
+            .from(mediaItems)
+            .where(eq(mediaItems.id, mediaItem.parent_id))
+          if (season?.parent_id) {
+            showId = season.parent_id
+            const [show] = await db
+              .select({ title: mediaItems.title })
+              .from(mediaItems)
+              .where(eq(mediaItems.id, season.parent_id))
+            showTitle = show?.title ?? null
+          }
+        }
+
+        return {
+          ...mediaItem,
+          poster_path: undefined,
+          backdrop_path: undefined,
+          watch_state: watchState,
+          ...(mediaItem.kind === 'episode'
+            ? { showId, showTitle, seasonNumber, episodeNumber }
+            : {}),
+        }
+      })
+    )
+
+    return ok(enrichedItems)
   })
 }

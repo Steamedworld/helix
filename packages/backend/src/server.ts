@@ -10,6 +10,7 @@ import { watchStateRoutes } from './routes/watchstate'
 import { streamRoutes } from './routes/stream'
 import { playbackRoutes } from './routes/playback'
 import { metadataCollectionRoutes, metadataItemRoutes } from './routes/metadata'
+import { tvRoutes, seasonRoutes, episodeRoutes } from './routes/tv'
 import { err } from './lib/response'
 import type { DrizzleDB } from './db/client'
 import { metadataRegistry } from './services/metadata/registry'
@@ -96,6 +97,28 @@ export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string
     prefix: '/api/v1/media',
     db,
   } as Parameters<typeof metadataItemRoutes>[1] & { prefix: string })
+
+  // TV hierarchy routes
+  app.register(tvRoutes, {
+    prefix: '/api/v1/shows',
+    db,
+    localNodeId,
+    baseUrl: baseUrl ?? null,
+  } as Parameters<typeof tvRoutes>[1] & { prefix: string })
+
+  app.register(seasonRoutes, {
+    prefix: '/api/v1/seasons',
+    db,
+    localNodeId,
+    baseUrl: baseUrl ?? null,
+  } as Parameters<typeof seasonRoutes>[1] & { prefix: string })
+
+  app.register(episodeRoutes, {
+    prefix: '/api/v1/episodes',
+    db,
+    localNodeId,
+    baseUrl: baseUrl ?? null,
+  } as Parameters<typeof episodeRoutes>[1] & { prefix: string })
 
   // Global error handler
   app.setErrorHandler((error, _req, reply) => {

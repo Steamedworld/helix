@@ -15,6 +15,13 @@
       "when": 1748044800000,
       "tag": "0001_metadata_and_stale",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1748304000000,
+      "tag": "0002_tv_hierarchy",
+      "breakpoints": true
     }
   ]
 }

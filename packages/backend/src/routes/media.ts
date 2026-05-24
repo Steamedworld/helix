@@ -55,6 +55,17 @@ export async function mediaRoutes(
       backdrop_path: undefined,
       posterUrl: artworkUrl(item.id, 'poster', !!item.poster_path, baseUrl),
       backdropUrl: artworkUrl(item.id, 'backdrop', !!item.backdrop_path, baseUrl),
+      // Provide a kind label for search results
+      kindLabel:
+        item.kind === 'show'
+          ? 'Show'
+          : item.kind === 'season'
+          ? 'Season'
+          : item.kind === 'episode'
+          ? `Episode S${String(item.season_number ?? 0).padStart(2, '0')}E${String(item.episode_number ?? 0).padStart(2, '0')}`
+          : item.kind === 'movie'
+          ? 'Movie'
+          : item.kind,
     }))
 
     return ok(enriched)
@@ -138,7 +149,7 @@ export async function mediaRoutes(
     }
 
     const [item] = await db
-      .select({ id: mediaItems.id })
+      .select({ id: mediaItems.id, kind: mediaItems.kind })
       .from(mediaItems)
       .where(eq(mediaItems.id, req.params.id))
 

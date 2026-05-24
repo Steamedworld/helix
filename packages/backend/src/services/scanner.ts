@@ -335,6 +335,208 @@ async function markStaleFiles(
   }
 }
 
+// ─── TV Hierarchy Helpers ──────────────────────────────────────────────────────
+
+// Normalize a show title for matching (lowercase, collapse spaces)
+function normalizeShowTitle(title: string): string {
+  return title.toLowerCase().replace(/\s+/g, ' ').trim()
+}
+
+async function findOrCreateShow(
+  db: DrizzleDB,
+  libraryId: string,
+  showTitle: string,
+  artworkPaths: ArtworkPaths,
+  now: string,
+  nowMs: number
+): Promise<string> {
+  const normalizedTitle = normalizeShowTitle(showTitle)
+
+  // Find existing show with same title in this library
+  const existing = await db
+    .select({ id: mediaItems.id, metadata_status: mediaItems.metadata_status, poster_path: mediaItems.poster_path, backdrop_path: mediaItems.backdrop_path })
+    .from(mediaItems)
+    .where(
+      and(
+        eq(mediaItems.library_id, libraryId),
+        eq(mediaItems.kind, 'show'),
+        eq(mediaItems.title, showTitle)
+      )
+    )
+    .limit(1)
+
+  if (existing.length > 0) {
+    const show = existing[0]
+    // Update artwork if not already present
+    const artworkUpdate: Record<string, unknown> = {}
+    if (!show.poster_path && artworkPaths.posterPath) {
+      artworkUpdate.poster_path = artworkPaths.posterPath
+    }
+    if (!show.backdrop_path && artworkPaths.backdropPath) {
+      artworkUpdate.backdrop_path = artworkPaths.backdropPath
+    }
+    if (Object.keys(artworkUpdate).length > 0) {
+      artworkUpdate.updated_at = now
+      await db.update(mediaItems).set(artworkUpdate).where(eq(mediaItems.id, show.id))
+    }
+    return show.id
+  }
+
+  const id = crypto.randomUUID()
+  await db.insert(mediaItems).values({
+    id,
+    library_id: libraryId,
+    parent_id: null,
+    kind: 'show',
+    title: showTitle,
+    sort_title: normalizedTitle.replace(/^(the|a|an)\s+/i, ''),
+    year: null,
+    overview: null,
+    poster_path: artworkPaths.posterPath,
+    backdrop_path: artworkPaths.backdropPath,
+    original_title: null,
+    release_date: null,
+    content_rating: null,
+    runtime_seconds: null,
+    season_number: null,
+    episode_number: null,
+    episode_title: null,
+    absolute_episode_number: null,
+    metadata_status: 'local',
+    metadata_source: 'filename',
+    metadata_updated_at: nowMs,
+    external_tmdb_id: null,
+    external_tvdb_id: null,
+    external_musicbrainz_id: null,
+    created_at: now,
+    updated_at: now,
+  })
+  return id
+}
+
+async function findOrCreateSeason(
+  db: DrizzleDB,
+  libraryId: string,
+  showId: string,
+  seasonNumber: number,
+  now: string,
+  nowMs: number
+): Promise<string> {
+  const existing = await db
+    .select({ id: mediaItems.id })
+    .from(mediaItems)
+    .where(
+      and(
+        eq(mediaItems.parent_id, showId),
+        eq(mediaItems.kind, 'season'),
+        eq(mediaItems.season_number, seasonNumber)
+      )
+    )
+    .limit(1)
+
+  if (existing.length > 0) {
+    return existing[0].id
+  }
+
+  const id = crypto.randomUUID()
+  await db.insert(mediaItems).values({
+    id,
+    library_id: libraryId,
+    parent_id: showId,
+    kind: 'season',
+    title: `Season ${seasonNumber}`,
+    sort_title: `season ${seasonNumber.toString().padStart(4, '0')}`,
+    year: null,
+    overview: null,
+    poster_path: null,
+    backdrop_path: null,
+    original_title: null,
+    release_date: null,
+    content_rating: null,
+    runtime_seconds: null,
+    season_number: seasonNumber,
+    episode_number: null,
+    episode_title: null,
+    absolute_episode_number: null,
+    metadata_status: 'local',
+    metadata_source: 'filename',
+    metadata_updated_at: nowMs,
+    external_tmdb_id: null,
+    external_tvdb_id: null,
+    external_musicbrainz_id: null,
+    created_at: now,
+    updated_at: now,
+  })
+  return id
+}
+
+async function findOrCreateEpisode(
+  db: DrizzleDB,
+  libraryId: string,
+  seasonId: string,
+  seasonNumber: number,
+  episodeNumber: number,
+  episodeTitle: string | null,
+  now: string,
+  nowMs: number
+): Promise<string> {
+  const existing = await db
+    .select({ id: mediaItems.id, metadata_status: mediaItems.metadata_status })
+    .from(mediaItems)
+    .where(
+      and(
+        eq(mediaItems.parent_id, seasonId),
+        eq(mediaItems.kind, 'episode'),
+        eq(mediaItems.episode_number, episodeNumber)
+      )
+    )
+    .limit(1)
+
+  if (existing.length > 0) {
+    const ep = existing[0]
+    const isEnriched = ep.metadata_status === 'matched' || ep.metadata_status === 'needs_review'
+    if (!isEnriched && episodeTitle) {
+      // Update episode title if we have one and not enriched
+      await db.update(mediaItems)
+        .set({ episode_title: episodeTitle, updated_at: now })
+        .where(eq(mediaItems.id, ep.id))
+    }
+    return ep.id
+  }
+
+  const title = episodeTitle ?? `Episode ${episodeNumber}`
+  const id = crypto.randomUUID()
+  await db.insert(mediaItems).values({
+    id,
+    library_id: libraryId,
+    parent_id: seasonId,
+    kind: 'episode',
+    title,
+    sort_title: `s${seasonNumber.toString().padStart(2, '0')}e${episodeNumber.toString().padStart(3, '0')}`,
+    year: null,
+    overview: null,
+    poster_path: null,
+    backdrop_path: null,
+    original_title: null,
+    release_date: null,
+    content_rating: null,
+    runtime_seconds: null,
+    season_number: seasonNumber,
+    episode_number: episodeNumber,
+    episode_title: episodeTitle,
+    absolute_episode_number: null,
+    metadata_status: 'local',
+    metadata_source: 'filename',
+    metadata_updated_at: nowMs,
+    external_tmdb_id: null,
+    external_tvdb_id: null,
+    external_musicbrainz_id: null,
+    created_at: now,
+    updated_at: now,
+  })
+  return id
+}
+
 // ─── Main Scanner ──────────────────────────────────────────────────────────────
 
 export async function scanLibrary(
@@ -377,11 +579,13 @@ export async function scanLibrary(
 
     const filename = basename(filePath)
     const ext = extname(filename).toLowerCase()
-    const kind = getMediaKind(ext)
     const parsed = parseFilename(filename)
     const {
       title,
       year,
+      season,
+      episode,
+      episodeTitle,
       qualityLabel,
       resolutionWidth,
       resolutionHeight,
@@ -391,6 +595,86 @@ export async function scanLibrary(
     } = parsed
     const now = new Date().toISOString()
     const nowMs = Date.now()
+
+    // ── TV episode branch ────────────────────────────────────────────────────
+    if (season !== undefined && season !== null && episode !== undefined && episode !== null) {
+      // Artwork detection for show-level directory (parent of season dir)
+      const episodeDir = dirname(filePath)
+      const seasonDir = episodeDir
+      // Look for show-level artwork in parent directories
+      const showDir = dirname(seasonDir)
+      const showArtworkDir = showDir !== library.root_path ? showDir : seasonDir
+
+      if (!artworkCache.has(showArtworkDir)) {
+        const artwork = await detectLocalArtwork(showArtworkDir, title)
+        artworkCache.set(showArtworkDir, artwork)
+      }
+      const showArtwork = artworkCache.get(showArtworkDir)!
+
+      // Find or create show
+      const showId = await findOrCreateShow(
+        db, library.id, title, showArtwork, now, nowMs
+      )
+
+      // Find or create season
+      const seasonId = await findOrCreateSeason(
+        db, library.id, showId, season, now, nowMs
+      )
+
+      // Find or create episode
+      const episodeId = await findOrCreateEpisode(
+        db, library.id, seasonId, season, episode, episodeTitle, now, nowMs
+      )
+
+      // Create media version attached to episode
+      const mediaVersionId = crypto.randomUUID()
+      await db.insert(mediaVersions).values({
+        id: mediaVersionId,
+        media_item_id: episodeId,
+        label: null,
+        quality_label: qualityLabel,
+        resolution_width: resolutionWidth,
+        resolution_height: resolutionHeight,
+        video_codec: videoCodec,
+        audio_codec: audioCodec,
+        container,
+        duration_seconds: null,
+        created_at: now,
+        updated_at: now,
+      })
+
+      // Get file stats
+      let sizeBytes: number | null = null
+      try {
+        const stat = await fs.stat(filePath)
+        sizeBytes = stat.size
+      } catch {
+        // ignore
+      }
+
+      // Create media file attached to episode
+      await db.insert(mediaFiles).values({
+        id: crypto.randomUUID(),
+        node_id: localNodeId,
+        library_id: library.id,
+        media_item_id: episodeId,
+        media_version_id: mediaVersionId,
+        path: filePath,
+        filename,
+        extension: ext,
+        size_bytes: sizeBytes,
+        file_hash: null,
+        missing_at: null,
+        discovered_at: now,
+        updated_at: now,
+      })
+
+      counts.added++
+      continue
+    }
+
+    // ── Movie / other branch ─────────────────────────────────────────────────
+    const kind = getMediaKind(ext)
 
     // Artwork detection — cache per directory
     const fileDir = dirname(filePath)
@@ -459,6 +743,7 @@ export async function scanLibrary(
       await db.insert(mediaItems).values({
         id: mediaItemId,
         library_id: library.id,
+        parent_id: null,
         kind,
         title,
         sort_title: title.toLowerCase().replace(/^(the|a|an)\s+/i, ''),
@@ -470,6 +755,10 @@ export async function scanLibrary(
         release_date: null,
         content_rating: null,
         runtime_seconds: null,
+        season_number: null,
+        episode_number: null,
+        episode_title: null,
+        absolute_episode_number: null,
         metadata_status: 'local',
         metadata_source: 'filename',
         metadata_updated_at: nowMs,

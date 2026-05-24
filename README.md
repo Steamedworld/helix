@@ -11,10 +11,20 @@ A modern, lightweight, self-hosted media hub. Simpler than Plex, prettier than J
 - Full catalog stored in SQLite via Drizzle ORM with typed schema
 - REST API: libraries, media items, watch states, nodes, playback sessions, streaming, artwork
 - Watch state tracking (position, completion) per user per item
-- React frontend: Dashboard, Libraries list, Library detail, Add Library form, Media detail, Settings
+- React frontend: Dashboard, Libraries list, Library detail, Add Library form, Media detail, TV Shows, Show Detail, Settings
 - Node status indicator in sidebar (polls `/api/v1/health`)
 - Bootstrap: first-launch creates local node + admin user automatically
 - Federation seams: all multi-node hooks are stubbed and documented
+- **Phase 5 — TV show/season/episode hierarchy:**
+  - Scanner builds full show → season → episode hierarchy from SxxEyy filename patterns
+  - Show, season, episode are distinct `media_items` rows linked by `parent_id`
+  - Idempotent: re-scanning never creates duplicate shows, seasons, or episodes
+  - Local artwork detection extended to show-level directory (poster.jpg next to season folders)
+  - TV API routes: `/api/v1/shows`, `/api/v1/shows/:id`, `/api/v1/shows/:id/seasons`, `/api/v1/seasons/:id/episodes`, `/api/v1/episodes/:id`
+  - Source selection guards: show and season containers return an unavailable response with explanation
+  - Continue Watching row enriched with showTitle, S01E02 context for episodes
+  - Frontend: TV Shows grid, Show Detail page (backdrop hero + season tabs + episode list with progress bars)
+  - TV Shows navigation entry in sidebar
 - **Phase 3 — Local metadata enrichment:**
   - Enhanced filename parser: extracts title, year, season/episode, quality label (4K/1080p/720p/480p), resolution, video codec (H.264/H.265/AV1/VP9), audio codec (AAC/DTS/FLAC/AC3/TrueHD)
   - Local artwork detection: poster, cover, backdrop, fanart images detected automatically from media directories
@@ -349,6 +359,74 @@ Copy `.env.example` at the repo root for a documented template.
 | GET | `/api/v1/nodes` | List nodes |
 | GET | `/api/v1/nodes/:id` | Get node |
 
+### TV (Phase 5)
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/shows` | List shows (`library_id?`) with episode count |
+| GET | `/api/v1/shows/:id` | Show detail with seasons list |
+| GET | `/api/v1/shows/:id/seasons` | Seasons for a show |
+| GET | `/api/v1/seasons/:id/episodes` | Episodes for a season (`user_id?` for watch state) |
+| GET | `/api/v1/episodes/:id` | Episode detail (showId, showTitle, seasonId included) |
+
+---
+
+## TV hierarchy (Phase 5)
+
+### Show → Season → Episode model
+
+TV episodes are stored as a three-level hierarchy of `media_items` linked by `parent_id`:
+
+```
+Show (kind='show', parent_id=null)
+  └── Season 1 (kind='season', parent_id=<show_id>, season_number=1)
+        ├── Episode 1 (kind='episode', parent_id=<season_id>, episode_number=1)
+        └── Episode 2 (kind='episode', parent_id=<season_id>, episode_number=2)
+```
+
+`media_versions` and `media_files` attach to the **episode** item only. Shows and seasons are containers — they cannot be played directly and return a descriptive error from the playback-source endpoint.
+
+### Supported TV filename patterns
+
+| Filename | Show | Season | Episode | Episode Title |
+|----------|------|--------|---------|---------------|
+| `Breaking.Bad.S01E02.Cats.In.The.Bag.1080p.mkv` | Breaking Bad | 1 | 2 | Cats In The Bag |
+| `Show Name - S01E02 - Episode Title.mkv` | Show Name | 1 | 2 | Episode Title |
+| `Show.Name.S02E10.mkv` | Show Name | 2 | 10 | — |
+
+Patterns with no SxxEyy are treated as movies.
+
+### Local artwork for shows
+
+The scanner looks for show-level artwork in the **parent directory of the season folder**:
+
+```
+/media/
+  Breaking Bad/         ← show-level artwork looked up here
+    poster.jpg          ← sets show item's poster_path
+    Season 1/
+      Breaking.Bad.S01E01.mkv
+```
+
+Standard artwork names apply: `poster.jpg`, `cover.jpg`, `folder.jpg`, `backdrop.jpg`, `fanart.jpg`.
+
+If episode files are flat (not in season subdirectories), artwork is looked up one level above the library root.
+
+### What is not yet implemented (TV)
+
+- **TMDB-TV enrichment** — show/episode overview, cast, poster from TMDB. Schema columns (`external_tvdb_id`) are ready.
+- **TVDB integration** — no TVDB provider yet.
+- **Per-episode artwork download** — episode thumbnails not fetched from any provider.
+- **Episode-level metadata refresh** — the metadata refresh button on episode detail runs against TMDB movie API and will not match; a TV-specific enrichment path is needed.
+- **Next episode navigation** — no "play next episode" button yet.
+- **Absolute episode numbering** — column stored, not populated.
+
+### Recommended next phase
+
+Phase 6 options:
+1. TMDB-TV enrichment (show/season/episode overview, posters, cast via TMDB TV API)
+2. Next-episode continuity (auto-advance to next episode, up-next row)
+3. Music track/album hierarchy (same `parent_id` pattern, using MusicBrainz)
+
 ---
 
 ## Database schema
@@ -358,7 +436,7 @@ Copy `.env.example` at the repo root for a documented template.
 | `nodes` | id, name, kind (local/remote), base_url, status |
 | `users` | id, display_name, role (admin/user) |
 | `libraries` | id, node_id, name, kind, root_path, scan_status |
-| `media_items` | id, library_id, kind, title, sort_title, year, overview, poster_path, backdrop_path, original_title, release_date, content_rating, runtime_seconds, metadata_status, metadata_source, metadata_updated_at, external IDs |
+| `media_items` | id, library_id, **parent_id**, kind, title, sort_title, year, overview, poster_path, backdrop_path, original_title, release_date, content_rating, runtime_seconds, **season_number**, **episode_number**, **episode_title**, **absolute_episode_number**, metadata_status, metadata_source, metadata_updated_at, external IDs |
 | `media_versions` | id, media_item_id, label, quality_label, resolution, video_codec, audio_codec, container, duration |
 | `media_files` | id, node_id, library_id, media_item_id, media_version_id, path, filename, extension, size_bytes, file_hash, missing_at |
 | `watch_states` | id, user_id, media_item_id, position_seconds, duration_seconds, completed |
