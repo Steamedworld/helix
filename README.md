@@ -288,17 +288,37 @@ The DB schema is federation-aware from day one: every `media_file` carries a `no
 
 ## Contributing
 
-Issues and pull requests are welcome. Please open an issue to discuss large changes before starting implementation.
-
-**To run the full test suite before submitting:**
-
-```bash
-cd packages/backend && pnpm test
-pnpm -r run check
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide, including the
+contribution license agreement required for dual-licensing compatibility.
 
 ---
 
 ## License
 
-[MIT](LICENSE)
+Helix is dual-licensed.
+
+**Community license — AGPL-3.0-or-later**
+
+Community use is available under the [GNU Affero General Public License v3.0 or
+later](LICENSE). If your use case is compatible with the AGPL — including the
+requirement to make source code available when you run a modified version as a
+network service — no additional agreement is needed.
+
+**Commercial license**
+
+A separate commercial license is available for use cases that require terms
+outside the AGPL: closed-source distribution, proprietary embedding, or hosted
+commercial offerings without AGPL source-availability obligations. Commercial
+rights are only granted through a signed written agreement with the copyright
+holder. See [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md) for contact
+information.
+
+**Prior MIT releases**
+
+Versions of Helix published at or before commit `b7a56a19` ("Prepare repository
+for publication") were released under the MIT License. Those releases remain
+available under MIT. The dual-license model applies from the transition commit
+forward.
+
+*This is not legal advice. Consult a qualified attorney to determine which
+license applies to your situation.*

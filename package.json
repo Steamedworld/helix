@@ -2,6 +2,7 @@
   "name": "helix",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-or-later",
   "scripts": {
     "dev": "concurrently -n backend,frontend -c cyan,magenta \"pnpm --filter @helix/backend dev\" \"pnpm --filter @helix/frontend dev\"",
     "build": "pnpm --filter @helix/shared build && pnpm --filter @helix/backend build && pnpm --filter @helix/frontend build",
