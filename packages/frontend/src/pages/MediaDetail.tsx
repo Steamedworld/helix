@@ -1,11 +1,21 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { getMediaItem } from '../api/media'
 import { upsertWatchState } from '../api/watchstate'
+import {
+  getPlaybackSource,
+  createPlaybackSession,
+  updatePlaybackSession,
+} from '../api/playback'
 import type { MediaItemDetail } from '../api/media'
+import type { PlaybackSource } from '../api/playback'
 import type { WatchState } from '@helix/shared'
 
 const DEFAULT_USER_ID = 'default'
+// Save progress at most every N milliseconds
+const SAVE_DEBOUNCE_MS = 5000
+// Mark completed when this fraction of the video has been watched
+const COMPLETION_THRESHOLD = 0.9
 
 function formatBytes(bytes: number | null) {
   if (bytes === null) return '—'
@@ -15,6 +25,221 @@ function formatBytes(bytes: number | null) {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
+function formatResolution(w: number | null, h: number | null) {
+  if (!w || !h) return null
+  return `${w}×${h}`
+}
+
+function formatDuration(seconds: number | null) {
+  if (!seconds) return null
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = Math.round(seconds % 60)
+  if (h > 0) return `${h}h ${m}m ${s}s`
+  return `${m}m ${s}s`
+}
+
+// ─── Inline video player ───────────────────────────────────────────────────────
+
+interface PlayerProps {
+  source: PlaybackSource
+  mediaItemId: string
+  initialPosition: number
+  onProgressSaved: (ws: WatchState) => void
+}
+
+function DirectPlayer({ source, mediaItemId, initialPosition, onProgressSaved }: PlayerProps) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const sessionIdRef = useRef<string | null>(null)
+  const lastSavedRef = useRef<number>(0)
+  const durationRef = useRef<number | null>(null)
+
+  // Create session on mount
+  useEffect(() => {
+    createPlaybackSession({
+      media_item_id: mediaItemId,
+      media_version_id: source.versionId,
+      media_file_id: source.fileId,
+    }).then((res) => {
+      if (res.ok) sessionIdRef.current = res.data.id
+    })
+
+    // Cleanup: mark session stopped on unmount
+    return () => {
+      if (sessionIdRef.current) {
+        updatePlaybackSession(sessionIdRef.current, { state: 'stopped' })
+      }
+    }
+  }, [mediaItemId, source.fileId, source.versionId])
+
+  // Seek to saved position once video is ready
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || initialPosition <= 0) return
+
+    const onLoadedMetadata = () => {
+      video.currentTime = initialPosition
+    }
+    video.addEventListener('loadedmetadata', onLoadedMetadata)
+    return () => video.removeEventListener('loadedmetadata', onLoadedMetadata)
+  }, [initialPosition])
+
+  const saveProgress = useCallback(
+    async (position: number, completed: boolean) => {
+      const duration = durationRef.current ?? undefined
+      const res = await upsertWatchState(mediaItemId, {
+        user_id: DEFAULT_USER_ID,
+        position_seconds: position,
+        duration_seconds: duration,
+        completed,
+      })
+      if (res.ok) onProgressSaved(res.data)
+    },
+    [mediaItemId, onProgressSaved]
+  )
+
+  const handleTimeUpdate = useCallback(() => {
+    const video = videoRef.current
+    if (!video) return
+
+    durationRef.current = video.duration || null
+    const now = Date.now()
+    if (now - lastSavedRef.current < SAVE_DEBOUNCE_MS) return
+    lastSavedRef.current = now
+
+    const position = video.currentTime
+    const duration = video.duration
+    const completed = duration > 0 && position / duration >= COMPLETION_THRESHOLD
+
+    saveProgress(position, completed)
+  }, [saveProgress])
+
+  const handlePlay = useCallback(() => {
+    if (sessionIdRef.current) {
+      updatePlaybackSession(sessionIdRef.current, { state: 'playing' })
+    }
+  }, [])
+
+  const handlePause = useCallback(() => {
+    const video = videoRef.current
+    if (!video) return
+
+    if (sessionIdRef.current) {
+      updatePlaybackSession(sessionIdRef.current, { state: 'paused' })
+    }
+    // Save position on pause
+    const duration = video.duration || null
+    durationRef.current = duration
+    const completed = duration !== null && video.currentTime / duration >= COMPLETION_THRESHOLD
+    saveProgress(video.currentTime, completed)
+  }, [saveProgress])
+
+  const handleEnded = useCallback(() => {
+    const video = videoRef.current
+    if (!video) return
+
+    if (sessionIdRef.current) {
+      updatePlaybackSession(sessionIdRef.current, { state: 'stopped' })
+    }
+    saveProgress(video.currentTime, true)
+  }, [saveProgress])
+
+  const handleError = useCallback(() => {
+    if (sessionIdRef.current) {
+      updatePlaybackSession(sessionIdRef.current, { state: 'error' })
+    }
+  }, [])
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <video
+        ref={videoRef}
+        src={source.streamUrl}
+        controls
+        style={{
+          width: '100%',
+          borderRadius: 'var(--radius-lg)',
+          background: '#000',
+          display: 'block',
+        }}
+        onTimeUpdate={handleTimeUpdate}
+        onPlay={handlePlay}
+        onPause={handlePause}
+        onEnded={handleEnded}
+        onError={handleError}
+      />
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 12,
+          fontSize: 12,
+          color: 'var(--text-muted)',
+          padding: '0 4px',
+        }}
+      >
+        <span style={{ color: 'var(--accent)', fontWeight: 500 }}>Direct Play from Helix Local.</span>
+        <span>{source.filename}</span>
+        {source.quality_label && <span>{source.quality_label}</span>}
+        {formatResolution(source.resolution_width, source.resolution_height) && (
+          <span>{formatResolution(source.resolution_width, source.resolution_height)}</span>
+        )}
+        {source.container && <span>{source.container.toUpperCase()}</span>}
+        {source.video_codec && <span>{source.video_codec}</span>}
+      </div>
+    </div>
+  )
+}
+
+// ─── Unavailable state ─────────────────────────────────────────────────────────
+
+function PlayerUnavailable({ reason }: { reason: string }) {
+  return (
+    <div
+      style={{
+        background: 'var(--bg-elevated)',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-lg)',
+        aspectRatio: '16/9',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        color: 'var(--text-muted)',
+      }}
+    >
+      <span style={{ fontSize: 32 }}>⊘</span>
+      <span style={{ fontSize: 14, fontWeight: 500 }}>File unavailable</span>
+      <span style={{ fontSize: 12, maxWidth: 300, textAlign: 'center' }}>{reason}</span>
+    </div>
+  )
+}
+
+// ─── Loading state ─────────────────────────────────────────────────────────────
+
+function PlayerLoading() {
+  return (
+    <div
+      style={{
+        background: 'var(--bg-elevated)',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-lg)',
+        aspectRatio: '16/9',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: 'var(--text-muted)',
+        fontSize: 14,
+      }}
+    >
+      Checking playback source…
+    </div>
+  )
+}
+
+// ─── MediaDetail page ──────────────────────────────────────────────────────────
+
 export function MediaDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -23,11 +248,34 @@ export function MediaDetail() {
   const [loading, setLoading] = useState(true)
   const [marking, setMarking] = useState(false)
 
+  // Playback source
+  const [playbackSource, setPlaybackSource] = useState<PlaybackSource | null>(null)
+  const [sourceUnavailable, setSourceUnavailable] = useState<string | null>(null)
+  const [sourceLoading, setSourceLoading] = useState(true)
+
   useEffect(() => {
     if (!id) return
     getMediaItem(id).then((res) => {
       if (res.ok) setItem(res.data)
       setLoading(false)
+    })
+  }, [id])
+
+  useEffect(() => {
+    if (!id) return
+    setSourceLoading(true)
+    getPlaybackSource(id).then((res) => {
+      if (res.ok) {
+        const data = res.data
+        if (data.unavailable) {
+          setSourceUnavailable(data.reason)
+        } else {
+          setPlaybackSource(data.source)
+        }
+      } else {
+        setSourceUnavailable('Could not fetch playback source.')
+      }
+      setSourceLoading(false)
     })
   }, [id])
 
@@ -57,6 +305,8 @@ export function MediaDetail() {
       ? (watchState.position_seconds / watchState.duration_seconds) * 100
       : 0
     : null
+
+  const savedPosition = watchState && !watchState.completed ? watchState.position_seconds : 0
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 28, maxWidth: 800 }}>
@@ -101,24 +351,21 @@ export function MediaDetail() {
         )}
       </div>
 
-      {/* Placeholder video player */}
-      <div
-        style={{
-          background: 'var(--bg-elevated)',
-          border: '1px solid var(--border)',
-          borderRadius: 'var(--radius-lg)',
-          aspectRatio: '16/9',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 8,
-          color: 'var(--text-muted)',
-        }}
-      >
-        <span style={{ fontSize: 40 }}>▶</span>
-        <span style={{ fontSize: 14 }}>Video playback coming soon</span>
-      </div>
+      {/* Player area */}
+      <section>
+        {sourceLoading ? (
+          <PlayerLoading />
+        ) : playbackSource ? (
+          <DirectPlayer
+            source={playbackSource}
+            mediaItemId={item.id}
+            initialPosition={savedPosition}
+            onProgressSaved={setWatchState}
+          />
+        ) : (
+          <PlayerUnavailable reason={sourceUnavailable ?? 'Unknown error'} />
+        )}
+      </section>
 
       {/* Watch state */}
       <section>
@@ -144,7 +391,9 @@ export function MediaDetail() {
               </div>
             )}
             <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-              {watchState.completed ? 'Watched' : `${Math.round(watchState.position_seconds)}s watched`}
+              {watchState.completed
+                ? 'Watched'
+                : `${Math.round(watchState.position_seconds)}s watched`}
             </p>
           </div>
         ) : (
@@ -191,17 +440,23 @@ export function MediaDetail() {
                 }}
               >
                 <span style={{ color: 'var(--text)' }}>{v.label ?? 'Default'}</span>
-                {v.container && <span style={{ color: 'var(--text-muted)' }}>{v.container.toUpperCase()}</span>}
-                {v.quality_label && <span style={{ color: 'var(--text-muted)' }}>{v.quality_label}</span>}
+                {v.container && (
+                  <span style={{ color: 'var(--text-muted)' }}>{v.container.toUpperCase()}</span>
+                )}
+                {v.quality_label && (
+                  <span style={{ color: 'var(--text-muted)' }}>{v.quality_label}</span>
+                )}
                 {v.resolution_width && v.resolution_height && (
                   <span style={{ color: 'var(--text-muted)' }}>
                     {v.resolution_width}×{v.resolution_height}
                   </span>
                 )}
-                {v.video_codec && <span style={{ color: 'var(--text-muted)' }}>{v.video_codec}</span>}
-                {v.duration_seconds && (
+                {v.video_codec && (
+                  <span style={{ color: 'var(--text-muted)' }}>{v.video_codec}</span>
+                )}
+                {v.duration_seconds != null && (
                   <span style={{ color: 'var(--text-muted)' }}>
-                    {Math.floor(v.duration_seconds / 60)}m {Math.round(v.duration_seconds % 60)}s
+                    {formatDuration(v.duration_seconds)}
                   </span>
                 )}
               </div>

@@ -6,10 +6,12 @@ import { libraryRoutes } from './routes/libraries'
 import { mediaRoutes } from './routes/media'
 import { nodeRoutes } from './routes/nodes'
 import { watchStateRoutes } from './routes/watchstate'
+import { streamRoutes } from './routes/stream'
+import { playbackRoutes } from './routes/playback'
 import { err } from './lib/response'
 import type { DrizzleDB } from './db/client'
 
-export function buildServer(db: DrizzleDB, localNodeId: string) {
+export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string | null) {
   const app = Fastify({
     logger:
       config.nodeEnv === 'development'
@@ -43,6 +45,8 @@ export function buildServer(db: DrizzleDB, localNodeId: string) {
   app.register(mediaRoutes, {
     prefix: '/api/v1/media',
     db,
+    localNodeId,
+    baseUrl: baseUrl ?? null,
   } as Parameters<typeof mediaRoutes>[1] & { prefix: string })
   app.register(nodeRoutes, {
     prefix: '/api/v1/nodes',
@@ -52,6 +56,16 @@ export function buildServer(db: DrizzleDB, localNodeId: string) {
     prefix: '/api/v1/watchstate',
     db,
   } as Parameters<typeof watchStateRoutes>[1] & { prefix: string })
+  app.register(streamRoutes, {
+    prefix: '/api/v1',
+    db,
+    localNodeId,
+  } as Parameters<typeof streamRoutes>[1] & { prefix: string })
+  app.register(playbackRoutes, {
+    prefix: '/api/v1/playback-sessions',
+    db,
+    localNodeId,
+  } as Parameters<typeof playbackRoutes>[1] & { prefix: string })
 
   // Global error handler
   app.setErrorHandler((error, _req, reply) => {

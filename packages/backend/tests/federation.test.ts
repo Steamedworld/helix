@@ -45,7 +45,7 @@ describe('federation stubs', () => {
     expect(result).toEqual([])
   })
 
-  it('selectBestSource returns null', async () => {
+  it('selectBestSource returns null when no db provided', async () => {
     const result = await selectBestSource('media-1', 'user-1')
     expect(result).toBeNull()
   })

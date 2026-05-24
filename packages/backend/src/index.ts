@@ -16,7 +16,8 @@ async function main() {
   const localNodeId = await bootstrap(db, config.dataDir)
 
   // Build and start the server
-  const app = buildServer(db, localNodeId)
+  const baseUrl = process.env.BASE_URL ?? `http://${config.host === '0.0.0.0' ? 'localhost' : config.host}:${config.port}`
+  const app = buildServer(db, localNodeId, baseUrl)
 
   try {
     await app.listen({ port: config.port, host: config.host })

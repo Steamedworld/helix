@@ -4,12 +4,13 @@ import { mediaItems, mediaVersions, mediaFiles } from '../db/schema'
 import { ok, err } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
 import type { MediaItemKind } from '@helix/shared'
+import { getPlaybackSource } from '../services/federation/sourceSelection'
 
 export async function mediaRoutes(
   app: FastifyInstance,
-  opts: { db: DrizzleDB }
+  opts: { db: DrizzleDB; localNodeId?: string; baseUrl?: string | null }
 ) {
-  const { db } = opts
+  const { db, localNodeId, baseUrl } = opts
 
   // GET /media
   app.get<{
@@ -99,5 +100,26 @@ export async function mediaRoutes(
       .where(eq(mediaFiles.media_item_id, req.params.id))
 
     return ok(files)
+  })
+
+  // GET /media/:id/playback-source — pick best available local file
+  app.get<{ Params: { id: string } }>('/:id/playback-source', async (req, reply) => {
+    if (!localNodeId) {
+      reply.status(503)
+      return err('Local node not available')
+    }
+
+    const [item] = await db
+      .select({ id: mediaItems.id })
+      .from(mediaItems)
+      .where(eq(mediaItems.id, req.params.id))
+
+    if (!item) {
+      reply.status(404)
+      return err('Media item not found')
+    }
+
+    const result = await getPlaybackSource(req.params.id, db, localNodeId, baseUrl ?? null)
+    return ok(result)
   })
 }
