@@ -10,40 +10,31 @@ import {
 } from '../api/integrations'
 import type { Integration, IntegrationKind, SyncResult } from '../api/integrations'
 
-// ─── Status badge ─────────────────────────────────────────────────────────────
+// ─── Status chip ──────────────────────────────────────────────────────────────
 
-function StatusBadge({ status }: { status: Integration['status'] }) {
-  const styles: Record<Integration['status'], { bg: string; text: string; label: string }> = {
-    online: { bg: 'rgba(76,175,125,0.12)', text: '#4caf7d', label: 'Online' },
-    offline: { bg: 'rgba(255,95,95,0.12)', text: 'var(--danger)', label: 'Offline' },
-    error: { bg: 'rgba(255,95,95,0.12)', text: 'var(--danger)', label: 'Error' },
-    unknown: { bg: 'rgba(122,122,138,0.12)', text: 'var(--text-muted)', label: 'Unknown' },
+function StatusChip({ status }: { status: Integration['status'] }) {
+  if (status === 'online') {
+    return (
+      <span className="chip chip-accent">Online</span>
+    )
   }
-  const s = styles[status]
-  return (
-    <span
-      style={{
-        fontSize: 11,
-        padding: '2px 8px',
-        background: s.bg,
-        borderRadius: 4,
-        color: s.text,
-        fontWeight: 500,
-        whiteSpace: 'nowrap',
-      }}
-    >
-      {s.label}
-    </span>
-  )
+  if (status === 'offline' || status === 'error') {
+    return (
+      <span className="chip" style={{ background: 'oklch(0.70 0.13 25 / 0.10)', borderColor: 'oklch(0.70 0.13 25 / 0.35)', color: 'var(--bad)' }}>
+        {status === 'offline' ? 'Offline' : 'Error'}
+      </span>
+    )
+  }
+  return <span className="chip chip-ghost">Unknown</span>
 }
 
 // ─── Timestamp display ────────────────────────────────────────────────────────
 
 function RelativeTime({ ts }: { ts: number | null }) {
-  if (!ts) return <span style={{ color: 'var(--text-muted)' }}>Never</span>
+  if (!ts) return <span style={{ color: 'var(--ink-4)' }}>Never</span>
   const d = new Date(ts)
   return (
-    <span style={{ color: 'var(--text-muted)' }} title={d.toISOString()}>
+    <span style={{ color: 'var(--ink-3)' }} title={d.toISOString()}>
       {d.toLocaleString()}
     </span>
   )
@@ -81,45 +72,26 @@ function AddIntegrationForm({ onCreated, onCancel }: AddFormProps) {
     }
   }
 
-  const inputStyle: React.CSSProperties = {
-    width: '100%',
-    padding: '8px 10px',
-    background: 'var(--bg)',
-    border: '1px solid var(--border)',
-    borderRadius: 'var(--radius)',
-    color: 'var(--text)',
-    fontSize: 13,
-    boxSizing: 'border-box',
-  }
-
-  const labelStyle: React.CSSProperties = {
-    fontSize: 12,
-    color: 'var(--text-muted)',
-    marginBottom: 4,
-    display: 'block',
-  }
-
   return (
     <form
       onSubmit={handleSubmit}
+      className="surface"
       style={{
-        background: 'var(--bg-surface)',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-lg)',
         padding: '20px',
         display: 'flex',
         flexDirection: 'column',
         gap: 14,
       }}
     >
-      <h3 style={{ fontSize: 15, fontWeight: 600, margin: 0 }}>Add Integration</h3>
+      <h3 style={{ fontSize: 15, fontWeight: 600, margin: 0, color: 'var(--ink-1)' }}>Add Integration</h3>
 
       <div>
-        <label style={labelStyle}>Type</label>
+        <label className="field-label">Type</label>
         <select
           value={kind}
           onChange={(e) => setKind(e.target.value as IntegrationKind)}
-          style={inputStyle}
+          className="input"
+          style={{ height: 38 }}
         >
           <option value="radarr">Radarr (Movies)</option>
           <option value="sonarr">Sonarr (TV Shows)</option>
@@ -127,73 +99,52 @@ function AddIntegrationForm({ onCreated, onCancel }: AddFormProps) {
       </div>
 
       <div>
-        <label style={labelStyle}>Name</label>
+        <label className="field-label">Name</label>
         <input
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="My Radarr"
-          style={inputStyle}
+          className="input"
         />
       </div>
 
       <div>
-        <label style={labelStyle}>Base URL</label>
+        <label className="field-label">Base URL</label>
         <input
           type="url"
           value={baseUrl}
           onChange={(e) => setBaseUrl(e.target.value)}
           placeholder="http://localhost:7878"
-          style={inputStyle}
+          className="input"
         />
       </div>
 
       <div>
-        <label style={labelStyle}>API Key</label>
+        <label className="field-label">API Key</label>
         <input
           type="password"
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
           placeholder="From Settings → General → Security"
-          style={inputStyle}
+          className="input"
           autoComplete="off"
         />
       </div>
 
       {error && (
-        <p style={{ fontSize: 12, color: 'var(--danger)', margin: 0 }}>{error}</p>
+        <p style={{ fontSize: 12, color: 'var(--bad)', margin: 0 }}>{error}</p>
       )}
 
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-        <button
-          type="button"
-          onClick={onCancel}
-          style={{
-            padding: '7px 16px',
-            background: 'var(--bg-elevated)',
-            border: '1px solid var(--border)',
-            borderRadius: 'var(--radius)',
-            color: 'var(--text-muted)',
-            fontSize: 13,
-            cursor: 'pointer',
-          }}
-        >
+        <button type="button" onClick={onCancel} className="btn btn-ghost btn-sm">
           Cancel
         </button>
         <button
           type="submit"
           disabled={saving}
-          style={{
-            padding: '7px 16px',
-            background: 'var(--accent)',
-            border: 'none',
-            borderRadius: 'var(--radius)',
-            color: '#fff',
-            fontSize: 13,
-            fontWeight: 600,
-            cursor: saving ? 'default' : 'pointer',
-            opacity: saving ? 0.7 : 1,
-          }}
+          className="btn btn-primary btn-sm"
+          style={{ opacity: saving ? 0.7 : 1 }}
         >
           {saving ? 'Adding…' : 'Add Integration'}
         </button>
@@ -264,10 +215,8 @@ function IntegrationCard({ integration, onUpdated, onDeleted }: IntegrationCardP
 
   return (
     <div
+      className="surface"
       style={{
-        background: 'var(--bg-surface)',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-lg)',
         padding: '16px 20px',
         display: 'flex',
         flexDirection: 'column',
@@ -279,47 +228,34 @@ function IntegrationCard({ integration, onUpdated, onDeleted }: IntegrationCardP
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 15, fontWeight: 600 }}>{integration.name}</span>
-            <span
-              style={{
-                fontSize: 11,
-                padding: '1px 6px',
-                background: 'var(--bg-elevated)',
-                border: '1px solid var(--border)',
-                borderRadius: 3,
-                color: 'var(--text-muted)',
-              }}
-            >
-              {integration.kind}
-            </span>
-            <StatusBadge status={integration.status} />
+            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--ink-1)' }}>{integration.name}</span>
+            <span className="chip chip-mono">{integration.kind}</span>
+            <StatusChip status={integration.status} />
             {!integration.enabled && (
-              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>disabled</span>
+              <span className="chip chip-ghost">disabled</span>
             )}
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+          <div className="mono" style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 4 }}>
             {integration.baseUrl}
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-            Key: <code style={{ fontFamily: 'monospace', letterSpacing: 1 }}>{integration.apiKeyMasked}</code>
+          <div className="mono" style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 2 }}>
+            Key: {integration.apiKeyMasked}
           </div>
         </div>
       </div>
 
       {/* Timestamps */}
-      <div style={{ display: 'flex', gap: 20, fontSize: 11, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 20, fontSize: 11, flexWrap: 'wrap', color: 'var(--ink-4)' }}>
         <span>
-          <span style={{ color: 'var(--text-muted)' }}>Last checked: </span>
-          <RelativeTime ts={integration.lastCheckedAt} />
+          Last checked: <RelativeTime ts={integration.lastCheckedAt} />
         </span>
         <span>
-          <span style={{ color: 'var(--text-muted)' }}>Last synced: </span>
-          <RelativeTime ts={integration.lastSyncedAt} />
+          Last synced: <RelativeTime ts={integration.lastSyncedAt} />
         </span>
       </div>
 
       {integration.lastError && (
-        <p style={{ fontSize: 12, color: 'var(--danger)', margin: 0 }}>{integration.lastError}</p>
+        <p style={{ fontSize: 12, color: 'var(--bad)', margin: 0 }}>{integration.lastError}</p>
       )}
 
       {/* Actions */}
@@ -327,62 +263,32 @@ function IntegrationCard({ integration, onUpdated, onDeleted }: IntegrationCardP
         <button
           onClick={handleTest}
           disabled={testing}
-          style={{
-            padding: '5px 12px',
-            background: 'var(--bg-elevated)',
-            border: '1px solid var(--border)',
-            borderRadius: 'var(--radius)',
-            color: 'var(--text-muted)',
-            fontSize: 12,
-            cursor: testing ? 'default' : 'pointer',
-            opacity: testing ? 0.6 : 1,
-          }}
+          className="btn btn-sm"
+          style={{ opacity: testing ? 0.6 : 1 }}
         >
           {testing ? 'Testing…' : 'Test'}
         </button>
         <button
           onClick={handleSync}
           disabled={syncing || !integration.enabled}
-          style={{
-            padding: '5px 12px',
-            background: 'var(--bg-elevated)',
-            border: '1px solid var(--border)',
-            borderRadius: 'var(--radius)',
-            color: 'var(--text-muted)',
-            fontSize: 12,
-            cursor: (syncing || !integration.enabled) ? 'default' : 'pointer',
-            opacity: (syncing || !integration.enabled) ? 0.6 : 1,
-          }}
+          className="btn btn-sm"
+          style={{ opacity: (syncing || !integration.enabled) ? 0.6 : 1 }}
         >
           {syncing ? 'Syncing…' : 'Sync'}
         </button>
-        <button
-          onClick={handleToggleEnabled}
-          style={{
-            padding: '5px 12px',
-            background: 'var(--bg-elevated)',
-            border: '1px solid var(--border)',
-            borderRadius: 'var(--radius)',
-            color: 'var(--text-muted)',
-            fontSize: 12,
-            cursor: 'pointer',
-          }}
-        >
+        <button onClick={handleToggleEnabled} className="btn btn-sm btn-ghost">
           {integration.enabled ? 'Disable' : 'Enable'}
         </button>
         <button
           onClick={handleDelete}
           disabled={deleting}
+          className="btn btn-sm"
           style={{
-            padding: '5px 12px',
-            background: 'rgba(255,95,95,0.08)',
-            border: '1px solid rgba(255,95,95,0.3)',
-            borderRadius: 'var(--radius)',
-            color: 'var(--danger)',
-            fontSize: 12,
-            cursor: deleting ? 'default' : 'pointer',
-            opacity: deleting ? 0.6 : 1,
             marginLeft: 'auto',
+            opacity: deleting ? 0.6 : 1,
+            background: 'oklch(0.70 0.13 25 / 0.08)',
+            borderColor: 'oklch(0.70 0.13 25 / 0.30)',
+            color: 'var(--bad)',
           }}
         >
           {deleting ? 'Deleting…' : 'Delete'}
@@ -391,34 +297,38 @@ function IntegrationCard({ integration, onUpdated, onDeleted }: IntegrationCardP
 
       {/* Feedback messages */}
       {testMessage && (
-        <p style={{
-          fontSize: 12,
-          color: testMessage.startsWith('Connected') ? '#4caf7d' : 'var(--danger)',
-          margin: 0,
-          padding: '6px 10px',
-          background: 'var(--bg-elevated)',
-          borderRadius: 'var(--radius)',
-        }}>
+        <p
+          style={{
+            fontSize: 12,
+            color: testMessage.startsWith('Connected') ? 'var(--ok)' : 'var(--bad)',
+            margin: 0,
+            padding: '6px 10px',
+            background: 'var(--bg-3)',
+            borderRadius: 'var(--r-2)',
+          }}
+        >
           {testMessage}
         </p>
       )}
 
       {syncResult && (
-        <div style={{
-          fontSize: 12,
-          padding: '8px 12px',
-          background: 'var(--bg-elevated)',
-          borderRadius: 'var(--radius)',
-        }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>Sync complete</div>
-          <div style={{ color: 'var(--text-muted)', display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+        <div
+          style={{
+            fontSize: 12,
+            padding: '8px 12px',
+            background: 'var(--bg-3)',
+            borderRadius: 'var(--r-2)',
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: 4, color: 'var(--ink-1)' }}>Sync complete</div>
+          <div style={{ color: 'var(--ink-3)', display: 'flex', gap: 16, flexWrap: 'wrap' }}>
             <span>Fetched: {syncResult.itemsFetched}</span>
             <span>Mapped: {syncResult.itemsMapped}</span>
             <span>Created: {syncResult.linksCreated}</span>
             <span>Updated: {syncResult.linksUpdated}</span>
           </div>
           {syncResult.errors.length > 0 && (
-            <div style={{ color: 'var(--danger)', marginTop: 4 }}>
+            <div style={{ color: 'var(--bad)', marginTop: 4 }}>
               {syncResult.errors.map((e, i) => <div key={i}>{e}</div>)}
             </div>
           )}
@@ -439,7 +349,7 @@ export function Integrations() {
   // Non-admin: should not be accessible
   if (user?.role !== 'admin') {
     return (
-      <div style={{ color: 'var(--danger)', fontSize: 14 }}>
+      <div style={{ color: 'var(--bad)', fontSize: 14 }}>
         Access denied. Admin privileges required to manage integrations.
       </div>
     )
@@ -469,8 +379,13 @@ export function Integrations() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24, maxWidth: 720 }}>
       {/* Header */}
       <div>
-        <h1 style={{ fontSize: 24, fontWeight: 600, marginBottom: 4 }}>Integrations</h1>
-        <p style={{ color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.6 }}>
+        <p className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '.14em', marginBottom: 6 }}>
+          ADMIN
+        </p>
+        <h1 className="display" style={{ fontSize: 48, lineHeight: 1, letterSpacing: '-0.02em' }}>
+          Integrations
+        </h1>
+        <p style={{ color: 'var(--ink-3)', fontSize: 14, lineHeight: 1.6, marginTop: 8 }}>
           Connect Radarr and Sonarr to see download management status alongside your media.
           Helix is read-only — it displays monitoring status and quality profiles but never
           modifies your Arr configuration.
@@ -482,23 +397,13 @@ export function Integrations() {
         <div>
           <button
             onClick={() => setShowAddForm(true)}
-            style={{
-              padding: '8px 18px',
-              background: 'var(--accent)',
-              border: 'none',
-              borderRadius: 'var(--radius)',
-              color: '#fff',
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
+            className="btn btn-primary"
           >
             + Add Integration
           </button>
         </div>
       )}
 
-      {/* Add form */}
       {showAddForm && (
         <AddIntegrationForm
           onCreated={handleCreated}
@@ -506,20 +411,17 @@ export function Integrations() {
         />
       )}
 
-      {/* List */}
       {loading && (
-        <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Loading integrations…</p>
+        <p style={{ fontSize: 13, color: 'var(--ink-3)' }}>Loading integrations…</p>
       )}
 
       {!loading && integrationList.length === 0 && !showAddForm && (
         <div
+          className="surface"
           style={{
             padding: '32px',
             textAlign: 'center',
-            background: 'var(--bg-surface)',
-            border: '1px solid var(--border)',
-            borderRadius: 'var(--radius-lg)',
-            color: 'var(--text-muted)',
+            color: 'var(--ink-3)',
             fontSize: 14,
           }}
         >
@@ -538,19 +440,20 @@ export function Integrations() {
 
       {/* Info box */}
       <div
+        className="surface"
         style={{
           padding: '12px 16px',
-          background: 'var(--bg-elevated)',
-          border: '1px solid var(--border)',
-          borderRadius: 'var(--radius)',
+          background: 'var(--bg-3)',
           fontSize: 12,
-          color: 'var(--text-muted)',
+          color: 'var(--ink-3)',
           lineHeight: 1.6,
         }}
       >
-        <strong style={{ color: 'var(--text)' }}>API key security:</strong> Keys are encrypted
+        <strong style={{ color: 'var(--ink-1)' }}>API key security:</strong> Keys are encrypted
         at rest with AES-256-GCM and never returned to the browser in plaintext. The key file
-        is stored at <code style={{ fontFamily: 'monospace' }}>data/.helix_key</code> (not committed to git).
+        is stored at{' '}
+        <code className="mono" style={{ fontSize: 11 }}>data/.helix_key</code>{' '}
+        (not committed to git).
       </div>
     </div>
   )

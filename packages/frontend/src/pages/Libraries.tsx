@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { listLibraries } from '../api/libraries'
 import type { Library } from '@helix/shared'
 import { EmptyState } from '../components/EmptyState'
+import { IconFilm, IconTv, IconList } from '../components/Icons'
 
 const KIND_LABELS: Record<string, string> = {
   movies: 'Movies',
@@ -13,9 +14,15 @@ const KIND_LABELS: Record<string, string> = {
 }
 
 const SCAN_STATUS_COLORS: Record<string, string> = {
-  idle: 'var(--text-muted)',
+  idle: 'var(--ink-4)',
   scanning: 'var(--accent)',
-  error: 'var(--danger)',
+  error: 'var(--bad)',
+}
+
+function LibraryIcon({ kind }: { kind: string }) {
+  if (kind === 'movies') return <IconFilm size={20} style={{ color: 'var(--ink-3)' }} />
+  if (kind === 'tv') return <IconTv size={20} style={{ color: 'var(--ink-3)' }} />
+  return <IconList size={20} style={{ color: 'var(--ink-3)' }} />
 }
 
 export function Libraries() {
@@ -39,34 +46,33 @@ export function Libraries() {
     : libraries
 
   if (loading) {
-    return <div style={{ color: 'var(--text-muted)' }}>Loading…</div>
+    return <div style={{ color: 'var(--ink-3)' }}>Loading…</div>
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div>
-          <h1 style={{ fontSize: 24, fontWeight: 600 }}>
-            {filterKind ? KIND_LABELS[filterKind] ?? filterKind : 'Libraries'}
+      {/* Page header */}
+      <div style={{ marginBottom: 8 }}>
+        <p className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '.14em', marginBottom: 6 }}>
+          LIBRARIES
+        </p>
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16 }}>
+          <h1 className="display" style={{ fontSize: 48, lineHeight: 1, letterSpacing: '-0.02em' }}>
+            Your <em style={{ color: 'var(--accent)', fontStyle: 'italic' }}>collection</em>
           </h1>
-          <p style={{ color: 'var(--text-muted)', fontSize: 14, marginTop: 4 }}>
-            {filtered.length} {filtered.length === 1 ? 'library' : 'libraries'}
-          </p>
+          <button
+            onClick={() => navigate('/libraries/new')}
+            className="btn btn-primary"
+            style={{ marginBottom: 4 }}
+          >
+            + Add Library
+          </button>
         </div>
-        <button
-          onClick={() => navigate('/libraries/new')}
-          style={{
-            padding: '8px 16px',
-            background: 'var(--accent)',
-            color: 'white',
-            border: 'none',
-            borderRadius: 'var(--radius)',
-            fontSize: 14,
-            fontWeight: 500,
-          }}
-        >
-          + Add Library
-        </button>
+        {filterKind && (
+          <p className="muted" style={{ fontSize: 14, marginTop: 6 }}>
+            Showing: {KIND_LABELS[filterKind] ?? filterKind} · {filtered.length} {filtered.length === 1 ? 'library' : 'libraries'}
+          </p>
+        )}
       </div>
 
       {filtered.length === 0 ? (
@@ -77,82 +83,93 @@ export function Libraries() {
           ctaHref="/libraries/new"
         />
       ) : (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-            gap: 16,
-          }}
-        >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {filtered.map((lib) => (
             <div
               key={lib.id}
+              className="surface"
               onClick={() => navigate(`/libraries/${lib.id}`)}
               style={{
-                background: 'var(--bg-surface)',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius-lg)',
                 padding: 20,
+                display: 'flex',
+                gap: 24,
                 cursor: 'pointer',
-                transition: 'border-color 0.15s',
+                transition: 'border-color var(--d-fast) var(--ease)',
               }}
               onMouseEnter={(e) => {
-                ;(e.currentTarget as HTMLDivElement).style.borderColor = 'var(--accent)'
+                ;(e.currentTarget as HTMLDivElement).style.borderColor = 'var(--accent-line)'
               }}
               onMouseLeave={(e) => {
-                ;(e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border)'
+                ;(e.currentTarget as HTMLDivElement).style.borderColor = 'var(--line-1)'
               }}
             >
+              {/* Icon square */}
               <div
                 style={{
+                  width: 80,
+                  height: 80,
+                  borderRadius: 'var(--r-3)',
+                  background: 'var(--bg-3)',
+                  border: '1px solid var(--line-1)',
                   display: 'flex',
-                  alignItems: 'flex-start',
-                  justifyContent: 'space-between',
-                  marginBottom: 12,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
                 }}
               >
-                <h3 style={{ fontSize: 16, fontWeight: 600 }}>{lib.name}</h3>
-                <span
-                  style={{
-                    fontSize: 11,
-                    padding: '3px 8px',
-                    background: 'var(--bg-elevated)',
-                    borderRadius: 4,
-                    color: 'var(--text-muted)',
-                    fontWeight: 500,
+                <LibraryIcon kind={lib.kind} />
+              </div>
+
+              {/* Info */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
+                  <h3 className="display" style={{ fontSize: 20, lineHeight: 1 }}>{lib.name}</h3>
+                  <span className="chip chip-mono">{KIND_LABELS[lib.kind] ?? lib.kind}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginLeft: 'auto' }}>
+                    <div
+                      style={{
+                        width: 7,
+                        height: 7,
+                        borderRadius: '50%',
+                        background: SCAN_STATUS_COLORS[lib.scan_status] ?? 'var(--ink-4)',
+                      }}
+                    />
+                    <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                      {lib.scan_status === 'scanning'
+                        ? 'Scanning…'
+                        : lib.scan_status === 'error'
+                        ? 'Scan error'
+                        : 'Ready'}
+                    </span>
+                  </div>
+                </div>
+                <div className="kv" style={{ gap: 0 }}>
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>PATH</span>
+                  <span
+                    style={{
+                      fontSize: 12,
+                      color: 'var(--ink-3)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {lib.root_path}
+                  </span>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flexShrink: 0 }}>
+                <button
+                  className="btn btn-sm"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    navigate(`/libraries/${lib.id}`)
                   }}
                 >
-                  {KIND_LABELS[lib.kind] ?? lib.kind}
-                </span>
-              </div>
-              <div
-                style={{
-                  fontSize: 12,
-                  color: 'var(--text-muted)',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  marginBottom: 12,
-                }}
-              >
-                {lib.root_path}
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <div
-                  style={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: '50%',
-                    background: SCAN_STATUS_COLORS[lib.scan_status] ?? 'var(--text-muted)',
-                  }}
-                />
-                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                  {lib.scan_status === 'scanning'
-                    ? 'Scanning…'
-                    : lib.scan_status === 'error'
-                    ? 'Scan error'
-                    : 'Ready'}
-                </span>
+                  View
+                </button>
               </div>
             </div>
           ))}

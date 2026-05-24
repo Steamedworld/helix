@@ -1,30 +1,36 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { MediaItem } from '@helix/shared'
+import type { MediaItemWithWatchState } from '../api/watchstate'
 
 interface MediaCardProps {
   item: MediaItem
   compact?: boolean
   subtitle?: string
+  variant?: 'poster' | 'wide'
 }
 
-function kindIcon(kind: MediaItem['kind']): string {
-  switch (kind) {
-    case 'movie': return '▶'
-    case 'show': return '▭'
-    case 'season': return '▭'
-    case 'episode': return '▶'
-    case 'track': return '♪'
-    case 'photo': return '◻'
-    default: return '▶'
-  }
-}
-
-export function MediaCard({ item, compact = false, subtitle }: MediaCardProps) {
+export function MediaCard({ item, compact = false, subtitle, variant = 'poster' }: MediaCardProps) {
   const navigate = useNavigate()
   const [imgError, setImgError] = useState(false)
+  const [hovered, setHovered] = useState(false)
+
   const posterUrl = (item as MediaItem & { posterUrl?: string | null }).posterUrl ?? null
-  const showImage = posterUrl && !imgError
+  const backdropUrl = (item as MediaItem & { backdropUrl?: string | null }).backdropUrl ?? null
+
+  // Watch state progress
+  const ws = (item as MediaItemWithWatchState).watch_state ?? null
+  const progress = ws && ws.duration_seconds && ws.duration_seconds > 0
+    ? (ws.position_seconds / ws.duration_seconds) * 100
+    : null
+
+  // Effective variant: treat compact as wide
+  const effectiveVariant = compact ? 'wide' : variant
+  const isWide = effectiveVariant === 'wide'
+
+  // Image to show
+  const imageUrl = isWide ? (backdropUrl ?? posterUrl) : posterUrl
+  const showImage = imageUrl && !imgError
 
   return (
     <div
@@ -34,37 +40,34 @@ export function MediaCard({ item, compact = false, subtitle }: MediaCardProps) {
         display: 'flex',
         flexDirection: 'column',
         gap: 8,
-        borderRadius: 'var(--radius)',
-        overflow: 'hidden',
+        borderRadius: 'var(--r-3)',
+        overflow: 'visible',
       }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
-      {/* Poster area */}
+      {/* Image area */}
       <div
         style={{
           width: '100%',
-          aspectRatio: compact ? '16/9' : '2/3',
-          background: 'var(--bg-elevated)',
-          border: '1px solid var(--border)',
-          borderRadius: 'var(--radius)',
+          aspectRatio: isWide ? '16/9' : '2/3',
+          borderRadius: 'var(--r-3)',
           overflow: 'hidden',
+          position: 'relative',
+          border: '1px solid var(--line-1)',
+          background: 'linear-gradient(135deg, var(--bg-3), var(--bg-4))',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          color: 'var(--text-muted)',
-          fontSize: compact ? 24 : 36,
-          position: 'relative',
-          transition: 'border-color 0.15s',
-        }}
-        onMouseEnter={(e) => {
-          ;(e.currentTarget as HTMLDivElement).style.borderColor = 'var(--accent)'
-        }}
-        onMouseLeave={(e) => {
-          ;(e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border)'
+          color: 'var(--ink-4)',
+          transform: hovered ? 'translateY(-2px)' : 'translateY(0)',
+          boxShadow: hovered ? 'var(--shadow-2)' : 'none',
+          transition: `transform var(--d-fast) var(--ease), box-shadow var(--d-fast) var(--ease)`,
         }}
       >
         {showImage ? (
           <img
-            src={posterUrl}
+            src={imageUrl}
             alt={item.title}
             onError={() => setImgError(true)}
             style={{
@@ -74,18 +77,43 @@ export function MediaCard({ item, compact = false, subtitle }: MediaCardProps) {
               display: 'block',
             }}
           />
-        ) : (
-          <span>{kindIcon(item.kind)}</span>
+        ) : null}
+
+        {/* Bottom gradient overlay */}
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            background: 'linear-gradient(180deg, transparent 50%, var(--bg-2) 100%)',
+            pointerEvents: 'none',
+          }}
+        />
+
+        {/* Progress bar */}
+        {progress !== null && !ws?.completed && (
+          <div
+            className="bar"
+            style={{
+              position: 'absolute',
+              bottom: 0,
+              left: 0,
+              right: 0,
+              height: 3,
+              borderRadius: 0,
+            }}
+          >
+            <i style={{ width: `${Math.min(progress, 100)}%` }} />
+          </div>
         )}
       </div>
 
-      {/* Info */}
-      <div>
+      {/* Info below image */}
+      <div style={{ paddingBottom: 4 }}>
         <div
           style={{
-            fontSize: 13,
+            fontSize: 14,
             fontWeight: 500,
-            color: 'var(--text)',
+            color: 'var(--ink-1)',
             whiteSpace: 'nowrap',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
@@ -95,19 +123,26 @@ export function MediaCard({ item, compact = false, subtitle }: MediaCardProps) {
         </div>
         {subtitle ? (
           <div
+            className="mono"
             style={{
               fontSize: 11,
-              color: 'var(--text-muted)',
+              color: 'var(--ink-3)',
               whiteSpace: 'nowrap',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
+              marginTop: 2,
             }}
           >
             {subtitle}
           </div>
         ) : (
           item.year && (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{item.year}</div>
+            <div
+              className="mono"
+              style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2 }}
+            >
+              {item.year}
+            </div>
           )
         )}
       </div>

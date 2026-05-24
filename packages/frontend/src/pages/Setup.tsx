@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { setupAdmin } from '../api/auth'
 import { useAuth } from '../context/AuthContext'
+import { HelixMark } from '../components/HelixMark'
 
 export function Setup() {
   const { login } = useAuth()
@@ -47,53 +48,71 @@ export function Setup() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'var(--bg)',
+        background: 'var(--bg-0)',
         padding: 24,
+        position: 'relative',
+        overflow: 'hidden',
       }}
     >
+      {/* Atmospheric glow blobs */}
       <div
         style={{
+          position: 'absolute',
+          width: 500,
+          height: 500,
+          background: 'var(--accent)',
+          borderRadius: '50%',
+          filter: 'blur(120px)',
+          opacity: 0.06,
+          top: -200,
+          right: -100,
+          pointerEvents: 'none',
+        }}
+      />
+      <div
+        style={{
+          position: 'absolute',
+          width: 400,
+          height: 400,
+          background: 'var(--cool)',
+          borderRadius: '50%',
+          filter: 'blur(100px)',
+          opacity: 0.04,
+          bottom: -150,
+          left: -80,
+          pointerEvents: 'none',
+        }}
+      />
+
+      <div
+        className="surface-raised"
+        style={{
           width: '100%',
-          maxWidth: 380,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 28,
+          maxWidth: 420,
+          padding: 36,
+          boxShadow: 'var(--shadow-3)',
+          position: 'relative',
+          zIndex: 1,
         }}
       >
         {/* Logo */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div
-            style={{
-              width: 32,
-              height: 32,
-              background: 'var(--accent)',
-              borderRadius: 8,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontWeight: 700,
-              fontSize: 16,
-              color: 'white',
-            }}
-          >
-            H
-          </div>
-          <span style={{ fontWeight: 700, fontSize: 20, letterSpacing: '-0.3px' }}>Helix</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 28 }}>
+          <HelixMark size={28} style={{ color: 'var(--accent)' }} />
+          <span className="display" style={{ fontSize: 24, color: 'var(--ink-1)' }}>Helix</span>
         </div>
 
-        <div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>Welcome to Helix</h1>
-          <p style={{ fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-            Create your admin account to get started. This is a one-time setup.
-          </p>
-        </div>
+        <h1 className="display" style={{ fontSize: 32, lineHeight: 1.1, marginBottom: 8, color: 'var(--ink-1)' }}>
+          Claim your server
+        </h1>
+        <p style={{ fontSize: 14, color: 'var(--ink-3)', lineHeight: 1.6, marginBottom: 24 }}>
+          Create your admin account. This first account becomes the server owner.
+        </p>
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <label style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-muted)' }}>
-              Username
-            </label>
+          <div>
+            <label className="field-label">Username</label>
             <input
+              className="input"
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
@@ -101,73 +120,44 @@ export function Setup() {
               autoFocus
               autoComplete="username"
               placeholder="admin"
-              style={{
-                padding: '9px 12px',
-                background: 'var(--bg-surface)',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius)',
-                color: 'var(--text)',
-                fontSize: 14,
-                outline: 'none',
-              }}
             />
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <label style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-muted)' }}>
-              Password
-            </label>
+          <div>
+            <label className="field-label">Password</label>
             <input
+              className="input"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
               autoComplete="new-password"
               placeholder="At least 8 characters"
-              style={{
-                padding: '9px 12px',
-                background: 'var(--bg-surface)',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius)',
-                color: 'var(--text)',
-                fontSize: 14,
-                outline: 'none',
-              }}
             />
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <label style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-muted)' }}>
-              Confirm password
-            </label>
+          <div>
+            <label className="field-label">Confirm password</label>
             <input
+              className="input"
               type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               required
               autoComplete="new-password"
               placeholder="Repeat your password"
-              style={{
-                padding: '9px 12px',
-                background: 'var(--bg-surface)',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius)',
-                color: 'var(--text)',
-                fontSize: 14,
-                outline: 'none',
-              }}
             />
           </div>
 
           {error && (
             <div
               style={{
-                padding: '8px 12px',
-                background: 'rgba(255,95,95,0.08)',
-                border: '1px solid var(--danger)',
-                borderRadius: 'var(--radius)',
+                padding: '10px 14px',
+                background: 'oklch(0.70 0.13 25 / 0.08)',
+                border: '1px solid oklch(0.70 0.13 25 / 0.40)',
+                borderRadius: 'var(--r-2)',
                 fontSize: 13,
-                color: 'var(--danger)',
+                color: 'var(--bad)',
               }}
             >
               {error}
@@ -177,18 +167,8 @@ export function Setup() {
           <button
             type="submit"
             disabled={submitting}
-            style={{
-              padding: '10px 20px',
-              background: submitting ? 'var(--bg-elevated)' : 'var(--accent)',
-              border: 'none',
-              borderRadius: 'var(--radius)',
-              color: submitting ? 'var(--text-muted)' : '#fff',
-              fontSize: 14,
-              fontWeight: 600,
-              cursor: submitting ? 'default' : 'pointer',
-              opacity: submitting ? 0.7 : 1,
-              marginTop: 4,
-            }}
+            className="btn btn-primary btn-lg"
+            style={{ width: '100%', marginTop: 8, justifyContent: 'center', opacity: submitting ? 0.7 : 1 }}
           >
             {submitting ? 'Creating account…' : 'Create admin account'}
           </button>

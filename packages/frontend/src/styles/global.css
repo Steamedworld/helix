@@ -1,21 +1,91 @@
+/* ─── Design tokens ─────────────────────────────────────────────────────────── */
 :root {
-  --bg: #0d0d0f;
-  --bg-surface: #16161a;
-  --bg-elevated: #1e1e24;
-  --text: #e8e4dd;
-  --text-muted: #7a7a8a;
-  --accent: #6c7fff;
-  --accent-hover: #8a9aff;
-  --border: #2a2a35;
-  --danger: #ff5f5f;
-  --success: #4caf7d;
-  --radius: 8px;
-  --radius-lg: 14px;
-  --font-ui: 'Inter', system-ui, sans-serif;
-  --font-display: 'Inter', system-ui, sans-serif;
-  --sidebar-width: 220px;
+  /* Background scale */
+  --bg-0: oklch(0.16 0.006 65);
+  --bg-1: oklch(0.19 0.007 65);
+  --bg-2: oklch(0.22 0.008 65);
+  --bg-3: oklch(0.26 0.009 65);
+  --bg-4: oklch(0.32 0.010 65);
+
+  /* Accent */
+  --accent:       oklch(0.82 0.10 78);
+  --accent-soft:  oklch(0.82 0.10 78 / 0.10);
+  --accent-line:  oklch(0.82 0.10 78 / 0.35);
+  --accent-ink:   oklch(0.15 0.008 65);
+
+  /* Ink / text */
+  --ink-1: oklch(0.96 0.008 75);
+  --ink-2: oklch(0.82 0.010 70);
+  --ink-3: oklch(0.66 0.010 70);
+  --ink-4: oklch(0.50 0.010 70);
+
+  /* Status */
+  --cool: oklch(0.74 0.09 210);
+  --ok:   oklch(0.78 0.10 152);
+  --warn: oklch(0.80 0.11 60);
+  --bad:  oklch(0.70 0.13 25);
+
+  /* Lines */
+  --line-1: oklch(1 0 0 / 0.08);
+  --line-2: oklch(1 0 0 / 0.14);
+
+  /* Shadows */
+  --shadow-1: 0 2px 8px oklch(0 0 0 / 0.30);
+  --shadow-2: 0 4px 20px oklch(0 0 0 / 0.45);
+  --shadow-3: 0 8px 40px oklch(0 0 0 / 0.60);
+  --glow-accent: 0 0 0 1px oklch(0.82 0.10 78 / 0.40), 0 4px 20px oklch(0.82 0.10 78 / 0.25);
+
+  /* Spacing */
+  --s-1:  4px;
+  --s-2:  8px;
+  --s-3:  12px;
+  --s-4:  16px;
+  --s-5:  20px;
+  --s-6:  24px;
+  --s-7:  32px;
+  --s-8:  40px;
+  --s-9:  56px;
+  --s-10: 72px;
+
+  /* Border radius */
+  --r-1:    6px;
+  --r-2:    10px;
+  --r-3:    14px;
+  --r-4:    20px;
+  --r-pill: 999px;
+
+  /* Motion */
+  --ease:           cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-emphasized: cubic-bezier(0.16, 0.84, 0.24, 1);
+  --ease-exit:      cubic-bezier(0.4, 0.0, 1, 1);
+  --d-fast:  120ms;
+  --d-base:  220ms;
+  --d-slow:  420ms;
+
+  /* Typography */
+  --font-display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --font-ui:      "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono:    "Geist Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+
+  /* Layout */
+  --sidebar-width:  232px;
+  --topbar-height:  56px;
+
+  /* Legacy compat aliases */
+  --bg:          var(--bg-0);
+  --bg-surface:  var(--bg-1);
+  --bg-elevated: var(--bg-3);
+  --text:        var(--ink-1);
+  --text-muted:  var(--ink-3);
+  --border:      var(--line-1);
+  --radius:      var(--r-2);
+  --radius-lg:   var(--r-3);
+  --danger:      var(--bad);
+  --success:     var(--ok);
+  --accent-hover: var(--accent);
 }
 
+/* ─── Reset ─────────────────────────────────────────────────────────────────── */
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -24,12 +94,13 @@
 
 html, body {
   height: 100%;
-  background: var(--bg);
-  color: var(--text);
+  background: var(--bg-0);
+  color: var(--ink-1);
   font-family: var(--font-ui);
   font-size: 15px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 #root {
@@ -42,7 +113,7 @@ a {
 }
 
 a:hover {
-  color: var(--accent-hover);
+  filter: brightness(1.1);
 }
 
 button {
@@ -54,9 +125,10 @@ input, select, textarea {
   font-family: var(--font-ui);
 }
 
+/* ─── Scrollbar ─────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 ::-webkit-scrollbar-track {
@@ -64,10 +136,385 @@ input, select, textarea {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: var(--line-2);
   border-radius: 3px;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
+/* ─── Focus visible ─────────────────────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ─── Surfaces ──────────────────────────────────────────────────────────────── */
+.surface {
+  background: var(--bg-2);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-3);
+}
+
+.surface-raised {
+  background: var(--bg-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-3);
+}
+
+/* ─── Buttons ───────────────────────────────────────────────────────────────── */
+.btn {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: var(--r-2);
+  background: var(--bg-3);
+  border: 1px solid var(--line-2);
+  color: var(--ink-1);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--font-ui);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background var(--d-fast) var(--ease),
+              border-color var(--d-fast) var(--ease),
+              color var(--d-fast) var(--ease);
+  text-decoration: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.btn:hover {
+  background: var(--bg-4);
+  border-color: var(--line-2);
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-ink);
+}
+
+.btn-primary:hover {
+  filter: brightness(1.08);
+  box-shadow: var(--glow-accent);
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--ink-2);
+}
+
+.btn-ghost:hover {
+  background: var(--bg-3);
+  color: var(--ink-1);
+}
+
+.btn-lg {
+  height: 42px;
+  padding: 0 20px;
+  font-size: 14px;
+  border-radius: var(--r-3);
+}
+
+.btn-sm {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+  border-radius: var(--r-1);
+}
+
+.btn-icon {
+  width: 34px;
+  padding: 0;
+  justify-content: center;
+}
+
+.btn-icon.btn-lg {
+  width: 42px;
+}
+
+.btn-icon.btn-sm {
+  width: 26px;
+}
+
+/* ─── Chips ─────────────────────────────────────────────────────────────────── */
+.chip {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--r-pill);
+  background: var(--bg-3);
+  border: 1px solid var(--line-1);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink-2);
+}
+
+.chip-accent {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+
+.chip-ghost {
+  background: transparent;
+  border-color: var(--line-1);
+  color: var(--ink-3);
+}
+
+.chip-cool {
+  background: oklch(0.74 0.09 210 / 0.10);
+  border-color: oklch(0.74 0.09 210 / 0.35);
+  color: var(--cool);
+}
+
+.chip-mono {
+  font-family: var(--font-mono);
+  background: var(--bg-4);
+  border-color: var(--line-1);
+  color: var(--ink-3);
+}
+
+/* ─── Badges ────────────────────────────────────────────────────────────────── */
+.badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  padding: 0 6px;
+  height: 18px;
+  border-radius: var(--r-1);
+  background: var(--bg-3);
+  border: 1px solid var(--line-1);
+  color: var(--ink-3);
+  display: inline-flex;
+  align-items: center;
+  text-transform: uppercase;
+}
+
+.badge-dot::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  margin-right: 4px;
+}
+
+/* ─── Input ─────────────────────────────────────────────────────────────────── */
+.input {
+  width: 100%;
+  padding: 0 12px;
+  height: 38px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-2);
+  color: var(--ink-1);
+  font-size: 14px;
+  font-family: var(--font-ui);
+  transition: border-color var(--d-fast) var(--ease),
+              box-shadow var(--d-fast) var(--ease);
+}
+
+.input:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.field-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.10em;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  display: block;
+  margin-bottom: 6px;
+}
+
+/* ─── Toggle ────────────────────────────────────────────────────────────────── */
+.toggle {
+  width: 36px;
+  height: 20px;
+  border-radius: var(--r-pill);
+  background: var(--bg-4);
+  border: 1px solid var(--line-2);
+  cursor: pointer;
+  position: relative;
+  transition: all var(--d-fast) var(--ease);
+  flex-shrink: 0;
+}
+
+.toggle::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--ink-4);
+  transition: all var(--d-fast) var(--ease);
+}
+
+.toggle.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.toggle.on::after {
+  left: calc(100% - 16px);
+  background: var(--accent-ink);
+}
+
+/* ─── Key-value ─────────────────────────────────────────────────────────────── */
+.kv {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.kv .k {
+  font-size: 10px;
+  color: var(--ink-4);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.kv .v {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+/* ─── Bar / progress ────────────────────────────────────────────────────────── */
+.bar {
+  height: 3px;
+  background: var(--bg-4);
+  border-radius: 2px;
+}
+
+.bar > i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width var(--d-base) var(--ease);
+}
+
+/* ─── Grain ─────────────────────────────────────────────────────────────────── */
+.grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  /* Placeholder: noise texture would go here */
+}
+
+/* ─── Poster grid ───────────────────────────────────────────────────────────── */
+.poster-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.poster-grid.cols-6 {
+  grid-template-columns: repeat(6, 1fr);
+}
+
+.poster-grid.cols-5 {
+  grid-template-columns: repeat(5, 1fr);
+}
+
+.poster-grid.cols-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+/* ─── Section head ──────────────────────────────────────────────────────────── */
+.section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.section-head h2,
+.section-head .title {
+  font-family: var(--font-display);
+  font-size: 28px;
+  line-height: 1.1;
+}
+
+.section-head em {
+  color: var(--accent);
+  font-style: italic;
+}
+
+.section-head .meta {
+  font-size: 12px;
+  color: var(--ink-4);
+  margin-left: auto;
+}
+
+/* ─── Avatar ────────────────────────────────────────────────────────────────── */
+.avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, oklch(0.6 0.08 40), oklch(0.4 0.06 280));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: oklch(0.96 0 0);
+  flex-shrink: 0;
+}
+
+/* ─── Utilities ─────────────────────────────────────────────────────────────── */
+.display {
+  font-family: var(--font-display);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.muted {
+  color: var(--ink-3);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+}
+
+.gap-1 { gap: 4px; }
+.gap-2 { gap: 8px; }
+.gap-3 { gap: 12px; }
+.gap-4 { gap: 16px; }
+.gap-5 { gap: 20px; }
+.gap-6 { gap: 24px; }
+.gap-7 { gap: 32px; }
+.gap-8 { gap: 40px; }
+
+.dot-sep {
+  font-size: 11px;
+  color: var(--ink-4);
+  margin: 0 2px;
+}
+
+/* ─── Reduced motion ────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }

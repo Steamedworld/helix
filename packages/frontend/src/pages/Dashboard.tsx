@@ -1,16 +1,13 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { listMedia } from '../api/media'
 import { listLibraries } from '../api/libraries'
 import { getContinueWatching } from '../api/watchstate'
 import type { MediaItem, Library } from '@helix/shared'
-import type { MediaItemWithWatchState } from '../api/watchstate'
 import { MediaCard } from '../components/MediaCard'
 import { PosterGrid } from '../components/PosterGrid'
 import { EmptyState } from '../components/EmptyState'
 
 export function Dashboard() {
-  const navigate = useNavigate()
   const [recentItems, setRecentItems] = useState<MediaItem[]>([])
   const [continueItems, setContinueItems] = useState<MediaItem[]>([])
   const [libraries, setLibraries] = useState<Library[]>([])
@@ -31,7 +28,7 @@ export function Dashboard() {
 
   if (loading) {
     return (
-      <div style={{ color: 'var(--text-muted)', padding: '24px 0' }}>Loading…</div>
+      <div style={{ color: 'var(--ink-3)', padding: '24px 0' }}>Loading…</div>
     )
   }
 
@@ -47,71 +44,46 @@ export function Dashboard() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 36 }}>
-      <div>
-        <h1 style={{ fontSize: 24, fontWeight: 600, marginBottom: 4 }}>Dashboard</h1>
-        <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>
-          {libraries.length} {libraries.length === 1 ? 'library' : 'libraries'} ·{' '}
-          {recentItems.length} items
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+      {/* Page header */}
+      <div style={{ marginBottom: 40 }}>
+        <p className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '.14em', marginBottom: 8 }}>
+          DASHBOARD
+        </p>
+        <h1 className="display" style={{ fontSize: 56, lineHeight: 1, letterSpacing: '-0.02em' }}>
+          Your <em style={{ fontStyle: 'italic', color: 'var(--accent)' }}>library</em>
+        </h1>
+        <p className="muted" style={{ fontSize: 14, marginTop: 8 }}>
+          {libraries.length} {libraries.length === 1 ? 'library' : 'libraries'} · {recentItems.length} titles
         </p>
       </div>
 
+      {/* Continue Watching */}
       {continueItems.length > 0 && (
-        <section>
-          <h2
-            style={{
-              fontSize: 16,
-              fontWeight: 600,
-              marginBottom: 16,
-              color: 'var(--text)',
-            }}
-          >
-            Continue Watching
-          </h2>
-          <div
-            style={{
-              display: 'flex',
-              gap: 16,
-              overflowX: 'auto',
-              paddingBottom: 8,
-            }}
-          >
-            {continueItems.map((item) => {
-              const cwItem = item as MediaItemWithWatchState & {
-                showTitle?: string
-                showId?: string
-                seasonNumber?: number
-                episodeNumber?: number
-              }
-              // Build subtitle for episodes: "Breaking Bad · S01E02"
-              let subtitle: string | undefined
-              if (cwItem.kind === 'episode' && cwItem.showTitle) {
-                const sNum = String(cwItem.seasonNumber ?? 0).padStart(2, '0')
-                const eNum = String(cwItem.episodeNumber ?? 0).padStart(2, '0')
-                subtitle = `${cwItem.showTitle} · S${sNum}E${eNum}`
-              }
-              return (
-                <div key={item.id} style={{ flexShrink: 0, width: 200 }}>
-                  <MediaCard item={item} compact subtitle={subtitle} />
-                </div>
-              )
-            })}
+        <section style={{ marginBottom: 48 }}>
+          <div className="section-head">
+            <h2 className="display">Continue <em>watching</em></h2>
+            <span className="meta mono" style={{ fontSize: 11, color: 'var(--ink-4)', marginLeft: 'auto' }}>
+              {continueItems.length} items
+            </span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+            {continueItems.slice(0, 4).map((item) => (
+              <MediaCard key={item.id} item={item} variant="wide" />
+            ))}
           </div>
         </section>
       )}
 
+      {/* Recently Added */}
       {recentItems.length > 0 && (
         <section>
-          <h2
-            style={{
-              fontSize: 16,
-              fontWeight: 600,
-              marginBottom: 16,
-              color: 'var(--text)',
-            }}
-          >
-            Recently Added
-          </h2>
+          <div className="section-head">
+            <h2 className="display">Recently <em>added</em></h2>
+            <span className="meta mono" style={{ fontSize: 11, color: 'var(--ink-4)', marginLeft: 'auto' }}>
+              last 7 days
+            </span>
+          </div>
           <PosterGrid items={recentItems} />
         </section>
       )}

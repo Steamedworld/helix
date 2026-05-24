@@ -1,51 +1,32 @@
-import { useState } from 'react'
 import { Outlet } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
 
 export function AppShell() {
-  const [sidebarOpen, setSidebarOpen] = useState(false)
-
   return (
     <div
       style={{
         display: 'flex',
         height: '100vh',
         overflow: 'hidden',
+        background: 'var(--bg-0)',
+        position: 'relative',
       }}
     >
-      {/* Mobile hamburger */}
-      <button
-        onClick={() => setSidebarOpen(!sidebarOpen)}
-        style={{
-          display: 'none',
-          position: 'fixed',
-          top: 12,
-          left: 12,
-          zIndex: 20,
-          background: 'var(--bg-elevated)',
-          border: '1px solid var(--border)',
-          borderRadius: 6,
-          color: 'var(--text)',
-          padding: '6px 10px',
-          fontSize: 18,
-        }}
-        className="hamburger"
-        aria-label="Toggle sidebar"
-      >
-        ☰
-      </button>
+      {/* Subtle grain overlay placeholder */}
+      {/* <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 0, opacity: 0.03 }} /> */}
 
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <Sidebar />
 
       <main
         style={{
           flex: 1,
           overflowY: 'auto',
-          background: 'var(--bg)',
           minWidth: 0,
+          position: 'relative',
+          zIndex: 1,
         }}
       >
-        <div style={{ maxWidth: 1200, margin: '0 auto', padding: '28px 24px' }}>
+        <div style={{ padding: '32px 32px 64px', maxWidth: 1340, margin: '0 auto' }}>
           <Outlet />
         </div>
       </main>

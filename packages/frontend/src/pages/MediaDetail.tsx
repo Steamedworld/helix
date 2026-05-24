@@ -75,11 +75,12 @@ function UpNextPanel({ nextEpisode, showFinished, onPlayNext, onDismiss }: UpNex
 
   return (
     <div
+      className="surface-raised"
       style={{
         position: 'absolute',
         inset: 0,
-        background: 'rgba(8, 8, 9, 0.88)',
-        borderRadius: 'var(--radius-lg)',
+        background: 'oklch(0.16 0.006 65 / 0.92)',
+        borderRadius: 'var(--r-3)',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
@@ -92,27 +93,16 @@ function UpNextPanel({ nextEpisode, showFinished, onPlayNext, onDismiss }: UpNex
       {showFinished ? (
         <>
           <span style={{ fontSize: 32 }}>✓</span>
-          <p style={{ fontSize: 16, fontWeight: 600, textAlign: 'center' }}>
+          <p style={{ fontSize: 16, fontWeight: 600, textAlign: 'center', color: 'var(--ink-1)' }}>
             You&apos;ve finished the show!
           </p>
-          <button
-            onClick={onDismiss}
-            style={{
-              padding: '8px 20px',
-              background: 'var(--bg-elevated)',
-              border: '1px solid var(--border)',
-              borderRadius: 'var(--radius)',
-              color: 'var(--text)',
-              fontSize: 13,
-              cursor: 'pointer',
-            }}
-          >
+          <button onClick={onDismiss} className="btn">
             Close
           </button>
         </>
       ) : nextEpisode ? (
         <>
-          <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>
+          <p style={{ fontSize: 12, color: 'var(--ink-3)', textAlign: 'center' }}>
             Up Next
           </p>
           {nextEpisode.posterUrl && (
@@ -123,16 +113,16 @@ function UpNextPanel({ nextEpisode, showFinished, onPlayNext, onDismiss }: UpNex
                 width: 120,
                 aspectRatio: '16/9',
                 objectFit: 'cover',
-                borderRadius: 'var(--radius)',
-                border: '1px solid var(--border)',
+                borderRadius: 'var(--r-2)',
+                border: '1px solid var(--line-1)',
               }}
             />
           )}
           <div style={{ textAlign: 'center' }}>
-            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 4 }}>
+            <p style={{ fontSize: 13, color: 'var(--ink-3)', marginBottom: 4 }}>
               {nextEpisode.showTitle}
             </p>
-            <p style={{ fontSize: 15, fontWeight: 600 }}>
+            <p style={{ fontSize: 15, fontWeight: 600, color: 'var(--ink-1)' }}>
               S{String(nextEpisode.seasonNumber).padStart(2, '0')}E{String(nextEpisode.episodeNumber).padStart(2, '0')} — {nextEpisode.title}
             </p>
           </div>
@@ -142,16 +132,7 @@ function UpNextPanel({ nextEpisode, showFinished, onPlayNext, onDismiss }: UpNex
                 if (countdownRef.current) clearInterval(countdownRef.current)
                 onPlayNext()
               }}
-              style={{
-                padding: '8px 20px',
-                background: 'var(--accent)',
-                border: 'none',
-                borderRadius: 'var(--radius)',
-                color: '#fff',
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
+              className="btn btn-primary"
             >
               Play Next ({countdown}s)
             </button>
@@ -160,15 +141,7 @@ function UpNextPanel({ nextEpisode, showFinished, onPlayNext, onDismiss }: UpNex
                 if (countdownRef.current) clearInterval(countdownRef.current)
                 onDismiss()
               }}
-              style={{
-                padding: '8px 16px',
-                background: 'var(--bg-elevated)',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius)',
-                color: 'var(--text-muted)',
-                fontSize: 13,
-                cursor: 'pointer',
-              }}
+              className="btn btn-ghost"
             >
               Cancel
             </button>
@@ -318,7 +291,7 @@ function DirectPlayer({
         controls
         style={{
           width: '100%',
-          borderRadius: 'var(--radius-lg)',
+          borderRadius: 'var(--r-3)',
           background: '#000',
           display: 'block',
         }}
@@ -334,7 +307,7 @@ function DirectPlayer({
           flexWrap: 'wrap',
           gap: 12,
           fontSize: 12,
-          color: 'var(--text-muted)',
+          color: 'var(--ink-3)',
           padding: '0 4px',
         }}
       >
@@ -357,25 +330,25 @@ function PlayerUnavailable({ reason, isMissing }: { reason: string; isMissing?: 
   return (
     <div
       style={{
-        background: 'var(--bg-elevated)',
-        border: `1px solid ${isMissing ? 'var(--danger)' : 'var(--border)'}`,
-        borderRadius: 'var(--radius-lg)',
+        background: 'var(--bg-3)',
+        border: `1px solid ${isMissing ? 'var(--bad)' : 'var(--line-1)'}`,
+        borderRadius: 'var(--r-3)',
         aspectRatio: '16/9',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
         gap: 8,
-        color: 'var(--text-muted)',
+        color: 'var(--ink-3)',
       }}
     >
       <span style={{ fontSize: 32 }}>{isMissing ? '⚠' : '⊘'}</span>
-      <span style={{ fontSize: 14, fontWeight: 500, color: isMissing ? 'var(--danger)' : undefined }}>
+      <span style={{ fontSize: 14, fontWeight: 500, color: isMissing ? 'var(--bad)' : undefined }}>
         {isMissing ? 'File went missing' : 'File unavailable'}
       </span>
       <span style={{ fontSize: 12, maxWidth: 340, textAlign: 'center' }}>{reason}</span>
       {isMissing && (
-        <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+        <span style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
           Re-scan the library to update file status.
         </span>
       )}
@@ -389,14 +362,14 @@ function PlayerLoading() {
   return (
     <div
       style={{
-        background: 'var(--bg-elevated)',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-lg)',
+        background: 'var(--bg-3)',
+        border: '1px solid var(--line-1)',
+        borderRadius: 'var(--r-3)',
         aspectRatio: '16/9',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        color: 'var(--text-muted)',
+        color: 'var(--ink-3)',
         fontSize: 14,
       }}
     >
@@ -408,21 +381,7 @@ function PlayerLoading() {
 // ─── Chip ──────────────────────────────────────────────────────────────────────
 
 function Chip({ label }: { label: string }) {
-  return (
-    <span
-      style={{
-        fontSize: 11,
-        padding: '2px 8px',
-        background: 'var(--bg-elevated)',
-        border: '1px solid var(--border)',
-        borderRadius: 4,
-        color: 'var(--text-muted)',
-        fontWeight: 500,
-      }}
-    >
-      {label}
-    </span>
-  )
+  return <span className="chip">{label}</span>
 }
 
 // ─── MediaDetail page ──────────────────────────────────────────────────────────
@@ -563,11 +522,11 @@ export function MediaDetail() {
   }
 
   if (loading) {
-    return <div style={{ color: 'var(--text-muted)' }}>Loading…</div>
+    return <div style={{ color: 'var(--ink-3)' }}>Loading…</div>
   }
 
   if (!item) {
-    return <div style={{ color: 'var(--danger)' }}>Media item not found.</div>
+    return <div style={{ color: 'var(--bad)' }}>Media item not found.</div>
   }
 
   const progress = watchState
@@ -582,21 +541,12 @@ export function MediaDetail() {
   const posterUrl = item.posterUrl ?? null
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 28, maxWidth: 860 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+      {/* Back button */}
       <button
         onClick={() => navigate(-1)}
-        style={{
-          background: 'none',
-          border: 'none',
-          color: 'var(--text-muted)',
-          fontSize: 13,
-          cursor: 'pointer',
-          padding: 0,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 4,
-          alignSelf: 'flex-start',
-        }}
+        className="btn btn-ghost btn-sm"
+        style={{ alignSelf: 'flex-start', marginBottom: 24 }}
       >
         ← Back
       </button>
@@ -605,81 +555,76 @@ export function MediaDetail() {
       {backdropUrl && (
         <div
           style={{
-            width: '100%',
-            aspectRatio: '16/5',
-            borderRadius: 'var(--radius-lg)',
-            overflow: 'hidden',
             position: 'relative',
+            height: 320,
+            borderRadius: 'var(--r-4)',
+            overflow: 'hidden',
+            marginBottom: 0,
           }}
         >
           <img
             src={backdropUrl}
             alt=""
-            style={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              display: 'block',
-              opacity: 0.6,
-            }}
+            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
           />
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              background: 'linear-gradient(to bottom, transparent 40%, var(--bg) 100%)',
-            }}
-          />
+          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 30%, var(--bg-0) 100%)' }} />
+          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(90deg, var(--bg-0) 0%, transparent 60%)' }} />
         </div>
       )}
 
-      {/* Header — poster + title info */}
-      <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+      {/* Title section */}
+      <div
+        style={{
+          display: 'flex',
+          gap: 24,
+          alignItems: 'flex-end',
+          marginTop: backdropUrl ? -80 : 0,
+          position: 'relative',
+          zIndex: 2,
+          padding: '0 0 24px',
+        }}
+      >
         {posterUrl && (
           <img
             src={posterUrl}
             alt={item.title}
             style={{
-              width: 100,
+              width: 140,
               aspectRatio: '2/3',
               objectFit: 'cover',
-              borderRadius: 'var(--radius)',
-              border: '1px solid var(--border)',
+              borderRadius: 'var(--r-3)',
+              border: '1px solid var(--line-1)',
               flexShrink: 0,
+              boxShadow: 'var(--shadow-2)',
             }}
           />
         )}
-        <div style={{ flex: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
-            <h1 style={{ fontSize: 28, fontWeight: 700 }}>{item.title}</h1>
-            <span
-              style={{
-                fontSize: 11,
-                padding: '3px 8px',
-                background: 'var(--bg-elevated)',
-                border: '1px solid var(--border)',
-                borderRadius: 4,
-                color: 'var(--text-muted)',
-                fontWeight: 500,
-              }}
-            >
-              {item.kind}
-            </span>
+        <div style={{ flex: 1, paddingBottom: 8 }}>
+          <span className="chip chip-mono" style={{ marginBottom: 10, display: 'inline-flex' }}>{item.kind}</span>
+          <h1 className="display" style={{ fontSize: 52, lineHeight: 1, letterSpacing: '-0.02em', marginBottom: 12, color: 'var(--ink-1)' }}>
+            {item.title}
+          </h1>
+          <div className="row gap-3" style={{ marginBottom: 12, fontSize: 13, color: 'var(--ink-2)' }}>
+            {item.year && <span className="mono">{item.year}</span>}
+            {item.year && item.content_rating && <span className="dot-sep">·</span>}
+            {item.content_rating && <span>{item.content_rating}</span>}
           </div>
-          {/* Metadata chips */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
-            {item.year && <Chip label={String(item.year)} />}
-            {item.release_date && !item.year && <Chip label={item.release_date} />}
-            {item.content_rating && <Chip label={item.content_rating} />}
-          </div>
-          {/* Overview */}
           {item.overview && (
-            <p style={{ fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.6, maxWidth: 600 }}>
+            <p style={{ fontSize: 14, color: 'var(--ink-2)', lineHeight: 1.65, maxWidth: 560 }}>
               {item.overview}
             </p>
           )}
         </div>
       </div>
+
+      {/* Metadata chips */}
+      {(item.year || item.release_date || item.content_rating) && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
+          {item.year && <Chip label={String(item.year)} />}
+          {item.release_date && !item.year && <Chip label={item.release_date} />}
+          {item.content_rating && <Chip label={item.content_rating} />}
+        </div>
+      )}
 
       {/* Metadata status + actions */}
       {item.metadata_status === 'needs_review' && (
@@ -688,11 +633,12 @@ export function MediaDetail() {
             padding: '10px 16px',
             background: 'rgba(255, 170, 0, 0.08)',
             border: '1px solid rgba(255, 170, 0, 0.3)',
-            borderRadius: 'var(--radius)',
+            borderRadius: 'var(--r-2)',
             display: 'flex',
             alignItems: 'center',
             gap: 12,
             flexWrap: 'wrap',
+            marginBottom: 16,
           }}
         >
           <span style={{ fontSize: 13, color: '#ffaa00', fontWeight: 500 }}>
@@ -715,9 +661,9 @@ export function MediaDetail() {
         </div>
       )}
 
-      {/* Integration links — subtle badge row */}
+      {/* Integration links */}
       {item.integrationLinks && item.integrationLinks.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
           {item.integrationLinks.map((link, i) => (
             <div
               key={i}
@@ -730,10 +676,10 @@ export function MediaDetail() {
                 border: '1px solid rgba(100,120,200,0.25)',
                 borderRadius: 4,
                 fontSize: 11,
-                color: 'var(--text-muted)',
+                color: 'var(--ink-3)',
               }}
             >
-              <span style={{ fontWeight: 500, color: 'var(--text)' }}>
+              <span style={{ fontWeight: 500, color: 'var(--ink-1)' }}>
                 Managed by {link.integrationName}
               </span>
               {link.monitored && (
@@ -742,7 +688,7 @@ export function MediaDetail() {
                     padding: '1px 5px',
                     background: 'rgba(76,175,125,0.12)',
                     borderRadius: 3,
-                    color: '#4caf7d',
+                    color: 'var(--ok)',
                     fontWeight: 500,
                   }}
                 >
@@ -753,8 +699,8 @@ export function MediaDetail() {
                 <span
                   style={{
                     padding: '1px 5px',
-                    background: 'var(--bg-elevated)',
-                    border: '1px solid var(--border)',
+                    background: 'var(--bg-3)',
+                    border: '1px solid var(--line-1)',
                     borderRadius: 3,
                   }}
                 >
@@ -766,52 +712,34 @@ export function MediaDetail() {
         </div>
       )}
 
-      {/* Metadata action row — refresh button (always visible) */}
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      {/* Metadata action row */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 24 }}>
         <button
           onClick={handleRefreshMetadata}
           disabled={metadataRefreshing}
-          style={{
-            fontSize: 12,
-            padding: '5px 12px',
-            background: 'var(--bg-elevated)',
-            border: '1px solid var(--border)',
-            borderRadius: 4,
-            color: 'var(--text-muted)',
-            cursor: metadataRefreshing ? 'default' : 'pointer',
-            opacity: metadataRefreshing ? 0.6 : 1,
-          }}
+          className="btn btn-sm"
+          style={{ opacity: metadataRefreshing ? 0.6 : 1 }}
         >
           {metadataRefreshing ? 'Refreshing…' : 'Refresh Metadata'}
         </button>
         {item.metadata_status !== 'needs_review' && (
-          <button
-            onClick={handleOpenMatchPanel}
-            style={{
-              fontSize: 12,
-              padding: '5px 12px',
-              background: 'var(--bg-elevated)',
-              border: '1px solid var(--border)',
-              borderRadius: 4,
-              color: 'var(--text-muted)',
-              cursor: 'pointer',
-            }}
-          >
+          <button onClick={handleOpenMatchPanel} className="btn btn-sm">
             Find match
           </button>
         )}
       </div>
 
-      {/* Metadata message (e.g. parent_unmatched for episodes) */}
+      {/* Metadata message */}
       {metadataMessage && (
         <div
           style={{
             padding: '10px 16px',
             background: 'rgba(255, 170, 0, 0.08)',
             border: '1px solid rgba(255, 170, 0, 0.3)',
-            borderRadius: 'var(--radius)',
+            borderRadius: 'var(--r-2)',
             fontSize: 13,
             color: '#ffaa00',
+            marginBottom: 16,
           }}
         >
           {metadataMessage}
@@ -821,12 +749,8 @@ export function MediaDetail() {
       {/* Match panel */}
       {showMatchPanel && (
         <div
-          style={{
-            background: 'var(--bg-surface)',
-            border: '1px solid var(--border)',
-            borderRadius: 'var(--radius-lg)',
-            padding: '20px',
-          }}
+          className="surface"
+          style={{ padding: '20px', marginBottom: 24 }}
         >
           <div
             style={{
@@ -836,29 +760,21 @@ export function MediaDetail() {
               marginBottom: 16,
             }}
           >
-            <h3 style={{ fontSize: 15, fontWeight: 600 }}>Find a match</h3>
+            <h3 style={{ fontSize: 15, fontWeight: 600, color: 'var(--ink-1)' }}>Find a match</h3>
             <button
               onClick={() => setShowMatchPanel(false)}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: 'var(--text-muted)',
-                fontSize: 20,
-                cursor: 'pointer',
-                lineHeight: 1,
-                padding: '0 4px',
-              }}
+              className="btn btn-icon btn-sm btn-ghost"
             >
               ×
             </button>
           </div>
 
           {candidatesLoading && (
-            <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Searching providers…</p>
+            <p style={{ fontSize: 13, color: 'var(--ink-3)' }}>Searching providers…</p>
           )}
 
           {!candidatesLoading && candidates !== null && candidates.length === 0 && (
-            <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+            <p style={{ fontSize: 13, color: 'var(--ink-3)' }}>
               No candidates found. Check that a metadata provider is configured.
             </p>
           )}
@@ -872,13 +788,12 @@ export function MediaDetail() {
                     display: 'flex',
                     gap: 12,
                     padding: '12px',
-                    background: 'var(--bg-elevated)',
-                    borderRadius: 'var(--radius)',
-                    border: '1px solid var(--border)',
+                    background: 'var(--bg-3)',
+                    borderRadius: 'var(--r-2)',
+                    border: '1px solid var(--line-1)',
                     alignItems: 'flex-start',
                   }}
                 >
-                  {/* Poster thumbnail */}
                   {c.posterUrl ? (
                     <img
                       src={c.posterUrl}
@@ -896,7 +811,7 @@ export function MediaDetail() {
                       style={{
                         width: 48,
                         aspectRatio: '2/3',
-                        background: 'var(--bg)',
+                        background: 'var(--bg-0)',
                         borderRadius: 4,
                         flexShrink: 0,
                       }}
@@ -912,6 +827,7 @@ export function MediaDetail() {
                         whiteSpace: 'nowrap',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
+                        color: 'var(--ink-1)',
                       }}
                     >
                       {c.title}
@@ -919,7 +835,7 @@ export function MediaDetail() {
                         <span
                           style={{
                             fontSize: 12,
-                            color: 'var(--text-muted)',
+                            color: 'var(--ink-3)',
                             fontWeight: 400,
                             marginLeft: 6,
                           }}
@@ -932,7 +848,7 @@ export function MediaDetail() {
                       <p
                         style={{
                           fontSize: 12,
-                          color: 'var(--text-muted)',
+                          color: 'var(--ink-3)',
                           lineHeight: 1.5,
                           display: '-webkit-box',
                           WebkitLineClamp: 2,
@@ -948,15 +864,15 @@ export function MediaDetail() {
                       <span
                         style={{
                           fontSize: 11,
-                          color: 'var(--text-muted)',
-                          background: 'var(--bg)',
+                          color: 'var(--ink-3)',
+                          background: 'var(--bg-0)',
                           padding: '2px 6px',
                           borderRadius: 3,
                         }}
                       >
                         score {(c.score * 100).toFixed(0)}%
                       </span>
-                      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                         {c.providerId}
                       </span>
                     </div>
@@ -965,21 +881,8 @@ export function MediaDetail() {
                   <button
                     onClick={() => handleSelectCandidate(c)}
                     disabled={matchingId === c.externalId}
-                    style={{
-                      flexShrink: 0,
-                      fontSize: 12,
-                      padding: '6px 14px',
-                      background:
-                        matchingId === c.externalId
-                          ? 'var(--bg-elevated)'
-                          : 'var(--accent)',
-                      border: 'none',
-                      borderRadius: 4,
-                      color: matchingId === c.externalId ? 'var(--text-muted)' : '#fff',
-                      cursor: matchingId === c.externalId ? 'default' : 'pointer',
-                      opacity: matchingId === c.externalId ? 0.6 : 1,
-                      alignSelf: 'center',
-                    }}
+                    className={`btn btn-sm ${matchingId === c.externalId ? '' : 'btn-primary'}`}
+                    style={{ opacity: matchingId === c.externalId ? 0.6 : 1 }}
                   >
                     {matchingId === c.externalId ? 'Saving…' : 'Select'}
                   </button>
@@ -991,7 +894,7 @@ export function MediaDetail() {
       )}
 
       {/* Player area */}
-      <section style={{ position: 'relative' }}>
+      <section style={{ position: 'relative', marginBottom: 28 }}>
         {sourceLoading ? (
           <PlayerLoading />
         ) : playbackSource ? (
@@ -1009,7 +912,6 @@ export function MediaDetail() {
             isMissing={isMissingFile}
           />
         )}
-        {/* Up Next / Show Finished overlay */}
         {showUpNextPanel && (
           <UpNextPanel
             nextEpisode={upNextEpisode}
@@ -1021,52 +923,30 @@ export function MediaDetail() {
       </section>
 
       {/* Watch state */}
-      <section>
-        <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>Watch Progress</h2>
+      <section style={{ marginBottom: 28 }}>
+        <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12, color: 'var(--ink-1)' }}>Watch Progress</h2>
         {watchState ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {progress !== null && (
-              <div
-                style={{
-                  height: 4,
-                  background: 'var(--bg-elevated)',
-                  borderRadius: 2,
-                  overflow: 'hidden',
-                }}
-              >
-                <div
-                  style={{
-                    width: `${Math.min(progress, 100)}%`,
-                    height: '100%',
-                    background: 'var(--accent)',
-                  }}
-                />
+              <div className="bar" style={{ height: 4 }}>
+                <i style={{ width: `${Math.min(progress, 100)}%` }} />
               </div>
             )}
-            <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+            <p style={{ fontSize: 13, color: 'var(--ink-3)' }}>
               {watchState.completed
                 ? 'Watched'
                 : `${Math.round(watchState.position_seconds)}s watched`}
             </p>
           </div>
         ) : (
-          <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Not started</p>
+          <p style={{ fontSize: 13, color: 'var(--ink-3)' }}>Not started</p>
         )}
         {!watchState?.completed && (
           <button
             onClick={handleMarkWatched}
             disabled={marking}
-            style={{
-              marginTop: 12,
-              padding: '8px 16px',
-              background: 'var(--bg-elevated)',
-              color: 'var(--text)',
-              border: '1px solid var(--border)',
-              borderRadius: 'var(--radius)',
-              fontSize: 13,
-              cursor: marking ? 'default' : 'pointer',
-              opacity: marking ? 0.6 : 1,
-            }}
+            className="btn btn-sm"
+            style={{ marginTop: 12, opacity: marking ? 0.6 : 1 }}
           >
             {marking ? 'Saving…' : 'Mark as Watched'}
           </button>
@@ -1075,16 +955,14 @@ export function MediaDetail() {
 
       {/* Versions */}
       {item.versions.length > 0 && (
-        <section>
-          <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>Versions</h2>
+        <section style={{ marginBottom: 28 }}>
+          <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12, color: 'var(--ink-1)' }}>Versions</h2>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {item.versions.map((v) => (
               <div
                 key={v.id}
+                className="surface"
                 style={{
-                  background: 'var(--bg-surface)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 'var(--radius)',
                   padding: '12px 16px',
                   display: 'flex',
                   gap: 16,
@@ -1092,26 +970,26 @@ export function MediaDetail() {
                   fontSize: 13,
                 }}
               >
-                <span style={{ color: 'var(--text)' }}>{v.label ?? 'Default'}</span>
+                <span style={{ color: 'var(--ink-1)' }}>{v.label ?? 'Default'}</span>
                 {v.container && (
-                  <span style={{ color: 'var(--text-muted)' }}>{v.container.toUpperCase()}</span>
+                  <span style={{ color: 'var(--ink-3)' }}>{v.container.toUpperCase()}</span>
                 )}
                 {v.quality_label && (
                   <span style={{ color: 'var(--accent)', fontWeight: 500 }}>{v.quality_label}</span>
                 )}
                 {v.resolution_width && v.resolution_height && (
-                  <span style={{ color: 'var(--text-muted)' }}>
+                  <span style={{ color: 'var(--ink-3)' }}>
                     {v.resolution_width}×{v.resolution_height}
                   </span>
                 )}
                 {v.video_codec && (
-                  <span style={{ color: 'var(--text-muted)' }}>{v.video_codec}</span>
+                  <span style={{ color: 'var(--ink-3)' }}>{v.video_codec}</span>
                 )}
                 {v.audio_codec && (
-                  <span style={{ color: 'var(--text-muted)' }}>{v.audio_codec}</span>
+                  <span style={{ color: 'var(--ink-3)' }}>{v.audio_codec}</span>
                 )}
                 {v.duration_seconds != null && (
-                  <span style={{ color: 'var(--text-muted)' }}>
+                  <span style={{ color: 'var(--ink-3)' }}>
                     {formatDuration(v.duration_seconds)}
                   </span>
                 )}
@@ -1123,23 +1001,22 @@ export function MediaDetail() {
 
       {/* Files */}
       {item.files.length > 0 && (
-        <section>
-          <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>Files</h2>
+        <section style={{ marginBottom: 28 }}>
+          <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12, color: 'var(--ink-1)' }}>Files</h2>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {item.files.map((f) => (
               <div
                 key={f.id}
+                className="surface"
                 style={{
-                  background: 'var(--bg-surface)',
-                  border: `1px solid ${f.missing_at ? 'var(--danger)' : 'var(--border)'}`,
-                  borderRadius: 'var(--radius)',
+                  borderColor: f.missing_at ? 'var(--bad)' : undefined,
                   padding: '12px 16px',
                 }}
               >
                 <div
                   style={{
                     fontSize: 13,
-                    color: f.missing_at ? 'var(--danger)' : 'var(--text)',
+                    color: f.missing_at ? 'var(--bad)' : 'var(--ink-1)',
                     wordBreak: 'break-all',
                     marginBottom: 4,
                   }}
@@ -1152,16 +1029,16 @@ export function MediaDetail() {
                         fontSize: 11,
                         padding: '1px 6px',
                         background: 'rgba(255,95,95,0.12)',
-                        border: '1px solid var(--danger)',
+                        border: '1px solid var(--bad)',
                         borderRadius: 3,
-                        color: 'var(--danger)',
+                        color: 'var(--bad)',
                       }}
                     >
                       missing
                     </span>
                   )}
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', gap: 12 }}>
+                <div style={{ fontSize: 12, color: 'var(--ink-3)', display: 'flex', gap: 12 }}>
                   <span>{f.extension.toUpperCase()}</span>
                   <span>{formatBytes(f.size_bytes)}</span>
                 </div>

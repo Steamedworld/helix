@@ -33,7 +33,6 @@ function EpisodeRow({
       ? (ws.position_seconds / ws.duration_seconds) * 100
       : null
 
-  // Time remaining for in-progress episodes
   const minutesLeft =
     ws && !ws.completed && ws.duration_seconds && ws.position_seconds > 0
       ? Math.ceil((ws.duration_seconds - ws.position_seconds) / 60)
@@ -45,97 +44,58 @@ function EpisodeRow({
       style={{
         display: 'flex',
         gap: 14,
-        padding: '14px 16px',
-        background: 'var(--bg-surface)',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius)',
+        padding: '14px 0',
+        borderBottom: '1px solid var(--line-1)',
         cursor: unavailable ? 'default' : 'pointer',
-        transition: 'border-color 0.15s',
         alignItems: 'flex-start',
         opacity: unavailable ? 0.5 : 1,
       }}
-      onMouseEnter={(e) => {
-        if (!unavailable) {
-          ;(e.currentTarget as HTMLDivElement).style.borderColor = 'var(--accent)'
-        }
-      }}
-      onMouseLeave={(e) => {
-        ;(e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border)'
-      }}
     >
-      {/* Ep number badge */}
+      {/* Episode thumbnail placeholder */}
       <div
         style={{
           flexShrink: 0,
-          width: 36,
-          height: 36,
-          background: 'var(--bg-elevated)',
-          border: '1px solid var(--border)',
-          borderRadius: 6,
+          width: 120,
+          height: 68,
+          borderRadius: 'var(--r-2)',
+          overflow: 'hidden',
+          background: 'var(--bg-3)',
+          border: '1px solid var(--line-1)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          fontSize: 13,
-          fontWeight: 600,
-          color: 'var(--text-muted)',
-          marginTop: 2,
         }}
       >
-        {ep.episodeNumber}
+        <span className="mono" style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-4)' }}>
+          {ep.episodeNumber}
+        </span>
       </div>
 
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
-          <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2, flexWrap: 'wrap' }}>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+            E{String(ep.episodeNumber).padStart(2, '0')}
+          </span>
+          <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--ink-1)' }}>
             {ep.episodeTitle ?? ep.title}
           </span>
           {ws?.completed && (
-            <span
-              style={{
-                fontSize: 10,
-                padding: '1px 6px',
-                background: 'rgba(76,175,125,0.15)',
-                border: '1px solid var(--success)',
-                borderRadius: 3,
-                color: 'var(--success)',
-                fontWeight: 600,
-              }}
-            >
+            <span className="chip chip-accent" style={{ height: 18, fontSize: 10 }}>
               ✓ Watched
             </span>
           )}
           {minutesLeft !== null && (
-            <span
-              style={{
-                fontSize: 10,
-                padding: '1px 6px',
-                background: 'rgba(196,164,107,0.12)',
-                border: '1px solid rgba(196,164,107,0.4)',
-                borderRadius: 3,
-                color: 'var(--accent)',
-                fontWeight: 500,
-              }}
-            >
+            <span className="chip chip-accent" style={{ height: 18, fontSize: 10 }}>
               {minutesLeft}min left
             </span>
           )}
           {unavailable && (
-            <span
-              style={{
-                fontSize: 10,
-                padding: '1px 6px',
-                background: 'rgba(255,95,95,0.10)',
-                border: '1px solid var(--danger)',
-                borderRadius: 3,
-                color: 'var(--danger)',
-                fontWeight: 500,
-              }}
-            >
+            <span className="chip" style={{ height: 18, fontSize: 10, color: 'var(--bad)', borderColor: 'var(--bad)' }}>
               Unavailable
             </span>
           )}
           {ep.runtime && (
-            <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 'auto' }}>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)', marginLeft: 'auto' }}>
               {formatDuration(ep.runtime)}
             </span>
           )}
@@ -143,8 +103,8 @@ function EpisodeRow({
         {ep.overview && (
           <p
             style={{
-              fontSize: 12,
-              color: 'var(--text-muted)',
+              fontSize: 13,
+              color: 'var(--ink-3)',
               lineHeight: 1.5,
               display: '-webkit-box',
               WebkitLineClamp: 2,
@@ -157,22 +117,8 @@ function EpisodeRow({
           </p>
         )}
         {progress !== null && !ws?.completed && (
-          <div
-            style={{
-              height: 3,
-              background: 'var(--bg-elevated)',
-              borderRadius: 2,
-              overflow: 'hidden',
-              marginTop: 4,
-            }}
-          >
-            <div
-              style={{
-                width: `${Math.min(progress, 100)}%`,
-                height: '100%',
-                background: 'var(--accent)',
-              }}
-            />
+          <div className="bar" style={{ marginTop: 4 }}>
+            <i style={{ width: `${Math.min(progress, 100)}%` }} />
           </div>
         )}
       </div>
@@ -189,11 +135,9 @@ export function ShowDetail() {
   const [episodes, setEpisodes] = useState<EpisodeListItem[]>([])
   const [episodesLoading, setEpisodesLoading] = useState(false)
 
-  // Continuity state
   const [upNext, setUpNext] = useState<UpNextResponse | null>(null)
   const [showProgress, setShowProgress] = useState<ShowProgressData | null>(null)
 
-  // Metadata state
   const [metadataRefreshing, setMetadataRefreshing] = useState(false)
   const [showMatchPanel, setShowMatchPanel] = useState(false)
   const [candidates, setCandidates] = useState<MetadataCandidate[] | null>(null)
@@ -213,7 +157,6 @@ export function ShowDetail() {
       }
       setLoading(false)
     })
-    // Load up-next and progress in parallel
     getShowUpNext(id).then((res) => {
       if (res.ok) setUpNext(res.data)
     })
@@ -274,29 +217,20 @@ export function ShowDetail() {
   }, [activeSeason])
 
   if (loading) {
-    return <div style={{ color: 'var(--text-muted)' }}>Loading…</div>
+    return <div style={{ color: 'var(--ink-3)' }}>Loading…</div>
   }
 
   if (!show) {
-    return <div style={{ color: 'var(--danger)' }}>Show not found.</div>
+    return <div style={{ color: 'var(--bad)' }}>Show not found.</div>
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 28, maxWidth: 900 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 0, maxWidth: 900 }}>
+      {/* Back button */}
       <button
         onClick={() => navigate(-1)}
-        style={{
-          background: 'none',
-          border: 'none',
-          color: 'var(--text-muted)',
-          fontSize: 13,
-          cursor: 'pointer',
-          padding: 0,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 4,
-          alignSelf: 'flex-start',
-        }}
+        className="btn btn-ghost btn-sm"
+        style={{ alignSelf: 'flex-start', marginBottom: 24 }}
       >
         ← Back
       </button>
@@ -305,118 +239,73 @@ export function ShowDetail() {
       {show.backdropUrl && (
         <div
           style={{
-            width: '100%',
-            aspectRatio: '16/5',
-            borderRadius: 'var(--radius-lg)',
-            overflow: 'hidden',
             position: 'relative',
+            height: 420,
+            borderRadius: 'var(--r-4)',
+            overflow: 'hidden',
+            marginBottom: 0,
           }}
         >
           <img
             src={show.backdropUrl}
             alt=""
-            style={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              display: 'block',
-              opacity: 0.6,
-            }}
+            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
           />
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              background: 'linear-gradient(to bottom, transparent 40%, var(--bg) 100%)',
-            }}
-          />
+          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 30%, var(--bg-0) 100%)' }} />
+          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(90deg, var(--bg-0) 0%, transparent 60%)' }} />
         </div>
       )}
 
       {/* Show header */}
-      <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+      <div
+        style={{
+          display: 'flex',
+          gap: 24,
+          alignItems: 'flex-end',
+          marginTop: show.backdropUrl ? -100 : 0,
+          position: 'relative',
+          zIndex: 2,
+          padding: '0 0 28px',
+        }}
+      >
         {show.posterUrl && (
           <img
             src={show.posterUrl}
             alt={show.title}
             style={{
-              width: 100,
+              width: 200,
               aspectRatio: '2/3',
               objectFit: 'cover',
-              borderRadius: 'var(--radius)',
-              border: '1px solid var(--border)',
+              borderRadius: 'var(--r-3)',
+              border: '1px solid var(--line-1)',
               flexShrink: 0,
+              boxShadow: 'var(--shadow-2)',
             }}
           />
         )}
-        <div style={{ flex: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
-            <h1 style={{ fontSize: 28, fontWeight: 700 }}>{show.title}</h1>
-            <span
-              style={{
-                fontSize: 11,
-                padding: '3px 8px',
-                background: 'var(--bg-elevated)',
-                border: '1px solid var(--border)',
-                borderRadius: 4,
-                color: 'var(--text-muted)',
-                fontWeight: 500,
-              }}
-            >
-              TV Show
-            </span>
-          </div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
-            {show.year && (
-              <span
-                style={{
-                  fontSize: 11,
-                  padding: '2px 8px',
-                  background: 'var(--bg-elevated)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 4,
-                  color: 'var(--text-muted)',
-                }}
-              >
-                {show.year}
-              </span>
-            )}
-            {show.contentRating && (
-              <span
-                style={{
-                  fontSize: 11,
-                  padding: '2px 8px',
-                  background: 'var(--bg-elevated)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 4,
-                  color: 'var(--text-muted)',
-                }}
-              >
-                {show.contentRating}
-              </span>
-            )}
-            <span
-              style={{
-                fontSize: 11,
-                padding: '2px 8px',
-                background: 'var(--bg-elevated)',
-                border: '1px solid var(--border)',
-                borderRadius: 4,
-                color: 'var(--text-muted)',
-              }}
-            >
-              {show.seasons.length} {show.seasons.length === 1 ? 'season' : 'seasons'}
-            </span>
+        <div style={{ flex: 1, paddingBottom: 8 }}>
+          <span className="chip chip-mono" style={{ marginBottom: 10, display: 'inline-flex' }}>
+            TV Show
+          </span>
+          <h1 className="display" style={{ fontSize: 64, lineHeight: 1, letterSpacing: '-0.02em', marginBottom: 12, color: 'var(--ink-1)' }}>
+            {show.title}
+          </h1>
+          <div className="row gap-3" style={{ marginBottom: 12, fontSize: 13, color: 'var(--ink-2)', flexWrap: 'wrap' }}>
+            {show.year && <span className="mono">{show.year}</span>}
+            {show.year && show.contentRating && <span className="dot-sep">·</span>}
+            {show.contentRating && <span>{show.contentRating}</span>}
+            {(show.year || show.contentRating) && <span className="dot-sep">·</span>}
+            <span>{show.seasons.length} {show.seasons.length === 1 ? 'season' : 'seasons'}</span>
           </div>
           {show.overview && (
-            <p style={{ fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.6, maxWidth: 600 }}>
+            <p style={{ fontSize: 14, color: 'var(--ink-2)', lineHeight: 1.65, maxWidth: 560 }}>
               {show.overview}
             </p>
           )}
 
-          {/* Integration links — subtle badges */}
+          {/* Integration links */}
           {show.integrationLinks && show.integrationLinks.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
               {show.integrationLinks.map((link, i) => (
                 <div
                   key={i}
@@ -429,14 +318,14 @@ export function ShowDetail() {
                     border: '1px solid rgba(100,120,200,0.25)',
                     borderRadius: 4,
                     fontSize: 11,
-                    color: 'var(--text-muted)',
+                    color: 'var(--ink-3)',
                   }}
                 >
-                  <span style={{ fontWeight: 500, color: 'var(--text)' }}>
+                  <span style={{ fontWeight: 500, color: 'var(--ink-1)' }}>
                     Managed by {link.integrationName}
                   </span>
                   {link.monitored && (
-                    <span style={{ color: '#4caf7d', fontWeight: 500 }}>· Monitored</span>
+                    <span style={{ color: 'var(--ok)', fontWeight: 500 }}>· Monitored</span>
                   )}
                   {link.qualityProfile && (
                     <span>· {link.qualityProfile}</span>
@@ -446,22 +335,13 @@ export function ShowDetail() {
             </div>
           )}
 
-          {/* Continue / Start Watching button */}
+          {/* Continue / Start Watching */}
           {upNext && (
-            <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
               {upNext.episode ? (
                 <button
                   onClick={() => navigate(`/media/${(upNext as { episode: PlayableEpisode }).episode.id}`)}
-                  style={{
-                    padding: '9px 20px',
-                    background: 'var(--accent)',
-                    border: 'none',
-                    borderRadius: 'var(--radius)',
-                    color: '#fff',
-                    fontSize: 13,
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                  }}
+                  className="btn btn-primary"
                 >
                   {`Continue — S${String((upNext as { episode: PlayableEpisode }).episode.seasonNumber).padStart(2, '0')}E${String((upNext as { episode: PlayableEpisode }).episode.episodeNumber).padStart(2, '0')} · ${(upNext as { episode: PlayableEpisode }).episode.title}`}
                 </button>
@@ -469,52 +349,30 @@ export function ShowDetail() {
                 <button
                   onClick={() => {
                     const restartId = (upNext as { allCompleted: true; restartEpisodeId?: string }).restartEpisodeId
-                    if (restartId) {
-                      navigate(`/media/${restartId}`)
-                    }
-                    // If no restartEpisodeId available, do nothing — user can pick from list
+                    if (restartId) navigate(`/media/${restartId}`)
                   }}
-                  style={{
-                    padding: '9px 20px',
-                    background: 'var(--bg-elevated)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 'var(--radius)',
-                    color: 'var(--text)',
-                    fontSize: 13,
-                    fontWeight: 500,
-                    cursor: 'pointer',
-                  }}
+                  className="btn"
                 >
                   Watch Again
                 </button>
               ) : (
-                <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>
                   No playable episodes yet
                 </span>
               )}
 
-              {/* Show progress summary */}
               {showProgress && showProgress.totalEpisodes > 0 && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                  <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>
                     {showProgress.allCompleted
                       ? `All ${showProgress.totalEpisodes} episodes watched`
                       : `${showProgress.completedEpisodes} of ${showProgress.totalEpisodes} episodes watched`}
                   </span>
-                  <div
-                    style={{
-                      width: 100,
-                      height: 4,
-                      background: 'var(--bg-elevated)',
-                      borderRadius: 2,
-                      overflow: 'hidden',
-                    }}
-                  >
-                    <div
+                  <div className="bar" style={{ width: 100 }}>
+                    <i
                       style={{
                         width: `${showProgress.percentComplete}%`,
-                        height: '100%',
-                        background: showProgress.allCompleted ? 'var(--success)' : 'var(--accent)',
+                        background: showProgress.allCompleted ? 'var(--ok)' : 'var(--accent)',
                       }}
                     />
                   </div>
@@ -532,11 +390,12 @@ export function ShowDetail() {
             padding: '10px 16px',
             background: 'rgba(255, 170, 0, 0.08)',
             border: '1px solid rgba(255, 170, 0, 0.3)',
-            borderRadius: 'var(--radius)',
+            borderRadius: 'var(--r-2)',
             display: 'flex',
             alignItems: 'center',
             gap: 12,
             flexWrap: 'wrap',
+            marginBottom: 16,
           }}
         >
           <span style={{ fontSize: 13, color: '#ffaa00', fontWeight: 500 }}>
@@ -560,36 +419,17 @@ export function ShowDetail() {
       )}
 
       {/* Metadata action row */}
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 24 }}>
         <button
           onClick={handleRefreshMetadata}
           disabled={metadataRefreshing}
-          style={{
-            fontSize: 12,
-            padding: '5px 12px',
-            background: 'var(--bg-elevated)',
-            border: '1px solid var(--border)',
-            borderRadius: 4,
-            color: 'var(--text-muted)',
-            cursor: metadataRefreshing ? 'default' : 'pointer',
-            opacity: metadataRefreshing ? 0.6 : 1,
-          }}
+          className="btn btn-sm"
+          style={{ opacity: metadataRefreshing ? 0.6 : 1 }}
         >
           {metadataRefreshing ? 'Refreshing…' : 'Refresh Metadata'}
         </button>
         {metadataStatus !== 'needs_review' && (
-          <button
-            onClick={handleOpenMatchPanel}
-            style={{
-              fontSize: 12,
-              padding: '5px 12px',
-              background: 'var(--bg-elevated)',
-              border: '1px solid var(--border)',
-              borderRadius: 4,
-              color: 'var(--text-muted)',
-              cursor: 'pointer',
-            }}
-          >
+          <button onClick={handleOpenMatchPanel} className="btn btn-sm">
             Find show match
           </button>
         )}
@@ -597,14 +437,7 @@ export function ShowDetail() {
 
       {/* Match panel */}
       {showMatchPanel && (
-        <div
-          style={{
-            background: 'var(--bg-surface)',
-            border: '1px solid var(--border)',
-            borderRadius: 'var(--radius-lg)',
-            padding: '20px',
-          }}
-        >
+        <div className="surface" style={{ padding: '20px', marginBottom: 24 }}>
           <div
             style={{
               display: 'flex',
@@ -613,29 +446,21 @@ export function ShowDetail() {
               marginBottom: 16,
             }}
           >
-            <h3 style={{ fontSize: 15, fontWeight: 600 }}>Find a show match</h3>
+            <h3 style={{ fontSize: 15, fontWeight: 600, color: 'var(--ink-1)' }}>Find a show match</h3>
             <button
               onClick={() => setShowMatchPanel(false)}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: 'var(--text-muted)',
-                fontSize: 20,
-                cursor: 'pointer',
-                lineHeight: 1,
-                padding: '0 4px',
-              }}
+              className="btn btn-icon btn-sm btn-ghost"
             >
               ×
             </button>
           </div>
 
           {candidatesLoading && (
-            <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Searching providers…</p>
+            <p style={{ fontSize: 13, color: 'var(--ink-3)' }}>Searching providers…</p>
           )}
 
           {!candidatesLoading && candidates !== null && candidates.length === 0 && (
-            <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+            <p style={{ fontSize: 13, color: 'var(--ink-3)' }}>
               No candidates found. Check that a metadata provider is configured.
             </p>
           )}
@@ -649,9 +474,9 @@ export function ShowDetail() {
                     display: 'flex',
                     gap: 12,
                     padding: '12px',
-                    background: 'var(--bg-elevated)',
-                    borderRadius: 'var(--radius)',
-                    border: '1px solid var(--border)',
+                    background: 'var(--bg-3)',
+                    borderRadius: 'var(--r-2)',
+                    border: '1px solid var(--line-1)',
                     alignItems: 'flex-start',
                   }}
                 >
@@ -672,7 +497,7 @@ export function ShowDetail() {
                       style={{
                         width: 48,
                         aspectRatio: '2/3',
-                        background: 'var(--bg)',
+                        background: 'var(--bg-0)',
                         borderRadius: 4,
                         flexShrink: 0,
                       }}
@@ -687,6 +512,7 @@ export function ShowDetail() {
                         whiteSpace: 'nowrap',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
+                        color: 'var(--ink-1)',
                       }}
                     >
                       {c.title}
@@ -694,7 +520,7 @@ export function ShowDetail() {
                         <span
                           style={{
                             fontSize: 12,
-                            color: 'var(--text-muted)',
+                            color: 'var(--ink-3)',
                             fontWeight: 400,
                             marginLeft: 6,
                           }}
@@ -707,7 +533,7 @@ export function ShowDetail() {
                       <p
                         style={{
                           fontSize: 12,
-                          color: 'var(--text-muted)',
+                          color: 'var(--ink-3)',
                           lineHeight: 1.5,
                           display: '-webkit-box',
                           WebkitLineClamp: 2,
@@ -723,15 +549,15 @@ export function ShowDetail() {
                       <span
                         style={{
                           fontSize: 11,
-                          color: 'var(--text-muted)',
-                          background: 'var(--bg)',
+                          color: 'var(--ink-3)',
+                          background: 'var(--bg-0)',
                           padding: '2px 6px',
                           borderRadius: 3,
                         }}
                       >
                         score {(c.score * 100).toFixed(0)}%
                       </span>
-                      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                         {c.providerId}
                       </span>
                     </div>
@@ -739,18 +565,8 @@ export function ShowDetail() {
                   <button
                     onClick={() => handleSelectCandidate(c)}
                     disabled={matchingId === c.externalId}
-                    style={{
-                      flexShrink: 0,
-                      fontSize: 12,
-                      padding: '6px 14px',
-                      background: matchingId === c.externalId ? 'var(--bg-elevated)' : 'var(--accent)',
-                      border: 'none',
-                      borderRadius: 4,
-                      color: matchingId === c.externalId ? 'var(--text-muted)' : '#fff',
-                      cursor: matchingId === c.externalId ? 'default' : 'pointer',
-                      opacity: matchingId === c.externalId ? 0.6 : 1,
-                      alignSelf: 'center',
-                    }}
+                    className={`btn btn-sm ${matchingId === c.externalId ? '' : 'btn-primary'}`}
+                    style={{ opacity: matchingId === c.externalId ? 0.6 : 1 }}
                   >
                     {matchingId === c.externalId ? 'Saving…' : 'Select'}
                   </button>
@@ -768,10 +584,9 @@ export function ShowDetail() {
           <div
             style={{
               display: 'flex',
-              gap: 6,
+              gap: 0,
               marginBottom: 16,
-              borderBottom: '1px solid var(--border)',
-              paddingBottom: 10,
+              borderBottom: '1px solid var(--line-1)',
               flexWrap: 'wrap',
             }}
           >
@@ -782,23 +597,25 @@ export function ShowDetail() {
                   key={season.id}
                   onClick={() => setActiveSeason(season)}
                   style={{
-                    padding: '5px 14px',
-                    fontSize: 13,
-                    fontWeight: isActive ? 600 : 400,
-                    background: isActive ? 'var(--accent)' : 'var(--bg-elevated)',
-                    border: `1px solid ${isActive ? 'var(--accent)' : 'var(--border)'}`,
-                    borderRadius: 4,
-                    color: isActive ? '#fff' : 'var(--text-muted)',
+                    padding: '10px 16px',
+                    fontSize: 14,
+                    fontWeight: isActive ? 500 : 400,
+                    background: 'transparent',
+                    border: 'none',
+                    borderBottom: isActive ? '2px solid var(--accent)' : '2px solid transparent',
+                    color: isActive ? 'var(--ink-1)' : 'var(--ink-3)',
                     cursor: 'pointer',
-                    transition: 'background 0.15s, color 0.15s',
+                    transition: 'color var(--d-fast) var(--ease), border-color var(--d-fast) var(--ease)',
+                    marginBottom: -1,
                   }}
                 >
                   Season {season.seasonNumber}
                   <span
+                    className="mono"
                     style={{
                       marginLeft: 6,
                       fontSize: 11,
-                      opacity: 0.7,
+                      color: isActive ? 'var(--ink-3)' : 'var(--ink-4)',
                     }}
                   >
                     {season.episodeCount}
@@ -813,7 +630,7 @@ export function ShowDetail() {
             <p
               style={{
                 fontSize: 13,
-                color: 'var(--text-muted)',
+                color: 'var(--ink-3)',
                 lineHeight: 1.6,
                 marginBottom: 12,
                 maxWidth: 640,
@@ -825,9 +642,9 @@ export function ShowDetail() {
 
           {/* Episode list */}
           {episodesLoading ? (
-            <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Loading episodes…</div>
+            <div style={{ color: 'var(--ink-3)', fontSize: 13 }}>Loading episodes…</div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div>
               {episodes.map((ep) => (
                 <EpisodeRow
                   key={ep.id}
@@ -837,7 +654,7 @@ export function ShowDetail() {
                 />
               ))}
               {episodes.length === 0 && (
-                <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+                <div style={{ color: 'var(--ink-3)', fontSize: 13 }}>
                   No episodes found for this season.
                 </div>
               )}

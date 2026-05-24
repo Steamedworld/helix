@@ -6,17 +6,14 @@ interface PosterGridProps {
   minColumnWidth?: number
 }
 
-export function PosterGrid({ items, minColumnWidth = 160 }: PosterGridProps) {
+export function PosterGrid({ items }: PosterGridProps) {
+  const colsClass =
+    items.length <= 4 ? 'cols-4' : items.length <= 5 ? 'cols-5' : 'cols-6'
+
   return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: `repeat(auto-fill, minmax(${minColumnWidth}px, 1fr))`,
-        gap: 16,
-      }}
-    >
+    <div className={`poster-grid ${colsClass}`}>
       {items.map((item) => (
-        <MediaCard key={item.id} item={item} />
+        <MediaCard key={item.id} item={item} variant="poster" />
       ))}
     </div>
   )

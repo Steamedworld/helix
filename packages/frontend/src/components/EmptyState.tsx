@@ -12,48 +12,42 @@ export function EmptyState({ title, description, ctaLabel, ctaHref }: EmptyState
 
   return (
     <div
+      className="surface"
       style={{
+        padding: 36,
+        minHeight: 280,
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: '64px 24px',
         textAlign: 'center',
         gap: 16,
       }}
     >
       <div
         style={{
-          width: 64,
-          height: 64,
-          borderRadius: 16,
-          background: 'var(--bg-elevated)',
-          border: '1px solid var(--border)',
+          width: 48,
+          height: 48,
+          borderRadius: 'var(--r-3)',
+          background: 'var(--bg-3)',
+          border: '1px solid var(--line-1)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          fontSize: 28,
-          marginBottom: 8,
+          fontSize: 20,
+          color: 'var(--ink-4)',
+          marginBottom: 4,
         }}
       >
         ◻
       </div>
-      <h2 style={{ fontSize: 20, fontWeight: 600, color: 'var(--text)' }}>{title}</h2>
-      <p style={{ fontSize: 14, color: 'var(--text-muted)', maxWidth: 360 }}>{description}</p>
+      <h2 className="display" style={{ fontSize: 32, lineHeight: 1.1, color: 'var(--ink-1)' }}>{title}</h2>
+      <p style={{ fontSize: 14, color: 'var(--ink-2)', maxWidth: 360, lineHeight: 1.6 }}>{description}</p>
       {ctaLabel && ctaHref && (
         <button
           onClick={() => navigate(ctaHref)}
-          style={{
-            marginTop: 8,
-            padding: '10px 20px',
-            background: 'var(--accent)',
-            color: 'white',
-            border: 'none',
-            borderRadius: 'var(--radius)',
-            fontSize: 14,
-            fontWeight: 500,
-            cursor: 'pointer',
-          }}
+          className="btn btn-primary"
+          style={{ marginTop: 8 }}
         >
           {ctaLabel}
         </button>
