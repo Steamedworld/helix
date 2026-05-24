@@ -2,7 +2,7 @@ import { promises as fs } from 'fs'
 import { join, extname, basename, dirname } from 'path'
 import type { DrizzleDB } from '../db/client'
 import { mediaItems, mediaVersions, mediaFiles, libraries } from '../db/schema'
-import { eq, and, isNotNull } from 'drizzle-orm'
+import { eq, and } from 'drizzle-orm'
 import type { Library, MediaItemKind } from '@helix/shared'
 import { logger } from '../lib/logger'
 
@@ -414,15 +414,46 @@ export async function scanLibrary(
 
     if (existingItem.length > 0) {
       mediaItemId = existingItem[0].id
-      // Update artwork if not already set
-      await db
-        .update(mediaItems)
-        .set({
-          poster_path: artwork.posterPath,
-          backdrop_path: artwork.backdropPath,
-          updated_at: now,
+      // Check metadata status — if matched/needs_review, do not overwrite enriched fields.
+      // Only update artwork paths if no path is already set (local artwork wins).
+      const [existingFull] = await db
+        .select({
+          metadata_status: mediaItems.metadata_status,
+          poster_path: mediaItems.poster_path,
+          backdrop_path: mediaItems.backdrop_path,
         })
+        .from(mediaItems)
         .where(eq(mediaItems.id, mediaItemId))
+
+      const isEnriched =
+        existingFull?.metadata_status === 'matched' ||
+        existingFull?.metadata_status === 'needs_review'
+
+      // Build artwork update: only set if not already present
+      const artworkUpdate: Record<string, unknown> = {}
+      if (!existingFull?.poster_path && artwork.posterPath) {
+        artworkUpdate.poster_path = artwork.posterPath
+      }
+      if (!existingFull?.backdrop_path && artwork.backdropPath) {
+        artworkUpdate.backdrop_path = artwork.backdropPath
+      }
+
+      if (isEnriched) {
+        // Only update non-enriched fields: artwork (if not set) and timestamp
+        await db
+          .update(mediaItems)
+          .set({ ...artworkUpdate, updated_at: now })
+          .where(eq(mediaItems.id, mediaItemId))
+      } else {
+        // Not yet enriched — update artwork and file-derived fields
+        await db
+          .update(mediaItems)
+          .set({
+            ...artworkUpdate,
+            updated_at: now,
+          })
+          .where(eq(mediaItems.id, mediaItemId))
+      }
     } else {
       mediaItemId = crypto.randomUUID()
       await db.insert(mediaItems).values({

@@ -9,10 +9,23 @@ import { nodeRoutes } from './routes/nodes'
 import { watchStateRoutes } from './routes/watchstate'
 import { streamRoutes } from './routes/stream'
 import { playbackRoutes } from './routes/playback'
+import { metadataCollectionRoutes, metadataItemRoutes } from './routes/metadata'
 import { err } from './lib/response'
 import type { DrizzleDB } from './db/client'
+import { metadataRegistry } from './services/metadata/registry'
+import { createTmdbProvider } from './services/metadata/providers/tmdb'
+
+function setupMetadataProviders() {
+  // Only register once — guard against double-call in tests
+  if (!metadataRegistry.getProvider('tmdb')) {
+    const tmdb = createTmdbProvider(config.tmdbReadAccessToken, config.tmdbApiKey)
+    metadataRegistry.register(tmdb)
+  }
+}
 
 export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string | null) {
+  setupMetadataProviders()
+
   const app = Fastify({
     logger:
       config.nodeEnv === 'development'
@@ -71,6 +84,18 @@ export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string
     db,
     localNodeId,
   } as Parameters<typeof playbackRoutes>[1] & { prefix: string })
+
+  // Metadata — collection-level: /api/v1/metadata/...
+  app.register(metadataCollectionRoutes, {
+    prefix: '/api/v1/metadata',
+    db,
+  } as Parameters<typeof metadataCollectionRoutes>[1] & { prefix: string })
+
+  // Metadata — per-item: /api/v1/media/:id/metadata/...
+  app.register(metadataItemRoutes, {
+    prefix: '/api/v1/media',
+    db,
+  } as Parameters<typeof metadataItemRoutes>[1] & { prefix: string })
 
   // Global error handler
   app.setErrorHandler((error, _req, reply) => {

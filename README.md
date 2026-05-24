@@ -11,7 +11,7 @@ A modern, lightweight, self-hosted media hub. Simpler than Plex, prettier than J
 - Full catalog stored in SQLite via Drizzle ORM with typed schema
 - REST API: libraries, media items, watch states, nodes, playback sessions, streaming, artwork
 - Watch state tracking (position, completion) per user per item
-- React frontend: Dashboard, Libraries list, Library detail, Add Library form, Media detail
+- React frontend: Dashboard, Libraries list, Library detail, Add Library form, Media detail, Settings
 - Node status indicator in sidebar (polls `/api/v1/health`)
 - Bootstrap: first-launch creates local node + admin user automatically
 - Federation seams: all multi-node hooks are stubbed and documented
@@ -22,6 +22,102 @@ A modern, lightweight, self-hosted media hub. Simpler than Plex, prettier than J
   - Stale-file detection: files that disappear between scans get `missing_at` set; source selection skips them
   - Media detail shows backdrop hero, poster thumbnail, overview, content rating, release date
   - Media grid shows poster images with graceful text fallback
+- **Phase 4 — Metadata provider system with TMDB:**
+  - Provider interface + registry: pluggable metadata providers, singleton registry, per-kind lookup
+  - TMDB provider: movie search, full movie details (overview, runtime, genres, release dates, content rating), artwork endpoint
+  - Candidate scoring: token-overlap + Levenshtein edit distance; `score >= 0.85` → matched, `< 0.85` → needs_review
+  - Enrichment service: `enrichMediaItem()` and `enrichBatch()` with skip/force logic
+  - Artwork cache: downloads remote poster/backdrop to `data/metadata_cache/{itemId}/{kind}.ext`; local artwork always wins
+  - Scanner protection: re-scan never overwrites enriched `overview`, `poster_path`, `backdrop_path`, `content_rating`, `release_date` on matched/needs_review items
+  - Metadata API routes: providers list, bulk enrich, per-item refresh, search candidates, select match
+  - Frontend: "Refresh Metadata" button, "Needs Review" amber banner, candidate match panel with poster thumbnails
+  - Settings page: provider status (configured/unconfigured) with TMDB setup instructions
+  - App runs fully without any TMDB credentials (graceful degradation)
+
+---
+
+## Metadata provider system (Phase 4)
+
+### Provider architecture
+
+Providers implement the `MetadataProvider` interface in `packages/backend/src/services/metadata/types.ts`:
+- `searchMovies(title, year?)` — returns ranked `MetadataCandidate[]`
+- `getMovieDetails(externalId)` — returns `EnrichedMovieMetadata | null`
+- `getArtwork?(externalId)` — returns `ArtworkCandidate[]`
+- `isConfigured()` — true when credentials are present
+
+Providers register in the singleton `MetadataProviderRegistry` (`registry.ts`) at startup via `setupMetadataProviders()` in `server.ts`.
+
+### TMDB setup
+
+1. Create a free account at [themoviedb.org](https://www.themoviedb.org)
+2. Go to [Settings → API](https://www.themoviedb.org/settings/api)
+3. Copy the **API Read Access Token** (v4 auth, preferred) or the **API Key v3**
+4. Add to your backend environment (see `.env.example`):
+
+```bash
+# Preferred — Bearer token auth
+TMDB_READ_ACCESS_TOKEN=eyJhbGciO...
+
+# Alternative — query param auth (only if no read token)
+TMDB_API_KEY=abc123...
+```
+
+If neither is set, the TMDB provider reports `unconfigured` and is excluded from all enrichment. Everything else works normally.
+
+### Enrichment flow
+
+1. `enrichMediaItem(db, itemId)` checks `metadata_status` — skips `matched`/`needs_review` unless `force: true`
+2. Calls `getEnabledProvidersForKind(item.kind)` from registry — only configured providers
+3. Searches each provider with item's title and year
+4. `scoreCandidate()` computes 0-1 confidence:
+   - Exact title → 0.9 base
+   - Token overlap (70%) + normalized edit distance (30%) for title
+   - Year exact match +0.3, within ±1 year +0.15
+5. `score >= 0.85` → calls `getMovieDetails()`, writes all enriched fields, `metadata_status = 'matched'`
+6. `score < 0.85` → `metadata_status = 'needs_review'`, no fields overwritten
+7. After matching: downloads poster and backdrop to artwork cache (if not already present locally)
+
+### Artwork cache
+
+- Remote images land in `{METADATA_CACHE_DIR}/{mediaItemId}/{kind}.{ext}` (default: `./data/metadata_cache/`)
+- Local artwork (scanner-detected) always wins — cached images are only downloaded if `poster_path`/`backdrop_path` is null
+- Path traversal prevention: downloads validated against cache root before write
+- The existing `/api/v1/media/:id/artwork/poster` endpoint serves cached images transparently
+
+### Scanner protection
+
+On any re-scan, if a media item's `metadata_status` is `matched` or `needs_review`:
+- `overview`, `content_rating`, `release_date`, `original_title`, `runtime_seconds` are **not** updated
+- `poster_path` and `backdrop_path` are **not** overwritten if already set (cached/local wins)
+- Filename-derived fields (`title`, `year`, `sort_title`) and version/file records update normally
+
+### Metadata API endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/metadata/providers` | List registered providers and their status |
+| POST | `/api/v1/metadata/enrich` | Bulk enrich up to 20 unmatched items (`body: { limit? }`) |
+| POST | `/api/v1/media/:id/metadata/refresh` | Force re-enrich a single item |
+| GET | `/api/v1/media/:id/metadata/search` | Return scored candidates without committing |
+| POST | `/api/v1/media/:id/metadata/match` | Commit a specific candidate (`body: { providerId, externalId }`) |
+
+### Limitations (Phase 4)
+
+- TV shows, seasons, episodes — enrichment skipped (no TVDB integration yet; `metadata_status` stays `local`)
+- Music tracks/albums — not enriched (no MusicBrainz yet)
+- Only movie kind is enriched via TMDB
+- No scheduled/background enrichment — call `POST /api/v1/metadata/enrich` manually or from UI
+- Per-episode artwork not handled
+- No user-uploaded artwork
+
+### Future providers
+
+The registry is ready to accept additional providers:
+- **TVDB** — TV show and episode metadata
+- **MusicBrainz** — music track and album metadata
+- **OpenSubtitles** — subtitle discovery
+- Any custom provider implementing `MetadataProvider`
 
 ---
 
@@ -128,6 +224,8 @@ The frontend proxies `/api` to the backend automatically via Vite.
 
 ### Environment variables (backend)
 
+Copy `.env.example` at the repo root for a documented template.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `3001` | Backend port |
@@ -135,6 +233,10 @@ The frontend proxies `/api` to the backend automatically via Vite.
 | `DB_PATH` | `./data/helix.db` | SQLite database file |
 | `DATA_DIR` | `./data` | Data directory |
 | `NODE_ENV` | `development` | Environment |
+| `TMDB_READ_ACCESS_TOKEN` | — | TMDB v4 Read Access Token (preferred) |
+| `TMDB_API_KEY` | — | TMDB v3 API key (fallback if no read token) |
+| `METADATA_CACHE_DIR` | `./data/metadata_cache` | Directory for cached artwork downloads |
+| `METADATA_ENRICHMENT_ENABLED` | `true` | Set to `false` to disable enrichment |
 
 ---
 
@@ -225,6 +327,15 @@ The frontend proxies `/api` to the backend automatically via Vite.
 | GET | `/api/v1/media/:id/playback-source` | Get best available playback source |
 | GET | `/api/v1/media/:id/artwork/poster` | Stream poster image |
 | GET | `/api/v1/media/:id/artwork/backdrop` | Stream backdrop image |
+| POST | `/api/v1/media/:id/metadata/refresh` | Force re-enrich single item |
+| GET | `/api/v1/media/:id/metadata/search` | Search providers for candidates (no commit) |
+| POST | `/api/v1/media/:id/metadata/match` | Select a specific candidate and commit |
+
+### Metadata
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/metadata/providers` | List providers and their configuration status |
+| POST | `/api/v1/metadata/enrich` | Bulk enrich up to 20 unmatched items |
 
 ### Watch State
 | Method | Path | Description |
