@@ -1,0 +1,103 @@
+import type { FastifyInstance } from 'fastify'
+import { eq, and, like, sql } from 'drizzle-orm'
+import { mediaItems, mediaVersions, mediaFiles } from '../db/schema'
+import { ok, err } from '../lib/response'
+import type { DrizzleDB } from '../db/client'
+import type { MediaItemKind } from '@helix/shared'
+
+export async function mediaRoutes(
+  app: FastifyInstance,
+  opts: { db: DrizzleDB }
+) {
+  const { db } = opts
+
+  // GET /media
+  app.get<{
+    Querystring: {
+      library_id?: string
+      kind?: MediaItemKind
+      q?: string
+      limit?: string
+      offset?: string
+    }
+  }>('/', async (req) => {
+    const { library_id, kind, q, limit = '50', offset = '0' } = req.query
+    const conditions = []
+
+    if (library_id) conditions.push(eq(mediaItems.library_id, library_id))
+    if (kind) conditions.push(eq(mediaItems.kind, kind))
+    if (q) conditions.push(like(mediaItems.title, `%${q}%`))
+
+    const rows = await db
+      .select()
+      .from(mediaItems)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .limit(parseInt(limit, 10))
+      .offset(parseInt(offset, 10))
+      .orderBy(sql`${mediaItems.created_at} DESC`)
+
+    return ok(rows)
+  })
+
+  // GET /media/:id
+  app.get<{ Params: { id: string } }>('/:id', async (req, reply) => {
+    const [item] = await db
+      .select()
+      .from(mediaItems)
+      .where(eq(mediaItems.id, req.params.id))
+    if (!item) {
+      reply.status(404)
+      return err('Media item not found')
+    }
+
+    const versions = await db
+      .select()
+      .from(mediaVersions)
+      .where(eq(mediaVersions.media_item_id, item.id))
+
+    const files = await db
+      .select()
+      .from(mediaFiles)
+      .where(eq(mediaFiles.media_item_id, item.id))
+
+    return ok({ ...item, versions, files })
+  })
+
+  // GET /media/:id/versions
+  app.get<{ Params: { id: string } }>('/:id/versions', async (req, reply) => {
+    const [item] = await db
+      .select({ id: mediaItems.id })
+      .from(mediaItems)
+      .where(eq(mediaItems.id, req.params.id))
+    if (!item) {
+      reply.status(404)
+      return err('Media item not found')
+    }
+
+    const versions = await db
+      .select()
+      .from(mediaVersions)
+      .where(eq(mediaVersions.media_item_id, req.params.id))
+
+    return ok(versions)
+  })
+
+  // GET /media/:id/files
+  app.get<{ Params: { id: string } }>('/:id/files', async (req, reply) => {
+    const [item] = await db
+      .select({ id: mediaItems.id })
+      .from(mediaItems)
+      .where(eq(mediaItems.id, req.params.id))
+    if (!item) {
+      reply.status(404)
+      return err('Media item not found')
+    }
+
+    const files = await db
+      .select()
+      .from(mediaFiles)
+      .where(eq(mediaFiles.media_item_id, req.params.id))
+
+    return ok(files)
+  })
+}

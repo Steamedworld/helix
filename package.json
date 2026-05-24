@@ -1,0 +1,22 @@
+{
+  "name": "helix",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -n backend,frontend -c cyan,magenta \"pnpm --filter @helix/backend dev\" \"pnpm --filter @helix/frontend dev\"",
+    "build": "pnpm --filter @helix/shared build && pnpm --filter @helix/backend build && pnpm --filter @helix/frontend build",
+    "test": "pnpm --filter @helix/backend test",
+    "typecheck": "pnpm --filter @helix/shared typecheck && pnpm --filter @helix/backend typecheck && pnpm --filter @helix/frontend typecheck",
+    "lint": "eslint packages/*/src --ext .ts,.tsx"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild",
+      "es5-ext"
+    ]
+  }
+}

@@ -1,0 +1,62 @@
+import Fastify from 'fastify'
+import cors from '@fastify/cors'
+import { config } from './config'
+import { healthRoutes } from './routes/health'
+import { libraryRoutes } from './routes/libraries'
+import { mediaRoutes } from './routes/media'
+import { nodeRoutes } from './routes/nodes'
+import { watchStateRoutes } from './routes/watchstate'
+import { err } from './lib/response'
+import type { DrizzleDB } from './db/client'
+
+export function buildServer(db: DrizzleDB, localNodeId: string) {
+  const app = Fastify({
+    logger:
+      config.nodeEnv === 'development'
+        ? {
+            level: 'info',
+            transport: {
+              target: 'pino-pretty',
+              options: {
+                colorize: true,
+                translateTime: 'HH:MM:ss',
+                ignore: 'pid,hostname',
+              },
+            },
+          }
+        : { level: 'warn' },
+  })
+
+  // CORS — allow all in dev
+  app.register(cors, {
+    origin: true,
+    credentials: true,
+  })
+
+  // Routes
+  app.register(healthRoutes, { prefix: '/api/v1' })
+  app.register(libraryRoutes, {
+    prefix: '/api/v1/libraries',
+    db,
+    localNodeId,
+  } as Parameters<typeof libraryRoutes>[1] & { prefix: string })
+  app.register(mediaRoutes, {
+    prefix: '/api/v1/media',
+    db,
+  } as Parameters<typeof mediaRoutes>[1] & { prefix: string })
+  app.register(nodeRoutes, {
+    prefix: '/api/v1/nodes',
+    db,
+  } as Parameters<typeof nodeRoutes>[1] & { prefix: string })
+  app.register(watchStateRoutes, {
+    prefix: '/api/v1/watchstate',
+    db,
+  } as Parameters<typeof watchStateRoutes>[1] & { prefix: string })
+
+  // Global error handler
+  app.setErrorHandler((error, _req, reply) => {
+    reply.status(error.statusCode ?? 500).send(err(error.message, error.validation))
+  })
+
+  return app
+}
