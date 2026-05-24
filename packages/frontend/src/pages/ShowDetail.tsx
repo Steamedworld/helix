@@ -12,8 +12,6 @@ import type {
 } from '../api/tv'
 import type { MetadataCandidate } from '../api/metadata'
 
-const DEFAULT_USER_ID = 'default'
-
 function formatDuration(seconds: number | null): string {
   if (!seconds) return ''
   const m = Math.floor(seconds / 60)
@@ -269,7 +267,7 @@ export function ShowDetail() {
   useEffect(() => {
     if (!activeSeason) return
     setEpisodesLoading(true)
-    getSeasonEpisodes(activeSeason.id, DEFAULT_USER_ID).then((res) => {
+    getSeasonEpisodes(activeSeason.id).then((res) => {
       if (res.ok) setEpisodes(res.data)
       setEpisodesLoading(false)
     })
@@ -438,11 +436,11 @@ export function ShowDetail() {
               ) : (upNext as { allCompleted: boolean }).allCompleted ? (
                 <button
                   onClick={() => {
-                    // Navigate to first episode — resolved from episode list when loaded
-                    // We don't have the first episode id here; we rely on seasons being loaded
-                    // Fall back to using the up-next API response which has totalEpisodes
-                    // For simplicity, show the button and let the user pick from the list
-                    navigate(`/shows/${id}`)
+                    const restartId = (upNext as { allCompleted: true; restartEpisodeId?: string }).restartEpisodeId
+                    if (restartId) {
+                      navigate(`/media/${restartId}`)
+                    }
+                    // If no restartEpisodeId available, do nothing — user can pick from list
                   }}
                   style={{
                     padding: '9px 20px',

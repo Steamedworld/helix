@@ -12,6 +12,7 @@ import { libraries, mediaItems, users, nodes } from '../src/db/schema'
 import { join } from 'path'
 import { mkdirSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
+import { setupAuth } from './helpers/auth'
 
 function createTestDb(testDir: string) {
   mkdirSync(testDir, { recursive: true })
@@ -30,6 +31,7 @@ describe('watch state — completion protection and container guards', () => {
   let userId: string
   let localNodeId: string
   let libraryId: string
+  let sessionCookie: string
 
   beforeEach(async () => {
     testDir = join(tmpdir(), `helix-ws-behav-${crypto.randomUUID()}`)
@@ -55,6 +57,7 @@ describe('watch state — completion protection and container guards', () => {
 
     app = buildServer(db, localNodeId)
     await app.ready()
+    sessionCookie = await setupAuth(app)
   })
 
   afterEach(() => {
@@ -91,8 +94,8 @@ describe('watch state — completion protection and container guards', () => {
     const res1 = await app.inject({
       method: 'PUT',
       url: `/api/v1/watchstate/${epId}`,
+      headers: { Cookie: sessionCookie },
       payload: {
-        user_id: userId,
         position_seconds: 2700,
         duration_seconds: 2700,
         completed: true,
@@ -105,8 +108,8 @@ describe('watch state — completion protection and container guards', () => {
     const res2 = await app.inject({
       method: 'PUT',
       url: `/api/v1/watchstate/${epId}`,
+      headers: { Cookie: sessionCookie },
       payload: {
-        user_id: userId,
         position_seconds: 0,
         duration_seconds: 2700,
         completed: false,
@@ -126,8 +129,8 @@ describe('watch state — completion protection and container guards', () => {
     const res3 = await app.inject({
       method: 'PUT',
       url: `/api/v1/watchstate/${epId}`,
+      headers: { Cookie: sessionCookie },
       payload: {
-        user_id: userId,
         position_seconds: 2700,
         duration_seconds: 2700,
         completed: true,
@@ -139,8 +142,8 @@ describe('watch state — completion protection and container guards', () => {
     const res4 = await app.inject({
       method: 'PUT',
       url: `/api/v1/watchstate/${epId}`,
+      headers: { Cookie: sessionCookie },
       payload: {
-        user_id: userId,
         position_seconds: 1400, // > 1350 (halfway of 2700)
         duration_seconds: 2700,
         completed: false,
@@ -158,8 +161,8 @@ describe('watch state — completion protection and container guards', () => {
     await app.inject({
       method: 'PUT',
       url: `/api/v1/watchstate/${epId}`,
+      headers: { Cookie: sessionCookie },
       payload: {
-        user_id: userId,
         position_seconds: 2700,
         duration_seconds: 2700,
         completed: true,
@@ -171,8 +174,8 @@ describe('watch state — completion protection and container guards', () => {
     const res = await app.inject({
       method: 'PUT',
       url: `/api/v1/watchstate/${epId}`,
+      headers: { Cookie: sessionCookie },
       payload: {
-        user_id: userId,
         position_seconds: 300,
         duration_seconds: 2700,
         // completed not sent → resolved as ?? existing.completed (true)
@@ -191,8 +194,8 @@ describe('watch state — completion protection and container guards', () => {
     const r1 = await app.inject({
       method: 'PUT',
       url: `/api/v1/watchstate/${movieId}`,
+      headers: { Cookie: sessionCookie },
       payload: {
-        user_id: userId,
         position_seconds: 3600,
         duration_seconds: 7200,
         completed: false,
@@ -206,8 +209,8 @@ describe('watch state — completion protection and container guards', () => {
     const r2 = await app.inject({
       method: 'PUT',
       url: `/api/v1/watchstate/${movieId}`,
+      headers: { Cookie: sessionCookie },
       payload: {
-        user_id: userId,
         position_seconds: 7200,
         duration_seconds: 7200,
         completed: true,
@@ -220,8 +223,8 @@ describe('watch state — completion protection and container guards', () => {
     const r3 = await app.inject({
       method: 'PUT',
       url: `/api/v1/watchstate/${movieId}`,
+      headers: { Cookie: sessionCookie },
       payload: {
-        user_id: userId,
         position_seconds: 4000, // > 3600 = 50% of 7200
         duration_seconds: 7200,
         completed: false,
@@ -231,9 +234,9 @@ describe('watch state — completion protection and container guards', () => {
     expect(JSON.parse(r3.body).data.completed).toBe(true) // stays completed
   })
 
-  // ─── Watch state requires valid user_id and position_seconds ──────────────
+  // ─── Watch state requires authentication ──────────────────────────────────
 
-  it('returns 400 when user_id is missing', async () => {
+  it('returns 401 when no session cookie is provided', async () => {
     const movieId = await createMediaItem('movie')
 
     const res = await app.inject({
@@ -243,7 +246,7 @@ describe('watch state — completion protection and container guards', () => {
         position_seconds: 100,
       },
     })
-    expect(res.statusCode).toBe(400)
+    expect(res.statusCode).toBe(401)
   })
 
   // ─── Show / season containers should still accept watch state ─────────────
@@ -256,8 +259,8 @@ describe('watch state — completion protection and container guards', () => {
     const res = await app.inject({
       method: 'PUT',
       url: `/api/v1/watchstate/${showId}`,
+      headers: { Cookie: sessionCookie },
       payload: {
-        user_id: userId,
         position_seconds: 0,
         duration_seconds: null,
         completed: false,
@@ -279,8 +282,8 @@ describe('watch state — completion protection and container guards', () => {
     const res = await app.inject({
       method: 'PUT',
       url: `/api/v1/watchstate/${epId}`,
+      headers: { Cookie: sessionCookie },
       payload: {
-        user_id: userId,
         position_seconds: position,
         duration_seconds: duration,
         completed: true,

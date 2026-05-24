@@ -6,12 +6,14 @@ import { scanLibrary } from '../services/scanner'
 import type { DrizzleDB } from '../db/client'
 import type { LibraryKind } from '@helix/shared'
 import { count } from 'drizzle-orm'
+import { makeRequireAdmin } from '../middleware/auth'
 
 export async function libraryRoutes(
   app: FastifyInstance,
   opts: { db: DrizzleDB; localNodeId: string }
 ) {
   const { db, localNodeId } = opts
+  const requireAdmin = makeRequireAdmin(db)
 
   // GET /libraries
   app.get('/', async () => {
@@ -22,7 +24,7 @@ export async function libraryRoutes(
   // POST /libraries
   app.post<{
     Body: { name: string; kind: LibraryKind; root_path: string }
-  }>('/', async (req, reply) => {
+  }>('/', { preHandler: requireAdmin }, async (req, reply) => {
     const { name, kind, root_path } = req.body
     if (!name || !kind || !root_path) {
       reply.status(400)
@@ -59,7 +61,7 @@ export async function libraryRoutes(
   app.put<{
     Params: { id: string }
     Body: Partial<{ name: string; kind: LibraryKind; root_path: string }>
-  }>('/:id', async (req, reply) => {
+  }>('/:id', { preHandler: requireAdmin }, async (req, reply) => {
     const [existing] = await db.select().from(libraries).where(eq(libraries.id, req.params.id))
     if (!existing) {
       reply.status(404)
@@ -75,7 +77,7 @@ export async function libraryRoutes(
   })
 
   // DELETE /libraries/:id
-  app.delete<{ Params: { id: string } }>('/:id', async (req, reply) => {
+  app.delete<{ Params: { id: string } }>('/:id', { preHandler: requireAdmin }, async (req, reply) => {
     const [existing] = await db.select().from(libraries).where(eq(libraries.id, req.params.id))
     if (!existing) {
       reply.status(404)
@@ -86,7 +88,7 @@ export async function libraryRoutes(
   })
 
   // POST /libraries/:id/scan
-  app.post<{ Params: { id: string } }>('/:id/scan', async (req, reply) => {
+  app.post<{ Params: { id: string } }>('/:id/scan', { preHandler: requireAdmin }, async (req, reply) => {
     const [lib] = await db.select().from(libraries).where(eq(libraries.id, req.params.id))
     if (!lib) {
       reply.status(404)

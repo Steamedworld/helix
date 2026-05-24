@@ -23,5 +23,13 @@
       "tag": "0002_tv_hierarchy",
       "breakpoints": true
     }
+    ,
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1748390400000,
+      "tag": "0003_auth",
+      "breakpoints": true
+    }
   ]
 }

@@ -25,6 +25,7 @@ import { eq } from 'drizzle-orm'
 import { join } from 'path'
 import { mkdirSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
+import { setupAuth } from './helpers/auth'
 
 // ─── DB + fixture helpers ──────────────────────────────────────────────────────
 
@@ -194,6 +195,7 @@ describe('continuity routes', () => {
   let db: TestDb
   let app: ReturnType<typeof buildServer>
   let fix: TvFixture
+  let sessionCookie: string
 
   beforeEach(async () => {
     testDir = join(tmpdir(), `helix-continuity-${crypto.randomUUID()}`)
@@ -202,6 +204,7 @@ describe('continuity routes', () => {
     fix = await buildTvFixture(db, testDir, { seasonCount: 2, episodesPerSeason: 3 })
     app = buildServer(db, (await db.select({ id: nodes.id }).from(nodes).limit(1))[0].id)
     await app.ready()
+    sessionCookie = await setupAuth(app)
 
     // Add playable files for all episodes by default
     for (const epId of fix.episodeIds) {
@@ -220,6 +223,7 @@ describe('continuity routes', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/api/v1/shows/${fix.showId}/up-next`,
+        headers: { Cookie: sessionCookie },
       })
       expect(res.statusCode).toBe(200)
       const body = JSON.parse(res.body)
@@ -238,6 +242,7 @@ describe('continuity routes', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/api/v1/shows/${fix.showId}/up-next`,
+        headers: { Cookie: sessionCookie },
       })
       expect(res.statusCode).toBe(200)
       const body = JSON.parse(res.body)
@@ -247,10 +252,19 @@ describe('continuity routes', () => {
       expect(body.data.episode).toBeUndefined()
     })
 
+    it('returns 401 when not authenticated', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/v1/shows/${fix.showId}/up-next`,
+      })
+      expect(res.statusCode).toBe(401)
+    })
+
     it('returns 404 for unknown show', async () => {
       const res = await app.inject({
         method: 'GET',
         url: '/api/v1/shows/nonexistent/up-next',
+        headers: { Cookie: sessionCookie },
       })
       expect(res.statusCode).toBe(404)
     })
@@ -262,6 +276,7 @@ describe('continuity routes', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/api/v1/shows/${fix.showId}/up-next`,
+        headers: { Cookie: sessionCookie },
       })
       const body = JSON.parse(res.body)
       expect(body.data.episode.episodeNumber).toBe(2)
@@ -279,6 +294,7 @@ describe('continuity routes', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/api/v1/shows/${fix.showId}/progress`,
+        headers: { Cookie: sessionCookie },
       })
       expect(res.statusCode).toBe(200)
       const body = JSON.parse(res.body)
@@ -298,16 +314,26 @@ describe('continuity routes', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/api/v1/shows/${fix.showId}/progress`,
+        headers: { Cookie: sessionCookie },
       })
       const body = JSON.parse(res.body)
       expect(body.data.allCompleted).toBe(true)
       expect(body.data.percentComplete).toBe(100)
     })
 
+    it('returns 401 when not authenticated', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/v1/shows/${fix.showId}/progress`,
+      })
+      expect(res.statusCode).toBe(401)
+    })
+
     it('returns 404 for unknown show', async () => {
       const res = await app.inject({
         method: 'GET',
         url: '/api/v1/shows/nonexistent/progress',
+        headers: { Cookie: sessionCookie },
       })
       expect(res.statusCode).toBe(404)
     })
@@ -322,6 +348,7 @@ describe('continuity routes', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/api/v1/episodes/${firstEpId}/next`,
+        headers: { Cookie: sessionCookie },
       })
       expect(res.statusCode).toBe(200)
       const body = JSON.parse(res.body)
@@ -338,6 +365,7 @@ describe('continuity routes', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/api/v1/episodes/${lastS1}/next`,
+        headers: { Cookie: sessionCookie },
       })
       const body = JSON.parse(res.body)
       expect(body.data.episode.seasonNumber).toBe(2)
@@ -350,16 +378,27 @@ describe('continuity routes', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/api/v1/episodes/${lastEpId}/next`,
+        headers: { Cookie: sessionCookie },
       })
       expect(res.statusCode).toBe(404)
       const body = JSON.parse(res.body)
       expect(body.ok).toBe(false)
     })
 
+    it('returns 401 when not authenticated', async () => {
+      const firstEpId = fix.episodeIds[0]
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/v1/episodes/${firstEpId}/next`,
+      })
+      expect(res.statusCode).toBe(401)
+    })
+
     it('returns 404 for unknown episode id', async () => {
       const res = await app.inject({
         method: 'GET',
         url: '/api/v1/episodes/nonexistent/next',
+        headers: { Cookie: sessionCookie },
       })
       expect(res.statusCode).toBe(404)
     })

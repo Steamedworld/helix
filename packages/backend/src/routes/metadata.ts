@@ -7,6 +7,7 @@ import { metadataRegistry } from '../services/metadata/registry'
 import { scoreCandidate } from '../services/metadata/scoring'
 import { enrichBatch, enrichMediaItem, applyMatch } from '../services/metadata/enrichment'
 import type { ProviderInfo, MetadataCandidate } from '../services/metadata/types'
+import { makeRequireAdmin } from '../middleware/auth'
 
 // ─── Collection-level metadata routes (/api/v1/metadata/...) ───────────────────
 
@@ -15,15 +16,16 @@ export async function metadataCollectionRoutes(
   opts: { db: DrizzleDB }
 ) {
   const { db } = opts
+  const requireAdmin = makeRequireAdmin(db)
 
   // GET /api/v1/metadata/providers
-  app.get('/providers', async () => {
+  app.get('/providers', { preHandler: requireAdmin }, async () => {
     const providers: ProviderInfo[] = metadataRegistry.listProviders()
     return ok({ providers })
   })
 
   // POST /api/v1/metadata/enrich — bulk enrich up to 20 items
-  app.post<{ Body: { limit?: number } }>('/enrich', async (req) => {
+  app.post<{ Body: { limit?: number } }>('/enrich', { preHandler: requireAdmin }, async (req) => {
     const limit = Math.min(req.body?.limit ?? 20, 20)
     const results = await enrichBatch(db, limit)
     return ok({ results, count: results.length })
@@ -37,9 +39,10 @@ export async function metadataItemRoutes(
   opts: { db: DrizzleDB }
 ) {
   const { db } = opts
+  const requireAdmin = makeRequireAdmin(db)
 
   // POST /media/:id/metadata/refresh — force re-enrich single item
-  app.post<{ Params: { id: string } }>('/:id/metadata/refresh', async (req, reply) => {
+  app.post<{ Params: { id: string } }>('/:id/metadata/refresh', { preHandler: requireAdmin }, async (req, reply) => {
     const { id } = req.params
 
     const [item] = await db

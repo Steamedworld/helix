@@ -14,8 +14,22 @@ export const users = sqliteTable('users', {
   id: text('id').primaryKey(),
   display_name: text('display_name').notNull(),
   role: text('role', { enum: ['admin', 'user'] }).notNull().default('user'),
+  username: text('username').unique(),
+  password_hash: text('password_hash'),
+  disabled: integer('disabled').notNull().default(0),
   created_at: text('created_at').notNull(),
   updated_at: text('updated_at').notNull(),
+})
+
+export const sessions = sqliteTable('sessions', {
+  id: text('id').primaryKey(),
+  user_id: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  token_hash: text('token_hash').notNull().unique(),
+  created_at: integer('created_at').notNull(),
+  expires_at: integer('expires_at').notNull(),
+  last_seen_at: integer('last_seen_at').notNull(),
+  user_agent: text('user_agent'),
+  revoked_at: integer('revoked_at'),
 })
 
 export const libraries = sqliteTable('libraries', {

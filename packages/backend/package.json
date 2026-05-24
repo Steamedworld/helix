@@ -13,8 +13,10 @@
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
+    "@fastify/cookie": "^8.3.0",
     "@fastify/cors": "^9.0.1",
     "@helix/shared": "workspace:*",
+    "bcryptjs": "^3.0.3",
     "better-sqlite3": "^11.10.0",
     "drizzle-orm": "^0.30.10",
     "fastify": "^4.27.0",
@@ -22,11 +24,12 @@
     "pino-pretty": "^11.2.1"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^3.0.0",
     "@types/better-sqlite3": "^7.6.10",
     "@types/node": "^20.14.0",
     "drizzle-kit": "^0.21.4",
-    "tsx": "^4.15.5",
     "tsc-alias": "^1.8.10",
+    "tsx": "^4.15.5",
     "typescript": "^5.4.5",
     "vitest": "^1.6.0"
   }

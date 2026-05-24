@@ -1,5 +1,6 @@
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
+import cookie from '@fastify/cookie'
 import { config } from './config'
 import { healthRoutes } from './routes/health'
 import { libraryRoutes } from './routes/libraries'
@@ -11,6 +12,8 @@ import { streamRoutes } from './routes/stream'
 import { playbackRoutes } from './routes/playback'
 import { metadataCollectionRoutes, metadataItemRoutes } from './routes/metadata'
 import { tvRoutes, seasonRoutes, episodeRoutes } from './routes/tv'
+import { authRoutes } from './routes/auth'
+import { userRoutes } from './routes/users'
 import { err } from './lib/response'
 import type { DrizzleDB } from './db/client'
 import { metadataRegistry } from './services/metadata/registry'
@@ -50,8 +53,23 @@ export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string
     credentials: true,
   })
 
+  // Cookie support
+  app.register(cookie)
+
   // Routes
   app.register(healthRoutes, { prefix: '/api/v1' })
+
+  // Auth routes
+  app.register(authRoutes, {
+    prefix: '/api/v1/auth',
+    db,
+  } as Parameters<typeof authRoutes>[1] & { prefix: string })
+
+  // User management routes (admin only)
+  app.register(userRoutes, {
+    prefix: '/api/v1/users',
+    db,
+  } as Parameters<typeof userRoutes>[1] & { prefix: string })
   app.register(libraryRoutes, {
     prefix: '/api/v1/libraries',
     db,

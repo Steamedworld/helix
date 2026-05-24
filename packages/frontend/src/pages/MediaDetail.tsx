@@ -15,7 +15,6 @@ import type { MetadataCandidate } from '../api/metadata'
 import type { PlayableEpisode } from '../api/tv'
 import type { WatchState } from '@helix/shared'
 
-const DEFAULT_USER_ID = 'default'
 // Save progress at most every N milliseconds
 const SAVE_DEBOUNCE_MS = 5000
 // Mark completed when this fraction of the video has been watched
@@ -238,7 +237,6 @@ function DirectPlayer({
     async (position: number, completed: boolean) => {
       const duration = durationRef.current ?? undefined
       const res = await upsertWatchState(mediaItemId, {
-        user_id: DEFAULT_USER_ID,
         position_seconds: position,
         duration_seconds: duration,
         completed,
@@ -491,7 +489,6 @@ export function MediaDetail() {
     if (!id) return
     setMarking(true)
     const res = await upsertWatchState(id, {
-      user_id: DEFAULT_USER_ID,
       position_seconds: item?.versions[0]?.duration_seconds ?? 0,
       duration_seconds: item?.versions[0]?.duration_seconds ?? undefined,
       completed: true,

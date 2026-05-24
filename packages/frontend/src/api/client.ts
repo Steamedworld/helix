@@ -5,6 +5,7 @@ const BASE = import.meta.env.VITE_API_BASE ?? ''
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<ApiResponse<T>> {
   try {
     const res = await fetch(`${BASE}${path}`, {
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         ...(init?.headers ?? {}),

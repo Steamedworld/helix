@@ -17,6 +17,7 @@ import type {
   EnrichedEpisodeMetadata,
 } from '../src/services/metadata/types'
 import type { MediaItemKind } from '@helix/shared'
+import { setupAuth } from './helpers/auth'
 
 // ─── DB helpers ──────────────────────────────────────────────────────────────────
 
@@ -154,6 +155,7 @@ describe('metadata API routes — TV dispatch', () => {
   let db: TestDb
   let app: ReturnType<typeof buildServer>
   let libraryId: string
+  let sessionCookie: string
   const registeredIds: string[] = []
 
   function registerProvider(p: MetadataProvider) {
@@ -182,6 +184,8 @@ describe('metadata API routes — TV dispatch', () => {
     })
 
     app = buildServer(db, localNodeId)
+    await app.ready()
+    sessionCookie = await setupAuth(app)
 
     // Suppress real network calls (artwork cache downloads)
     global.fetch = vi.fn().mockResolvedValue({
@@ -204,7 +208,7 @@ describe('metadata API routes — TV dispatch', () => {
   // ─── GET /api/v1/metadata/providers ─────────────────────────────────────────
 
   it('TMDB provider lists show/season/episode in supportedKinds', async () => {
-    const res = await app.inject({ method: 'GET', url: '/api/v1/metadata/providers' })
+    const res = await app.inject({ method: 'GET', url: '/api/v1/metadata/providers', headers: { Cookie: sessionCookie } })
     expect(res.statusCode).toBe(200)
 
     const body = JSON.parse(res.body)
@@ -307,6 +311,7 @@ describe('metadata API routes — TV dispatch', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/media/${showId}/metadata/refresh`,
+      headers: { Cookie: sessionCookie },
     })
     expect(res.statusCode).toBe(200)
 
@@ -344,6 +349,7 @@ describe('metadata API routes — TV dispatch', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/media/${episodeId}/metadata/refresh`,
+      headers: { Cookie: sessionCookie },
     })
     expect(res.statusCode).toBe(200)
 
@@ -378,6 +384,7 @@ describe('metadata API routes — TV dispatch', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/media/${episodeId}/metadata/refresh`,
+      headers: { Cookie: sessionCookie },
     })
     expect(res.statusCode).toBe(200)
 

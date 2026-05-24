@@ -9,8 +9,6 @@ import { MediaCard } from '../components/MediaCard'
 import { PosterGrid } from '../components/PosterGrid'
 import { EmptyState } from '../components/EmptyState'
 
-const DEFAULT_USER_ID = 'default'
-
 export function Dashboard() {
   const navigate = useNavigate()
   const [recentItems, setRecentItems] = useState<MediaItem[]>([])
@@ -22,7 +20,7 @@ export function Dashboard() {
     Promise.all([
       listLibraries(),
       listMedia({ limit: 12 }),
-      getContinueWatching(DEFAULT_USER_ID, 10),
+      getContinueWatching(10),
     ]).then(([libRes, mediaRes, continueRes]) => {
       if (libRes.ok) setLibraries(libRes.data)
       if (mediaRes.ok) setRecentItems(mediaRes.data)

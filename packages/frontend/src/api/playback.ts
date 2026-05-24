@@ -40,7 +40,6 @@ export function createPlaybackSession(body: {
   media_item_id: string
   media_version_id: string
   media_file_id: string
-  user_id?: string
 }) {
   return apiFetch<PlaybackSession>('/api/v1/playback-sessions', {
     method: 'POST',

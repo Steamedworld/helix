@@ -1,15 +1,17 @@
 import type { FastifyInstance } from 'fastify'
 import { eq } from 'drizzle-orm'
-import { playbackSessions, users, mediaItems, mediaVersions, mediaFiles } from '../db/schema'
+import { playbackSessions, mediaItems, mediaVersions, mediaFiles } from '../db/schema'
 import { ok, err } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
 import type { PlaybackState } from '@helix/shared'
+import { makeRequireAuth } from '../middleware/auth'
 
 export async function playbackRoutes(
   app: FastifyInstance,
   opts: { db: DrizzleDB; localNodeId: string }
 ) {
   const { db, localNodeId } = opts
+  const requireAuth = makeRequireAuth(db)
 
   // POST /playback-sessions — create session when playback starts
   app.post<{
@@ -17,25 +19,14 @@ export async function playbackRoutes(
       media_item_id: string
       media_version_id: string
       media_file_id: string
-      user_id?: string
     }
-  }>('/', async (req, reply) => {
-    const { media_item_id, media_version_id, media_file_id, user_id } = req.body
+  }>('/', { preHandler: requireAuth }, async (req, reply) => {
+    const { media_item_id, media_version_id, media_file_id } = req.body
+    const user_id = req.user!.id
 
     if (!media_item_id || !media_version_id || !media_file_id) {
       reply.status(400)
       return err('media_item_id, media_version_id, and media_file_id are required')
-    }
-
-    // Resolve user: use provided user_id or fall back to first user in DB (default admin)
-    let resolvedUserId = user_id
-    if (!resolvedUserId) {
-      const [defaultUser] = await db.select({ id: users.id }).from(users).limit(1)
-      if (!defaultUser) {
-        reply.status(500)
-        return err('No user found — bootstrap may not have run')
-      }
-      resolvedUserId = defaultUser.id
     }
 
     // Verify referenced entities exist
@@ -62,7 +53,7 @@ export async function playbackRoutes(
 
     await db.insert(playbackSessions).values({
       id,
-      user_id: resolvedUserId,
+      user_id,
       node_id: localNodeId,
       media_item_id,
       media_version_id,
@@ -84,7 +75,7 @@ export async function playbackRoutes(
       state?: PlaybackState
       position_seconds?: number
     }
-  }>('/:id', async (req, reply) => {
+  }>('/:id', { preHandler: requireAuth }, async (req, reply) => {
     const { state, position_seconds } = req.body
 
     if (!state && position_seconds === undefined) {

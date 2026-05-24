@@ -8,6 +8,7 @@ import { eq } from 'drizzle-orm'
 import { join } from 'path'
 import { mkdirSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
+import { setupAuth } from './helpers/auth'
 
 function createTestDb(testDir: string) {
   mkdirSync(testDir, { recursive: true })
@@ -24,6 +25,7 @@ describe('continue-watching — episode context', () => {
   let userId: string
   let libraryId: string
   let app: ReturnType<typeof buildServer>
+  let sessionCookie: string
 
   beforeEach(async () => {
     testDir = join(tmpdir(), `helix-cw-tv-${crypto.randomUUID()}`)
@@ -49,6 +51,7 @@ describe('continue-watching — episode context', () => {
 
     app = buildServer(db, localNodeId, 'http://localhost:3001')
     await app.ready()
+    sessionCookie = await setupAuth(app)
   })
 
   afterEach(() => {
@@ -123,7 +126,8 @@ describe('continue-watching — episode context', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: `/api/v1/watchstate/continue-watching?user_id=${userId}`,
+      url: `/api/v1/watchstate/continue-watching`,
+      headers: { Cookie: sessionCookie },
     })
 
     expect(res.statusCode).toBe(200)
@@ -167,7 +171,8 @@ describe('continue-watching — episode context', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: `/api/v1/watchstate/continue-watching?user_id=${userId}`,
+      url: `/api/v1/watchstate/continue-watching`,
+      headers: { Cookie: sessionCookie },
     })
 
     const body = JSON.parse(res.body)
@@ -193,10 +198,19 @@ describe('continue-watching — episode context', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: `/api/v1/watchstate/continue-watching?user_id=${userId}`,
+      url: `/api/v1/watchstate/continue-watching`,
+      headers: { Cookie: sessionCookie },
     })
 
     const body = JSON.parse(res.body)
     expect(body.data).toHaveLength(0)
+  })
+
+  it('returns 401 when not authenticated', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/watchstate/continue-watching`,
+    })
+    expect(res.statusCode).toBe(401)
   })
 })

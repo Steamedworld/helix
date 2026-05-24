@@ -7,6 +7,7 @@ import { runMigrations } from '../src/db/migrate'
 import { bootstrap } from '../src/bootstrap'
 import { buildServer } from '../src/server'
 import { libraries, mediaItems, mediaVersions, mediaFiles, users } from '../src/db/schema'
+import { setupAuth } from './helpers/auth'
 
 function createTestDb(testDir: string) {
   mkdirSync(testDir, { recursive: true })
@@ -455,6 +456,7 @@ describe('playback sessions', () => {
   let libraryId: string
   let app: ReturnType<typeof buildServer>
   let userId: string
+  let sessionCookie: string
 
   beforeEach(async () => {
     testDir = join(tmpdir(), `helix-psession-test-${crypto.randomUUID()}`)
@@ -481,12 +483,14 @@ describe('playback sessions', () => {
 
     app = buildServer(db, localNodeId, 'http://localhost:3001')
     await app.ready()
+    sessionCookie = await setupAuth(app)
   })
 
   async function createSession(mediaItemId: string, mediaVersionId: string, mediaFileId: string) {
     return app.inject({
       method: 'POST',
       url: '/api/v1/playback-sessions',
+      headers: { Cookie: sessionCookie },
       payload: { media_item_id: mediaItemId, media_version_id: mediaVersionId, media_file_id: mediaFileId },
     })
   }
@@ -520,6 +524,7 @@ describe('playback sessions', () => {
     const patchRes = await app.inject({
       method: 'PATCH',
       url: `/api/v1/playback-sessions/${sessionId}`,
+      headers: { Cookie: sessionCookie },
       payload: { state: 'playing' },
     })
 
@@ -541,6 +546,7 @@ describe('playback sessions', () => {
     const patchRes = await app.inject({
       method: 'PATCH',
       url: `/api/v1/playback-sessions/${sessionId}`,
+      headers: { Cookie: sessionCookie },
       payload: { state: 'stopped' },
     })
 
@@ -549,10 +555,24 @@ describe('playback sessions', () => {
     expect(body.data.state).toBe('stopped')
   })
 
+  it('returns 401 when creating session without authentication', async () => {
+    const filePath = join(testDir, 'session-noauth.mp4')
+    const { mediaItemId, mediaVersionId, mediaFileId } = await createMediaFixture(
+      db, localNodeId, libraryId, filePath
+    )
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/playback-sessions',
+      payload: { media_item_id: mediaItemId, media_version_id: mediaVersionId, media_file_id: mediaFileId },
+    })
+    expect(res.statusCode).toBe(401)
+  })
+
   it('returns 400 when required fields are missing on create', async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/playback-sessions',
+      headers: { Cookie: sessionCookie },
       payload: { media_item_id: 'some-id' },
     })
 
@@ -561,10 +581,20 @@ describe('playback sessions', () => {
     expect(body.ok).toBe(false)
   })
 
+  it('returns 401 when patching session without authentication', async () => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/v1/playback-sessions/nonexistent-id',
+      payload: { state: 'paused' },
+    })
+    expect(res.statusCode).toBe(401)
+  })
+
   it('returns 404 when patching nonexistent session', async () => {
     const res = await app.inject({
       method: 'PATCH',
       url: '/api/v1/playback-sessions/nonexistent-id',
+      headers: { Cookie: sessionCookie },
       payload: { state: 'paused' },
     })
 
@@ -583,6 +613,7 @@ describe('playback sessions', () => {
     const res = await app.inject({
       method: 'PATCH',
       url: `/api/v1/playback-sessions/${sessionId}`,
+      headers: { Cookie: sessionCookie },
       payload: { state: 'invalid-state' },
     })
 

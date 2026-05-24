@@ -8,6 +8,7 @@ import { eq, and } from 'drizzle-orm'
 import { join } from 'path'
 import { mkdirSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
+import { setupAuth } from './helpers/auth'
 
 function createTestDb(testDir: string) {
   mkdirSync(testDir, { recursive: true })
@@ -102,6 +103,7 @@ describe('TV API routes', () => {
   let localNodeId: string
   let libraryId: string
   let app: ReturnType<typeof buildServer>
+  let sessionCookie: string
 
   beforeEach(async () => {
     testDir = join(tmpdir(), `helix-tv-routes-${crypto.randomUUID()}`)
@@ -124,6 +126,7 @@ describe('TV API routes', () => {
 
     app = buildServer(db, localNodeId, 'http://localhost:3001')
     await app.ready()
+    sessionCookie = await setupAuth(app)
   })
 
   afterEach(() => {
@@ -260,6 +263,7 @@ describe('TV API routes', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/api/v1/seasons/${seasonId}/episodes`,
+        headers: { Cookie: sessionCookie },
       })
       expect(res.statusCode).toBe(200)
       const body = JSON.parse(res.body)
@@ -269,10 +273,23 @@ describe('TV API routes', () => {
       expect(epNumbers).toEqual([1, 2, 3, 4, 5])
     })
 
+    it('returns 401 for unauthenticated request', async () => {
+      const { seasonIds } = await createTvFixture(db, libraryId, {
+        seasonCount: 1,
+        episodesPerSeason: 1,
+      })
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/v1/seasons/${seasonIds[0]}/episodes`,
+      })
+      expect(res.statusCode).toBe(401)
+    })
+
     it('returns 404 for unknown season id', async () => {
       const res = await app.inject({
         method: 'GET',
         url: '/api/v1/seasons/nonexistent/episodes',
+        headers: { Cookie: sessionCookie },
       })
       expect(res.statusCode).toBe(404)
     })
@@ -286,6 +303,7 @@ describe('TV API routes', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/api/v1/seasons/${seasonIds[0]}/episodes`,
+        headers: { Cookie: sessionCookie },
       })
       const body = JSON.parse(res.body)
       const ep = body.data[0]

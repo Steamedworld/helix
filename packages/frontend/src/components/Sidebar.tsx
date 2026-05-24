@@ -1,6 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import { NodeStatus } from './NodeStatus'
-import { useState } from 'react'
+import { useAuth } from '../context/AuthContext'
 
 interface NavItem {
   label: string
@@ -22,6 +22,14 @@ interface SidebarProps {
 }
 
 export function Sidebar({ open, onClose }: SidebarProps) {
+  const { user, logout } = useAuth()
+  const navigate = useNavigate()
+
+  async function handleLogout() {
+    await logout()
+    navigate('/', { replace: true })
+  }
+
   return (
     <>
       {/* Mobile overlay */}
@@ -109,6 +117,67 @@ export function Sidebar({ open, onClose }: SidebarProps) {
         </nav>
 
         <NodeStatus />
+
+        {/* User section */}
+        {user && (
+          <div
+            style={{
+              padding: '12px 16px',
+              borderTop: '1px solid var(--border)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+            }}
+          >
+            <div
+              style={{
+                width: 28,
+                height: 28,
+                background: 'var(--bg-elevated)',
+                border: '1px solid var(--border)',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 12,
+                fontWeight: 600,
+                color: 'var(--text-muted)',
+                flexShrink: 0,
+              }}
+            >
+              {user.display_name.charAt(0).toUpperCase()}
+            </div>
+            <span
+              style={{
+                fontSize: 13,
+                color: 'var(--text)',
+                flex: 1,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {user.display_name}
+            </span>
+            <button
+              onClick={handleLogout}
+              title="Sign out"
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'var(--text-muted)',
+                fontSize: 14,
+                cursor: 'pointer',
+                padding: '2px 4px',
+                borderRadius: 3,
+                flexShrink: 0,
+                lineHeight: 1,
+              }}
+            >
+              ⏻
+            </button>
+          </div>
+        )}
       </aside>
     </>
   )

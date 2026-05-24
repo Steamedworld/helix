@@ -1,13 +1,15 @@
 import type { FastifyInstance } from 'fastify'
 import { eq, and, sql, count, isNull } from 'drizzle-orm'
-import { mediaItems, mediaFiles, watchStates, users } from '../db/schema'
+import { mediaItems, mediaFiles, watchStates } from '../db/schema'
 import { ok, err } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
 import {
   getUpNextEpisode,
   getNextEpisode,
   getShowProgress,
+  getOrderedEpisodes,
 } from '../services/episodeOrder'
+import { makeRequireAuth } from '../middleware/auth'
 
 // ─── Response Types ────────────────────────────────────────────────────────────
 
@@ -90,8 +92,9 @@ export async function tvRoutes(
   opts: { db: DrizzleDB; localNodeId?: string; baseUrl?: string | null }
 ) {
   const { db, baseUrl } = opts
+  const requireAuth = makeRequireAuth(db)
 
-  // GET /api/v1/shows — list all shows
+  // GET /api/v1/shows — list all shows (public)
   app.get<{ Querystring: { library_id?: string } }>('/', async (req) => {
     const { library_id } = req.query
     const conditions: Parameters<typeof and>[] = [
@@ -110,7 +113,6 @@ export async function tvRoutes(
     // For each show, count episodes
     const result: ShowListItem[] = await Promise.all(
       shows.map(async (show) => {
-        // Count all episode descendants
         const seasons = await db
           .select({ id: mediaItems.id })
           .from(mediaItems)
@@ -141,7 +143,7 @@ export async function tvRoutes(
     return ok(result)
   })
 
-  // GET /api/v1/shows/:id — show detail with seasons
+  // GET /api/v1/shows/:id — show detail with seasons (public)
   app.get<{ Params: { id: string } }>('/:id', async (req, reply) => {
     const [show] = await db
       .select()
@@ -190,21 +192,12 @@ export async function tvRoutes(
     return ok(detail)
   })
 
-  // GET /api/v1/shows/:id/up-next — up-next episode for a show
-  app.get<{ Params: { id: string }; Querystring: { user_id?: string } }>(
+  // GET /api/v1/shows/:id/up-next — up-next episode for a show (requires auth)
+  app.get<{ Params: { id: string } }>(
     '/:id/up-next',
+    { preHandler: requireAuth },
     async (req, reply) => {
-      const { user_id } = req.query
-      // Resolve userId: use provided or fall back to the first user in DB (default admin)
-      let resolvedUserId = user_id
-      if (!resolvedUserId) {
-        const [defaultUser] = await db.select({ id: users.id }).from(users).limit(1)
-        if (!defaultUser) {
-          reply.status(500)
-          return err('No user found — bootstrap may not have run')
-        }
-        resolvedUserId = defaultUser.id
-      }
+      const userId = req.user!.id
 
       const [show] = await db
         .select({ id: mediaItems.id })
@@ -216,15 +209,16 @@ export async function tvRoutes(
         return err('Show not found')
       }
 
-      const episode = await getUpNextEpisode(db, req.params.id, resolvedUserId, baseUrl)
+      const episode = await getUpNextEpisode(db, req.params.id, userId, baseUrl)
 
       if (episode === null) {
-        // Check if the show has any playable episodes at all
-        const progress = await getShowProgress(db, req.params.id, resolvedUserId, baseUrl)
+        const progress = await getShowProgress(db, req.params.id, userId, baseUrl)
         if (progress.allCompleted && progress.totalEpisodes > 0) {
-          return ok({ allCompleted: true as const, totalEpisodes: progress.totalEpisodes })
+          // Phase 8: include restartEpisodeId for "Watch Again" button
+          const ordered = await getOrderedEpisodes(db, req.params.id, userId, baseUrl)
+          const restartEpisodeId = ordered[0]?.id ?? null
+          return ok({ allCompleted: true as const, totalEpisodes: progress.totalEpisodes, restartEpisodeId })
         }
-        // No playable episodes at all
         return ok({ allCompleted: false as const, totalEpisodes: 0 })
       }
 
@@ -232,20 +226,12 @@ export async function tvRoutes(
     }
   )
 
-  // GET /api/v1/shows/:id/progress — watch progress summary
-  app.get<{ Params: { id: string }; Querystring: { user_id?: string } }>(
+  // GET /api/v1/shows/:id/progress — watch progress summary (requires auth)
+  app.get<{ Params: { id: string } }>(
     '/:id/progress',
+    { preHandler: requireAuth },
     async (req, reply) => {
-      const { user_id } = req.query
-      let resolvedUserId = user_id
-      if (!resolvedUserId) {
-        const [defaultUser] = await db.select({ id: users.id }).from(users).limit(1)
-        if (!defaultUser) {
-          reply.status(500)
-          return err('No user found — bootstrap may not have run')
-        }
-        resolvedUserId = defaultUser.id
-      }
+      const userId = req.user!.id
 
       const [show] = await db
         .select({ id: mediaItems.id })
@@ -257,12 +243,12 @@ export async function tvRoutes(
         return err('Show not found')
       }
 
-      const progress = await getShowProgress(db, req.params.id, resolvedUserId, baseUrl)
+      const progress = await getShowProgress(db, req.params.id, userId, baseUrl)
       return ok(progress)
     }
   )
 
-  // GET /api/v1/shows/:id/seasons — seasons for a show
+  // GET /api/v1/shows/:id/seasons — seasons for a show (public)
   app.get<{ Params: { id: string } }>('/:id/seasons', async (req, reply) => {
     const [show] = await db
       .select({ id: mediaItems.id })
@@ -305,15 +291,13 @@ export async function seasonRoutes(
   opts: { db: DrizzleDB; localNodeId?: string; baseUrl?: string | null }
 ) {
   const { db, baseUrl } = opts
+  const requireAuth = makeRequireAuth(db)
 
-  // GET /api/v1/seasons/:id/episodes — episodes for a season (with watch state)
+  // GET /api/v1/seasons/:id/episodes — episodes for a season (with watch state, requires auth)
   app.get<{
     Params: { id: string }
-    Querystring: { user_id?: string }
-  }>('/:id/episodes', async (req, reply) => {
-    const { user_id } = req.query
-    const DEFAULT_USER_ID = 'default'
-    const resolvedUserId = user_id ?? DEFAULT_USER_ID
+  }>('/:id/episodes', { preHandler: requireAuth }, async (req, reply) => {
+    const userId = req.user!.id
 
     const [season] = await db
       .select()
@@ -340,7 +324,7 @@ export async function seasonRoutes(
         const [ws] = await db
           .select()
           .from(watchStates)
-          .where(and(eq(watchStates.media_item_id, epId), eq(watchStates.user_id, resolvedUserId)))
+          .where(and(eq(watchStates.media_item_id, epId), eq(watchStates.user_id, userId)))
           .limit(1)
         if (ws) {
           watchStateMap.set(epId, {
@@ -390,21 +374,14 @@ export async function episodeRoutes(
   opts: { db: DrizzleDB; localNodeId?: string; baseUrl?: string | null }
 ) {
   const { db, baseUrl } = opts
+  const requireAuth = makeRequireAuth(db)
 
-  // GET /api/v1/episodes/:id/next — next episode after this one
-  app.get<{ Params: { id: string }; Querystring: { user_id?: string } }>(
+  // GET /api/v1/episodes/:id/next — next episode after this one (requires auth)
+  app.get<{ Params: { id: string } }>(
     '/:id/next',
+    { preHandler: requireAuth },
     async (req, reply) => {
-      const { user_id } = req.query
-      let resolvedUserId = user_id
-      if (!resolvedUserId) {
-        const [defaultUser] = await db.select({ id: users.id }).from(users).limit(1)
-        if (!defaultUser) {
-          reply.status(500)
-          return err('No user found — bootstrap may not have run')
-        }
-        resolvedUserId = defaultUser.id
-      }
+      const userId = req.user!.id
 
       const [episode] = await db
         .select({ id: mediaItems.id })
@@ -416,7 +393,7 @@ export async function episodeRoutes(
         return err('Episode not found')
       }
 
-      const next = await getNextEpisode(db, req.params.id, resolvedUserId, baseUrl)
+      const next = await getNextEpisode(db, req.params.id, userId, baseUrl)
 
       if (next === null) {
         reply.status(404)
@@ -427,7 +404,7 @@ export async function episodeRoutes(
     }
   )
 
-  // GET /api/v1/episodes/:id — episode detail
+  // GET /api/v1/episodes/:id — episode detail (public)
   app.get<{ Params: { id: string } }>('/:id', async (req, reply) => {
     const [episode] = await db
       .select()

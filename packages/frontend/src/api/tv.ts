@@ -73,9 +73,8 @@ export function getShowSeasons(id: string) {
   return apiFetch<SeasonSummary[]>(`/api/v1/shows/${id}/seasons`)
 }
 
-export function getSeasonEpisodes(seasonId: string, userId?: string) {
-  const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : ''
-  return apiFetch<EpisodeListItem[]>(`/api/v1/seasons/${seasonId}/episodes${qs}`)
+export function getSeasonEpisodes(seasonId: string) {
+  return apiFetch<EpisodeListItem[]>(`/api/v1/seasons/${seasonId}/episodes`)
 }
 
 export function getEpisode(id: string) {
@@ -115,7 +114,7 @@ export interface ShowProgressData {
 
 export type UpNextResponse =
   | { episode: PlayableEpisode; allCompleted?: never }
-  | { allCompleted: true; totalEpisodes: number; episode?: never }
+  | { allCompleted: true; totalEpisodes: number; restartEpisodeId?: string; episode?: never }
   | { allCompleted: false; totalEpisodes: number; episode?: never }
 
 // ─── Continuity API calls ─────────────────────────────────────────────────────

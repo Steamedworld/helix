@@ -8,6 +8,9 @@ import { MediaDetail } from './pages/MediaDetail'
 import { Shows } from './pages/Shows'
 import { ShowDetail } from './pages/ShowDetail'
 import { Settings } from './pages/Settings'
+import { Setup } from './pages/Setup'
+import { Login } from './pages/Login'
+import { AuthProvider, useAuth } from './context/AuthContext'
 
 const router = createBrowserRouter([
   {
@@ -26,6 +29,42 @@ const router = createBrowserRouter([
   },
 ])
 
-export function App() {
+function AuthGate() {
+  const { user, loading, setupRequired } = useAuth()
+
+  if (loading) {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'var(--bg)',
+          color: 'var(--text-muted)',
+          fontSize: 14,
+        }}
+      >
+        Loading…
+      </div>
+    )
+  }
+
+  if (setupRequired) {
+    return <Setup />
+  }
+
+  if (!user) {
+    return <Login />
+  }
+
   return <RouterProvider router={router} />
+}
+
+export function App() {
+  return (
+    <AuthProvider>
+      <AuthGate />
+    </AuthProvider>
+  )
 }

@@ -10,6 +10,7 @@ import { libraries, mediaItems } from '../src/db/schema'
 import { metadataRegistry } from '../src/services/metadata/registry'
 import type { MetadataProvider, MetadataCandidate, EnrichedMovieMetadata } from '../src/services/metadata/types'
 import type { MediaItemKind } from '@helix/shared'
+import { setupAuth } from './helpers/auth'
 
 function createTestDb(testDir: string) {
   mkdirSync(testDir, { recursive: true })
@@ -58,6 +59,7 @@ describe('metadata API routes', () => {
   let localNodeId: string
   let libraryId: string
   let registeredTestProvider: MetadataProvider | null = null
+  let sessionCookie: string
 
   beforeEach(async () => {
     testDir = join(tmpdir(), `helix-meta-routes-${crypto.randomUUID()}`)
@@ -79,6 +81,8 @@ describe('metadata API routes', () => {
     })
 
     app = buildServer(db, localNodeId)
+    await app.ready()
+    sessionCookie = await setupAuth(app)
     registeredTestProvider = null
   })
 
@@ -129,7 +133,7 @@ describe('metadata API routes', () => {
   // ─── GET /api/v1/metadata/providers ──────────────────────────────────────────
 
   it('GET /api/v1/metadata/providers returns provider list', async () => {
-    const res = await app.inject({ method: 'GET', url: '/api/v1/metadata/providers' })
+    const res = await app.inject({ method: 'GET', url: '/api/v1/metadata/providers', headers: { Cookie: sessionCookie } })
     expect(res.statusCode).toBe(200)
 
     const body = JSON.parse(res.body)
@@ -148,7 +152,7 @@ describe('metadata API routes', () => {
     metadataRegistry.register(provider)
     registeredTestProvider = provider
 
-    const res = await app.inject({ method: 'GET', url: '/api/v1/metadata/providers' })
+    const res = await app.inject({ method: 'GET', url: '/api/v1/metadata/providers', headers: { Cookie: sessionCookie } })
     const body = JSON.parse(res.body)
     expect(body.ok).toBe(true)
     const found = body.data.providers.find((p: any) => p.id === 'custom-provider')
@@ -282,7 +286,7 @@ describe('metadata API routes', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/metadata/enrich',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Cookie: sessionCookie },
       body: JSON.stringify({ limit: 5 }),
     })
     expect(res.statusCode).toBe(200)
@@ -310,6 +314,7 @@ describe('metadata API routes', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/media/${itemId}/metadata/refresh`,
+      headers: { Cookie: sessionCookie },
     })
     expect(res.statusCode).toBe(200)
 
