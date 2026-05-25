@@ -16,4 +16,9 @@ export const config = {
 
   // Feature flags
   metadataEnrichmentEnabled: (process.env.METADATA_ENRICHMENT_ENABLED ?? 'true') !== 'false',
+
+  // Enrichment queue recovery / scheduling
+  enrichmentJobStaleAfterMs: Number(process.env.ENRICHMENT_JOB_STALE_AFTER_MS ?? 600000),
+  enrichmentPeriodicEnabled: (process.env.ENRICHMENT_PERIODIC_ENABLED ?? 'true') !== 'false',
+  enrichmentPeriodicIntervalMs: Number(process.env.ENRICHMENT_PERIODIC_INTERVAL_MS ?? 21600000),
 }

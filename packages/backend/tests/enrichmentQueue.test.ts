@@ -362,6 +362,123 @@ describe('EnrichmentQueue', () => {
     const jobs = await db.select().from(enrichmentJobs)
     expect(jobs.length).toBe(2)
   })
+
+  // ─── recoverStaleJobs ───────────────────────────────────────────────────────
+
+  it('recoverStaleJobs resets stale running jobs to pending', async () => {
+    const id = await insertMovie(db, libraryId, 'Stale Running')
+    await queue.enqueue(db, [id])
+
+    // Manually set to running with an old updated_at
+    const staleTs = Date.now() - 700000 // 700s ago — beyond default 600s threshold
+    await db.update(enrichmentJobs)
+      .set({ status: 'running', updated_at: staleTs })
+      .where(eq(enrichmentJobs.media_item_id, id))
+
+    const recovered = await queue.recoverStaleJobs(db)
+    expect(recovered).toBe(1)
+
+    const [job] = await db.select().from(enrichmentJobs).where(eq(enrichmentJobs.media_item_id, id))
+    expect(job.status).toBe('pending')
+    expect(job.last_error).toBe('Recovered from interrupted server shutdown.')
+  })
+
+  it('recoverStaleJobs does not reset running jobs newer than threshold', async () => {
+    const id = await insertMovie(db, libraryId, 'Fresh Running')
+    await queue.enqueue(db, [id])
+
+    // Set to running with a recent updated_at
+    await db.update(enrichmentJobs)
+      .set({ status: 'running', updated_at: Date.now() - 1000 }) // 1s ago — well within threshold
+      .where(eq(enrichmentJobs.media_item_id, id))
+
+    const recovered = await queue.recoverStaleJobs(db, 600000)
+    expect(recovered).toBe(0)
+
+    const [job] = await db.select().from(enrichmentJobs).where(eq(enrichmentJobs.media_item_id, id))
+    expect(job.status).toBe('running')
+  })
+
+  it('recoverStaleJobs returns 0 when no running jobs exist', async () => {
+    const id = await insertMovie(db, libraryId, 'Pending Only')
+    await queue.enqueue(db, [id])
+    // Leave as pending
+
+    const recovered = await queue.recoverStaleJobs(db)
+    expect(recovered).toBe(0)
+  })
+
+  it('recoverStaleJobs accepts a custom staleAfterMs threshold', async () => {
+    const id = await insertMovie(db, libraryId, 'Short Threshold')
+    await queue.enqueue(db, [id])
+
+    // Set running 5 seconds ago
+    await db.update(enrichmentJobs)
+      .set({ status: 'running', updated_at: Date.now() - 5000 })
+      .where(eq(enrichmentJobs.media_item_id, id))
+
+    // With a 3-second threshold, 5 seconds ago is stale
+    const recovered = await queue.recoverStaleJobs(db, 3000)
+    expect(recovered).toBe(1)
+  })
+
+  // ─── retryFailed ────────────────────────────────────────────────────────────
+
+  it('retryFailed resets all failed jobs to pending with attempts 0', async () => {
+    const id1 = await insertMovie(db, libraryId, 'Failed A')
+    const id2 = await insertMovie(db, libraryId, 'Failed B')
+    await queue.enqueue(db, [id1, id2])
+
+    // Mark both as failed with error messages
+    await db.update(enrichmentJobs)
+      .set({ status: 'failed', attempts: 3, last_error: 'connection timeout' })
+      .where(eq(enrichmentJobs.media_item_id, id1))
+    await db.update(enrichmentJobs)
+      .set({ status: 'failed', attempts: 3, last_error: 'TMDB 429' })
+      .where(eq(enrichmentJobs.media_item_id, id2))
+
+    const retried = await queue.retryFailed(db)
+    expect(retried).toBe(2)
+
+    const jobs = await db.select().from(enrichmentJobs)
+    for (const job of jobs) {
+      expect(job.status).toBe('pending')
+      expect(job.attempts).toBe(0)
+      expect(job.last_error).toBeNull()
+    }
+  })
+
+  it('retryFailed returns 0 when no failed jobs exist', async () => {
+    const id = await insertMovie(db, libraryId, 'Pending Only')
+    await queue.enqueue(db, [id])
+
+    const retried = await queue.retryFailed(db)
+    expect(retried).toBe(0)
+  })
+
+  it('retryFailed does not affect pending or running jobs', async () => {
+    const id1 = await insertMovie(db, libraryId, 'Pending Job')
+    const id2 = await insertMovie(db, libraryId, 'Failed Job')
+    await queue.enqueue(db, [id1, id2])
+
+    await db.update(enrichmentJobs)
+      .set({ status: 'failed', attempts: 3, last_error: 'err' })
+      .where(eq(enrichmentJobs.media_item_id, id2))
+
+    const retried = await queue.retryFailed(db)
+    expect(retried).toBe(1)
+
+    const [pendingJob] = await db.select().from(enrichmentJobs).where(eq(enrichmentJobs.media_item_id, id1))
+    expect(pendingJob.status).toBe('pending') // unchanged
+  })
+
+  // ─── getStats recoveredOnStartup ────────────────────────────────────────────
+
+  it('getStats includes recoveredOnStartup count', async () => {
+    const stats = await queue.getStats(db)
+    expect(typeof stats.recoveredOnStartup).toBe('number')
+    expect(stats.recoveredOnStartup).toBe(0) // queue never started in this test
+  })
 })
 
 // ─── API route tests ─────────────────────────────────────────────────────────
@@ -441,6 +558,34 @@ describe('enrichment queue routes', () => {
 
   it('POST /enqueue requires admin → 401 unauthenticated', async () => {
     const res = await app.inject({ method: 'POST', url: '/api/v1/enrichment-queue/enqueue' })
+    expect(res.statusCode).toBe(401)
+  })
+
+  it('GET /stats includes recoveredOnStartup field', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/enrichment-queue/stats',
+      headers: { Cookie: adminCookie },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(typeof body.data.recoveredOnStartup).toBe('number')
+  })
+
+  it('POST /retry-failed resets failed jobs to pending (admin)', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/enrichment-queue/retry-failed',
+      headers: { Cookie: adminCookie },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.ok).toBe(true)
+    expect(typeof body.data.retried).toBe('number')
+  })
+
+  it('POST /retry-failed requires admin → 401 unauthenticated', async () => {
+    const res = await app.inject({ method: 'POST', url: '/api/v1/enrichment-queue/retry-failed' })
     expect(res.statusCode).toBe(401)
   })
 })

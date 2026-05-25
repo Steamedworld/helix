@@ -11,6 +11,7 @@ export interface QueueStats {
     lastError: string | null
     updatedAt: number
   }>
+  recoveredOnStartup: number
 }
 
 export function getQueueStats() {
@@ -25,6 +26,12 @@ export function clearQueue() {
 
 export function enqueueAll() {
   return apiFetch<{ enqueued: number }>('/api/v1/enrichment-queue/enqueue', {
+    method: 'POST',
+  })
+}
+
+export function retryFailed() {
+  return apiFetch<{ retried: number }>('/api/v1/enrichment-queue/retry-failed', {
     method: 'POST',
   })
 }

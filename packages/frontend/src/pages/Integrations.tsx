@@ -10,7 +10,7 @@ import {
   generateWebhookSecret,
 } from '../api/integrations'
 import type { Integration, IntegrationKind, SyncResult } from '../api/integrations'
-import { getQueueStats, clearQueue, enqueueAll } from '../api/enrichmentQueue'
+import { getQueueStats, clearQueue, enqueueAll, retryFailed } from '../api/enrichmentQueue'
 import type { QueueStats } from '../api/enrichmentQueue'
 
 // ─── Status chip ──────────────────────────────────────────────────────────────
@@ -496,6 +496,7 @@ function EnrichmentQueueWidget() {
   const [stats, setStats] = useState<QueueStats | null>(null)
   const [clearing, setClearing] = useState(false)
   const [enqueueing, setEnqueueing] = useState(false)
+  const [retrying, setRetrying] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -541,6 +542,19 @@ function EnrichmentQueueWidget() {
     }
   }
 
+  async function handleRetryFailed() {
+    setRetrying(true)
+    setMessage(null)
+    const res = await retryFailed()
+    setRetrying(false)
+    if (res.ok) {
+      setMessage(res.data.retried > 0
+        ? `Reset ${res.data.retried} failed job${res.data.retried === 1 ? '' : 's'} for retry.`
+        : 'No failed jobs to retry.')
+      refresh()
+    }
+  }
+
   const isActive = stats !== null && (stats.pending > 0 || stats.running > 0)
 
   return (
@@ -578,6 +592,12 @@ function EnrichmentQueueWidget() {
             </div>
           )}
 
+          {stats.recoveredOnStartup > 0 && (
+            <p style={{ fontSize: 11, color: 'var(--ok)', margin: 0 }}>
+              {stats.recoveredOnStartup} stale job{stats.recoveredOnStartup === 1 ? '' : 's'} recovered from last server shutdown and re-queued.
+            </p>
+          )}
+
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <button
               onClick={handleEnqueueAll}
@@ -587,6 +607,16 @@ function EnrichmentQueueWidget() {
             >
               {enqueueing ? 'Enqueueing…' : 'Enqueue all unenriched'}
             </button>
+            {stats.failed > 0 && (
+              <button
+                onClick={handleRetryFailed}
+                disabled={retrying}
+                className="btn btn-sm btn-ghost"
+                style={{ fontSize: 11, opacity: retrying ? 0.6 : 1 }}
+              >
+                {retrying ? 'Retrying…' : `Retry failed (${stats.failed})`}
+              </button>
+            )}
             <button
               onClick={handleClear}
               disabled={clearing || (stats.done === 0 && stats.failed === 0)}
@@ -610,6 +640,7 @@ function EnrichmentQueueWidget() {
 
           <p style={{ fontSize: 11, color: 'var(--ink-4)', margin: 0, lineHeight: 1.5 }}>
             Items are queued automatically after library scans and Arr syncs.
+            Failed jobs can be retried; stale running jobs are recovered automatically on restart.
             Requires TMDB credentials — configure in{' '}
             <a href="/settings" style={{ color: 'var(--accent)' }}>Settings</a>.
           </p>

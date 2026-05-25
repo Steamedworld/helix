@@ -83,6 +83,9 @@ Copy `.env.example` to `packages/backend/.env` and fill in the values you need. 
 | `METADATA_CACHE_DIR` | `./data/metadata_cache` | Artwork download cache directory |
 | `METADATA_ENRICHMENT_ENABLED` | `true` | Set to `false` to disable TMDB enrichment |
 | `HELIX_ENCRYPTION_KEY` | — | Master key for AES-256-GCM encryption of stored API keys. Auto-generated and saved to `data/.helix_key` if unset. |
+| `ENRICHMENT_JOB_STALE_AFTER_MS` | `600000` (10 min) | Jobs stuck in `running` state longer than this are reset to `pending` on startup. |
+| `ENRICHMENT_PERIODIC_ENABLED` | `true` | Periodically re-enqueue unenriched items in the background. |
+| `ENRICHMENT_PERIODIC_INTERVAL_MS` | `21600000` (6 h) | How often the periodic enqueue runs. |
 
 ---
 
@@ -291,9 +294,10 @@ The DB schema is federation-aware from day one: every `media_file` carries a `no
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/enrichment-queue/stats` | Counts by status + recent failures |
+| GET | `/api/v1/enrichment-queue/stats` | Counts by status + recent failures + startup recovery count |
 | POST | `/api/v1/enrichment-queue/clear` | Remove all done/failed jobs |
 | POST | `/api/v1/enrichment-queue/enqueue` | Enqueue all unenriched items across all libraries |
+| POST | `/api/v1/enrichment-queue/retry-failed` | Reset all failed jobs to pending for retry |
 
 ### Webhooks (public, token-authenticated)
 
@@ -315,7 +319,7 @@ The DB schema is federation-aware from day one: every `media_file` carries a `no
 - **No transcoding** — only formats the browser natively supports play. H.264/AAC in MP4 or MKV works in most browsers; H.265 and AV1 depend on browser support.
 - **No HTTPS built in** — designed for LAN deployment. Put it behind nginx or Caddy for external access.
 - **No mobile or TV apps** — the React frontend is responsive but there are no native apps.
-- **No background enrichment** — trigger `POST /api/v1/metadata/enrich` manually or from the UI.
+- **No bulk manual enrichment shortcut** — TMDB enrichment runs automatically in the background queue; use `POST /api/v1/enrichment-queue/enqueue` or the admin UI to trigger a manual pass.
 - **No TVDB** — TV metadata is TMDB-only; `external_tvdb_id` is reserved in the schema for a future provider.
 - **No music enrichment** — MusicBrainz is not yet integrated.
 - **No episode still caching** — episode thumbnails are resolved from TMDB but not downloaded to disk.

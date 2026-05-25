@@ -28,4 +28,10 @@ export async function enrichmentQueueRoutes(
     const enqueued = await enrichmentQueue.enqueueAll(db)
     return ok({ enqueued })
   })
+
+  // POST /api/v1/enrichment-queue/retry-failed — reset failed jobs to pending (admin only)
+  app.post('/retry-failed', { preHandler: requireAdmin }, async () => {
+    const retried = await enrichmentQueue.retryFailed(db)
+    return ok({ retried })
+  })
 }

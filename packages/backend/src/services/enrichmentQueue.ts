@@ -1,4 +1,4 @@
-import { eq, inArray, and, or, count, desc, asc } from 'drizzle-orm'
+import { eq, inArray, and, or, lt, count, desc, asc } from 'drizzle-orm'
 import { enrichmentJobs, mediaItems } from '../db/schema'
 import type { DrizzleDB } from '../db/client'
 import { enrichMediaItem } from './metadata/enrichment'
@@ -22,22 +22,70 @@ export interface QueueStats {
     lastError: string | null
     updatedAt: number
   }>
+  recoveredOnStartup: number
 }
 
 export class EnrichmentQueue {
   private active = false
   private db: DrizzleDB | null = null
+  private recoveredOnStartup = 0
+  private periodicTimer: ReturnType<typeof setTimeout> | null = null
 
   start(db: DrizzleDB): void {
     if (this.active) return
     this.db = db
     this.active = true
+    this.recoverStaleJobs(db).then((n) => {
+      this.recoveredOnStartup = n
+      if (n > 0) logger.info({ recovered: n }, 'Recovered stale enrichment jobs on startup')
+    }).catch(() => {})
     this.scheduleLoop()
+    if (config.enrichmentPeriodicEnabled) {
+      this.schedulePeriodicEnqueue()
+    }
   }
 
   stop(): void {
     this.active = false
     this.db = null
+    if (this.periodicTimer) {
+      clearTimeout(this.periodicTimer)
+      this.periodicTimer = null
+    }
+  }
+
+  // Reset jobs stuck in 'running' state left over from a crashed server process.
+  async recoverStaleJobs(db: DrizzleDB, staleAfterMs?: number): Promise<number> {
+    const threshold = staleAfterMs ?? config.enrichmentJobStaleAfterMs
+    const cutoff = Date.now() - threshold
+    const stale = await db
+      .select({ id: enrichmentJobs.id })
+      .from(enrichmentJobs)
+      .where(and(eq(enrichmentJobs.status, 'running'), lt(enrichmentJobs.updated_at, cutoff)))
+    if (stale.length === 0) return 0
+    await db
+      .update(enrichmentJobs)
+      .set({
+        status: 'pending',
+        last_error: 'Recovered from interrupted server shutdown.',
+        updated_at: Date.now(),
+      })
+      .where(and(eq(enrichmentJobs.status, 'running'), lt(enrichmentJobs.updated_at, cutoff)))
+    return stale.length
+  }
+
+  // Reset all failed jobs back to pending so they will be retried.
+  async retryFailed(db: DrizzleDB): Promise<number> {
+    const failed = await db
+      .select({ id: enrichmentJobs.id })
+      .from(enrichmentJobs)
+      .where(eq(enrichmentJobs.status, 'failed'))
+    if (failed.length === 0) return 0
+    await db
+      .update(enrichmentJobs)
+      .set({ status: 'pending', attempts: 0, last_error: null, updated_at: Date.now() })
+      .where(eq(enrichmentJobs.status, 'failed'))
+    return failed.length
   }
 
   // Enqueue item IDs for enrichment. Skips items that already have a pending/running job.
@@ -140,6 +188,7 @@ export class EnrichmentQueue {
       done: 0,
       failed: 0,
       recentFailed: [],
+      recoveredOnStartup: this.recoveredOnStartup,
     }
 
     for (const row of rows) {
@@ -270,6 +319,18 @@ export class EnrichmentQueue {
   private async runOnce(): Promise<boolean> {
     if (!this.db) return false
     return this.processOne(this.db)
+  }
+
+  private schedulePeriodicEnqueue(): void {
+    if (!this.active) return
+    this.periodicTimer = setTimeout(async () => {
+      if (!this.active || !this.db) return
+      try {
+        const n = await this.enqueueAll(this.db)
+        if (n > 0) logger.info({ enqueued: n }, 'Periodic enrichment enqueue')
+      } catch { /* ignore — loop will retry next interval */ }
+      this.schedulePeriodicEnqueue()
+    }, config.enrichmentPeriodicIntervalMs)
   }
 }
 
