@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify'
-import { eq, and, sql, count, isNull } from 'drizzle-orm'
+import { eq, and, sql, count, isNull, inArray } from 'drizzle-orm'
 import { mediaItems, mediaFiles, watchStates, externalMediaLinks, integrations } from '../db/schema'
 import { ok, err } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
@@ -10,6 +10,8 @@ import {
   getOrderedEpisodes,
 } from '../services/episodeOrder'
 import { makeRequireAuth } from '../middleware/auth'
+import { canViewLibrary, getViewableLibraryIds } from '../lib/permissions'
+import { signArtworkToken } from '../lib/signedTokens'
 
 // ─── Response Types ────────────────────────────────────────────────────────────
 
@@ -87,11 +89,15 @@ function artworkUrl(
   mediaItemId: string,
   kind: 'poster' | 'backdrop',
   hasPath: boolean,
-  baseUrl: string | null | undefined
+  baseUrl: string | null | undefined,
+  userId?: string
 ): string | null {
   if (!hasPath) return null
   const base = baseUrl ?? ''
-  return `${base}/api/v1/media/${mediaItemId}/artwork/${kind}`
+  const path = `${base}/api/v1/media/${mediaItemId}/artwork/${kind}`
+  if (!userId) return path
+  const token = signArtworkToken(mediaItemId, kind, userId)
+  return `${path}?token=${token}`
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
@@ -103,14 +109,23 @@ export async function tvRoutes(
   const { db, baseUrl } = opts
   const requireAuth = makeRequireAuth(db)
 
-  // GET /api/v1/shows — list all shows (public)
-  app.get<{ Querystring: { library_id?: string } }>('/', async (req) => {
+  // GET /api/v1/shows — list all accessible shows
+  app.get<{ Querystring: { library_id?: string } }>('/', { preHandler: requireAuth }, async (req) => {
+    const user = req.user!
     const { library_id } = req.query
-    const conditions: Parameters<typeof and>[] = [
-      eq(mediaItems.kind, 'show') as any,
-    ]
+
+    const viewableIds = user.role === 'admin' ? null : await getViewableLibraryIds(user, db)
+    if (viewableIds !== null && viewableIds.length === 0) return ok([])
+
+    const conditions: ReturnType<typeof eq>[] = [eq(mediaItems.kind, 'show') as any]
+
     if (library_id) {
+      if (viewableIds !== null && !viewableIds.includes(library_id)) {
+        return ok([])
+      }
       conditions.push(eq(mediaItems.library_id, library_id) as any)
+    } else if (viewableIds !== null) {
+      conditions.push(inArray(mediaItems.library_id, viewableIds) as any)
     }
 
     const shows = await db
@@ -119,7 +134,6 @@ export async function tvRoutes(
       .where(and(...(conditions as any[])))
       .orderBy(sql`${mediaItems.sort_title} ASC`)
 
-    // For each show, count episodes
     const result: ShowListItem[] = await Promise.all(
       shows.map(async (show) => {
         const seasons = await db
@@ -140,8 +154,8 @@ export async function tvRoutes(
           id: show.id,
           title: show.title,
           year: show.year,
-          posterUrl: artworkUrl(show.id, 'poster', !!show.poster_path, baseUrl),
-          backdropUrl: artworkUrl(show.id, 'backdrop', !!show.backdrop_path, baseUrl),
+          posterUrl: artworkUrl(show.id, 'poster', !!show.poster_path, baseUrl, user.id),
+          backdropUrl: artworkUrl(show.id, 'backdrop', !!show.backdrop_path, baseUrl, user.id),
           episodeCount,
           overview: show.overview,
           metadataStatus: show.metadata_status,
@@ -152,14 +166,21 @@ export async function tvRoutes(
     return ok(result)
   })
 
-  // GET /api/v1/shows/:id — show detail with seasons (public)
-  app.get<{ Params: { id: string } }>('/:id', async (req, reply) => {
+  // GET /api/v1/shows/:id — show detail with seasons
+  app.get<{ Params: { id: string } }>('/:id', { preHandler: requireAuth }, async (req, reply) => {
+    const user = req.user!
+
     const [show] = await db
       .select()
       .from(mediaItems)
       .where(and(eq(mediaItems.id, req.params.id), eq(mediaItems.kind, 'show')))
 
     if (!show) {
+      reply.status(404)
+      return err('Show not found')
+    }
+
+    if (!await canViewLibrary(user, show.library_id, db)) {
       reply.status(404)
       return err('Show not found')
     }
@@ -180,13 +201,12 @@ export async function tvRoutes(
           id: season.id,
           seasonNumber: season.season_number ?? 0,
           episodeCount: c,
-          posterUrl: artworkUrl(season.id, 'poster', !!season.poster_path, baseUrl),
+          posterUrl: artworkUrl(season.id, 'poster', !!season.poster_path, baseUrl, user.id),
           overview: season.overview,
         }
       })
     )
 
-    // Integration links for this show
     const linkRows = await db
       .select({
         kind: integrations.kind,
@@ -216,8 +236,8 @@ export async function tvRoutes(
       id: show.id,
       title: show.title,
       year: show.year,
-      posterUrl: artworkUrl(show.id, 'poster', !!show.poster_path, baseUrl),
-      backdropUrl: artworkUrl(show.id, 'backdrop', !!show.backdrop_path, baseUrl),
+      posterUrl: artworkUrl(show.id, 'poster', !!show.poster_path, baseUrl, user.id),
+      backdropUrl: artworkUrl(show.id, 'backdrop', !!show.backdrop_path, baseUrl, user.id),
       overview: show.overview,
       contentRating: show.content_rating,
       metadataStatus: show.metadata_status,
@@ -233,10 +253,10 @@ export async function tvRoutes(
     '/:id/up-next',
     { preHandler: requireAuth },
     async (req, reply) => {
-      const userId = req.user!.id
+      const user = req.user!
 
       const [show] = await db
-        .select({ id: mediaItems.id })
+        .select({ id: mediaItems.id, library_id: mediaItems.library_id })
         .from(mediaItems)
         .where(and(eq(mediaItems.id, req.params.id), eq(mediaItems.kind, 'show')))
 
@@ -245,13 +265,17 @@ export async function tvRoutes(
         return err('Show not found')
       }
 
-      const episode = await getUpNextEpisode(db, req.params.id, userId, baseUrl)
+      if (!await canViewLibrary(user, show.library_id, db)) {
+        reply.status(404)
+        return err('Show not found')
+      }
+
+      const episode = await getUpNextEpisode(db, req.params.id, user.id, baseUrl)
 
       if (episode === null) {
-        const progress = await getShowProgress(db, req.params.id, userId, baseUrl)
+        const progress = await getShowProgress(db, req.params.id, user.id, baseUrl)
         if (progress.allCompleted && progress.totalEpisodes > 0) {
-          // Phase 8: include restartEpisodeId for "Watch Again" button
-          const ordered = await getOrderedEpisodes(db, req.params.id, userId, baseUrl)
+          const ordered = await getOrderedEpisodes(db, req.params.id, user.id, baseUrl)
           const restartEpisodeId = ordered[0]?.id ?? null
           return ok({ allCompleted: true as const, totalEpisodes: progress.totalEpisodes, restartEpisodeId })
         }
@@ -267,10 +291,10 @@ export async function tvRoutes(
     '/:id/progress',
     { preHandler: requireAuth },
     async (req, reply) => {
-      const userId = req.user!.id
+      const user = req.user!
 
       const [show] = await db
-        .select({ id: mediaItems.id })
+        .select({ id: mediaItems.id, library_id: mediaItems.library_id })
         .from(mediaItems)
         .where(and(eq(mediaItems.id, req.params.id), eq(mediaItems.kind, 'show')))
 
@@ -279,19 +303,31 @@ export async function tvRoutes(
         return err('Show not found')
       }
 
-      const progress = await getShowProgress(db, req.params.id, userId, baseUrl)
+      if (!await canViewLibrary(user, show.library_id, db)) {
+        reply.status(404)
+        return err('Show not found')
+      }
+
+      const progress = await getShowProgress(db, req.params.id, user.id, baseUrl)
       return ok(progress)
     }
   )
 
-  // GET /api/v1/shows/:id/seasons — seasons for a show (public)
-  app.get<{ Params: { id: string } }>('/:id/seasons', async (req, reply) => {
+  // GET /api/v1/shows/:id/seasons — seasons for a show
+  app.get<{ Params: { id: string } }>('/:id/seasons', { preHandler: requireAuth }, async (req, reply) => {
+    const user = req.user!
+
     const [show] = await db
-      .select({ id: mediaItems.id })
+      .select({ id: mediaItems.id, library_id: mediaItems.library_id })
       .from(mediaItems)
       .where(and(eq(mediaItems.id, req.params.id), eq(mediaItems.kind, 'show')))
 
     if (!show) {
+      reply.status(404)
+      return err('Show not found')
+    }
+
+    if (!await canViewLibrary(user, show.library_id, db)) {
       reply.status(404)
       return err('Show not found')
     }
@@ -312,7 +348,7 @@ export async function tvRoutes(
           id: season.id,
           seasonNumber: season.season_number ?? 0,
           episodeCount: c,
-          posterUrl: artworkUrl(season.id, 'poster', !!season.poster_path, baseUrl),
+          posterUrl: artworkUrl(season.id, 'poster', !!season.poster_path, baseUrl, user.id),
           overview: season.overview,
         }
       })
@@ -333,7 +369,7 @@ export async function seasonRoutes(
   app.get<{
     Params: { id: string }
   }>('/:id/episodes', { preHandler: requireAuth }, async (req, reply) => {
-    const userId = req.user!.id
+    const user = req.user!
 
     const [season] = await db
       .select()
@@ -341,6 +377,11 @@ export async function seasonRoutes(
       .where(and(eq(mediaItems.id, req.params.id), eq(mediaItems.kind, 'season')))
 
     if (!season) {
+      reply.status(404)
+      return err('Season not found')
+    }
+
+    if (!await canViewLibrary(user, season.library_id, db)) {
       reply.status(404)
       return err('Season not found')
     }
@@ -360,7 +401,7 @@ export async function seasonRoutes(
         const [ws] = await db
           .select()
           .from(watchStates)
-          .where(and(eq(watchStates.media_item_id, epId), eq(watchStates.user_id, userId)))
+          .where(and(eq(watchStates.media_item_id, epId), eq(watchStates.user_id, user.id)))
           .limit(1)
         if (ws) {
           watchStateMap.set(epId, {
@@ -375,7 +416,6 @@ export async function seasonRoutes(
     // Determine which episodes have at least one non-missing file
     const playableFileSet = new Set<string>()
     if (episodeIds.length > 0) {
-      const { inArray } = await import('drizzle-orm')
       const playableRows = await db
         .select({ media_item_id: mediaFiles.media_item_id })
         .from(mediaFiles)
@@ -396,7 +436,7 @@ export async function seasonRoutes(
       episodeTitle: ep.episode_title,
       overview: ep.overview,
       runtime: ep.runtime_seconds,
-      posterUrl: artworkUrl(ep.id, 'poster', !!ep.poster_path, baseUrl),
+      posterUrl: artworkUrl(ep.id, 'poster', !!ep.poster_path, baseUrl, user.id),
       hasPlayableFile: playableFileSet.has(ep.id),
       watchState: watchStateMap.get(ep.id) ?? null,
     }))
@@ -417,10 +457,10 @@ export async function episodeRoutes(
     '/:id/next',
     { preHandler: requireAuth },
     async (req, reply) => {
-      const userId = req.user!.id
+      const user = req.user!
 
       const [episode] = await db
-        .select({ id: mediaItems.id })
+        .select({ id: mediaItems.id, library_id: mediaItems.library_id })
         .from(mediaItems)
         .where(and(eq(mediaItems.id, req.params.id), eq(mediaItems.kind, 'episode')))
 
@@ -429,7 +469,12 @@ export async function episodeRoutes(
         return err('Episode not found')
       }
 
-      const next = await getNextEpisode(db, req.params.id, userId, baseUrl)
+      if (!await canViewLibrary(user, episode.library_id, db)) {
+        reply.status(404)
+        return err('Episode not found')
+      }
+
+      const next = await getNextEpisode(db, req.params.id, user.id, baseUrl)
 
       if (next === null) {
         reply.status(404)
@@ -440,14 +485,21 @@ export async function episodeRoutes(
     }
   )
 
-  // GET /api/v1/episodes/:id — episode detail (public)
-  app.get<{ Params: { id: string } }>('/:id', async (req, reply) => {
+  // GET /api/v1/episodes/:id — episode detail
+  app.get<{ Params: { id: string } }>('/:id', { preHandler: requireAuth }, async (req, reply) => {
+    const user = req.user!
+
     const [episode] = await db
       .select()
       .from(mediaItems)
       .where(and(eq(mediaItems.id, req.params.id), eq(mediaItems.kind, 'episode')))
 
     if (!episode) {
+      reply.status(404)
+      return err('Episode not found')
+    }
+
+    if (!await canViewLibrary(user, episode.library_id, db)) {
       reply.status(404)
       return err('Episode not found')
     }
@@ -489,7 +541,7 @@ export async function episodeRoutes(
       episodeTitle: episode.episode_title,
       overview: episode.overview,
       runtime: episode.runtime_seconds,
-      posterUrl: artworkUrl(episode.id, 'poster', !!episode.poster_path, baseUrl),
+      posterUrl: artworkUrl(episode.id, 'poster', !!episode.poster_path, baseUrl, user.id),
       hasPlayableFile: !!playableFileRow,
       showId: show.id,
       showTitle: show.title,

@@ -6,6 +6,9 @@ import { eq } from 'drizzle-orm'
 import { mediaItems, libraries } from '../db/schema'
 import { err } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
+import { verifyArtworkToken } from '../lib/signedTokens'
+import { getCurrentUser } from '../middleware/auth'
+import { canViewLibrary } from '../lib/permissions'
 
 type ArtworkKind = 'poster' | 'backdrop'
 
@@ -30,10 +33,12 @@ export async function artworkRoutes(
   const { db } = opts
 
   // GET /media/:id/artwork/:kind
-  app.get<{ Params: { id: string; kind: string } }>(
+  // Access: valid signed artwork token (query ?token=) OR valid session cookie with canView
+  app.get<{ Params: { id: string; kind: string }; Querystring: { token?: string } }>(
     '/:id/artwork/:kind',
     async (req, reply) => {
       const { id, kind } = req.params
+      const token = req.query.token
 
       // Validate kind
       if (kind !== 'poster' && kind !== 'backdrop') {
@@ -42,6 +47,39 @@ export async function artworkRoutes(
       }
 
       const artworkKind = kind as ArtworkKind
+
+      if (token) {
+        const verified = verifyArtworkToken(token)
+        if (!verified) {
+          reply.status(401)
+          return err('Invalid or expired artwork token')
+        }
+        if (verified.mediaItemId !== id || verified.kind !== artworkKind) {
+          reply.status(403)
+          return err('Token does not match requested artwork')
+        }
+      } else {
+        // Fall back to session cookie auth
+        const authResult = await getCurrentUser(req, db)
+        if (!authResult) {
+          reply.status(401)
+          return err('Authentication required')
+        }
+        const user = authResult.user
+        const [item] = await db
+          .select({ library_id: mediaItems.library_id })
+          .from(mediaItems)
+          .where(eq(mediaItems.id, id))
+        if (!item) {
+          reply.status(404)
+          return err('Media item not found')
+        }
+        const allowed = await canViewLibrary(user, item.library_id, db)
+        if (!allowed) {
+          reply.status(404)
+          return err('Media item not found')
+        }
+      }
 
       // Look up media item
       const [item] = await db

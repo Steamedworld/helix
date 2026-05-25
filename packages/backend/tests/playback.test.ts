@@ -96,6 +96,7 @@ describe('streaming endpoint', () => {
   let localNodeId: string
   let libraryId: string
   let app: ReturnType<typeof buildServer>
+  let sessionCookie: string
 
   beforeEach(async () => {
     testDir = join(tmpdir(), `helix-stream-test-${crypto.randomUUID()}`)
@@ -118,12 +119,14 @@ describe('streaming endpoint', () => {
 
     app = buildServer(db, localNodeId, 'http://localhost:3001')
     await app.ready()
+    sessionCookie = await setupAuth(app)
   })
 
   it('returns 404 for unknown file id', async () => {
     const res = await app.inject({
       method: 'GET',
       url: '/api/v1/media-files/nonexistent-id/stream',
+      headers: { Cookie: sessionCookie },
     })
     expect(res.statusCode).toBe(404)
     const body = JSON.parse(res.body)
@@ -141,6 +144,7 @@ describe('streaming endpoint', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/media-files/${mediaFileId}/stream`,
+      headers: { Cookie: sessionCookie },
     })
 
     expect(res.statusCode).toBe(200)
@@ -160,7 +164,7 @@ describe('streaming endpoint', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/media-files/${mediaFileId}/stream`,
-      headers: { Range: 'bytes=0-9' },
+      headers: { Range: 'bytes=0-9', Cookie: sessionCookie },
     })
 
     expect(res.statusCode).toBe(206)
@@ -180,7 +184,7 @@ describe('streaming endpoint', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/media-files/${mediaFileId}/stream`,
-      headers: { Range: 'bytes=-5' },
+      headers: { Range: 'bytes=-5', Cookie: sessionCookie },
     })
 
     expect(res.statusCode).toBe(206)
@@ -197,7 +201,7 @@ describe('streaming endpoint', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/media-files/${mediaFileId}/stream`,
-      headers: { Range: 'bytes=9999-99999' },
+      headers: { Range: 'bytes=9999-99999', Cookie: sessionCookie },
     })
 
     expect(res.statusCode).toBe(416)
@@ -214,7 +218,7 @@ describe('streaming endpoint', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/media-files/${mediaFileId}/stream`,
-      headers: { Range: 'bytes=invalid' },
+      headers: { Range: 'bytes=invalid', Cookie: sessionCookie },
     })
 
     expect(res.statusCode).toBe(416)
@@ -229,6 +233,7 @@ describe('streaming endpoint', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/media-files/${mediaFileId}/stream`,
+      headers: { Cookie: sessionCookie },
     })
 
     expect(res.statusCode).toBe(404)
@@ -244,6 +249,7 @@ describe('source selection', () => {
   let localNodeId: string
   let libraryId: string
   let app: ReturnType<typeof buildServer>
+  let sessionCookie: string
 
   beforeEach(async () => {
     testDir = join(tmpdir(), `helix-source-test-${crypto.randomUUID()}`)
@@ -266,6 +272,7 @@ describe('source selection', () => {
 
     app = buildServer(db, localNodeId, 'http://localhost:3001')
     await app.ready()
+    sessionCookie = await setupAuth(app)
   })
 
   it('returns unavailable when media item has no files', async () => {
@@ -288,6 +295,7 @@ describe('source selection', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/media/${mediaItemId}/playback-source`,
+      headers: { Cookie: sessionCookie },
     })
 
     expect(res.statusCode).toBe(200)
@@ -306,6 +314,7 @@ describe('source selection', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/media/${mediaItemId}/playback-source`,
+      headers: { Cookie: sessionCookie },
     })
 
     expect(res.statusCode).toBe(200)
@@ -322,6 +331,7 @@ describe('source selection', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/media/${mediaItemId}/playback-source`,
+      headers: { Cookie: sessionCookie },
     })
 
     expect(res.statusCode).toBe(200)
@@ -426,6 +436,7 @@ describe('source selection', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/media/${mediaItemId}/playback-source`,
+      headers: { Cookie: sessionCookie },
     })
 
     expect(res.statusCode).toBe(200)
@@ -441,6 +452,7 @@ describe('source selection', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/api/v1/media/nonexistent-id/playback-source',
+      headers: { Cookie: sessionCookie },
     })
 
     expect(res.statusCode).toBe(404)

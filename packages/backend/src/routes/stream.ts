@@ -2,9 +2,12 @@ import type { FastifyInstance, FastifyReply } from 'fastify'
 import { createReadStream, statSync } from 'fs'
 import { existsSync } from 'fs'
 import { eq } from 'drizzle-orm'
-import { mediaFiles } from '../db/schema'
+import { mediaFiles, mediaItems } from '../db/schema'
 import { err } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
+import { verifyStreamToken } from '../lib/signedTokens'
+import { getCurrentUser } from '../middleware/auth'
+import { canPlayLibrary, getLibraryIdForMediaItem } from '../lib/permissions'
 
 const MIME_MAP: Record<string, string> = {
   '.mkv': 'video/x-matroska',
@@ -80,14 +83,51 @@ export async function streamRoutes(
   const { db, localNodeId } = opts
 
   // GET /media-files/:id/stream
-  app.get<{ Params: { id: string } }>(
+  // Access: valid signed token (query ?token=) OR valid session cookie with canPlay
+  app.get<{ Params: { id: string }; Querystring: { token?: string } }>(
     '/media-files/:id/stream',
     async (req, reply) => {
+      const fileId = req.params.id
+      const token = req.query.token
+
+      let authorizedUserId: string | null = null
+
+      if (token) {
+        const verified = verifyStreamToken(token)
+        if (!verified) {
+          return sendError(reply, 401, 'Invalid or expired stream token')
+        }
+        if (verified.fileId !== fileId) {
+          return sendError(reply, 403, 'Token does not match requested file')
+        }
+        authorizedUserId = verified.userId
+      } else {
+        // Fall back to session cookie auth
+        const authResult = await getCurrentUser(req, db)
+        if (!authResult) {
+          return sendError(reply, 401, 'Authentication required')
+        }
+        const user = authResult.user
+        // Look up the library for this file to check canPlay
+        const [file] = await db
+          .select({ library_id: mediaFiles.library_id })
+          .from(mediaFiles)
+          .where(eq(mediaFiles.id, fileId))
+        if (!file) {
+          return sendError(reply, 404, 'Media file not found')
+        }
+        const allowed = await canPlayLibrary(user, file.library_id, db)
+        if (!allowed) {
+          return sendError(reply, 403, 'Playback not permitted for this library')
+        }
+        authorizedUserId = user.id
+      }
+
       // Look up file
       const [file] = await db
         .select()
         .from(mediaFiles)
-        .where(eq(mediaFiles.id, req.params.id))
+        .where(eq(mediaFiles.id, fileId))
 
       if (!file) {
         return sendError(reply, 404, 'Media file not found')

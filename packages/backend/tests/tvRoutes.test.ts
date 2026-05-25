@@ -135,7 +135,7 @@ describe('TV API routes', () => {
 
   describe('GET /api/v1/shows', () => {
     it('returns empty list when no shows exist', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/v1/shows' })
+      const res = await app.inject({ method: 'GET', url: '/api/v1/shows', headers: { Cookie: sessionCookie } })
       expect(res.statusCode).toBe(200)
       const body = JSON.parse(res.body)
       expect(body.ok).toBe(true)
@@ -145,7 +145,7 @@ describe('TV API routes', () => {
     it('returns show list with episodeCount', async () => {
       await createTvFixture(db, libraryId, { seasonCount: 2, episodesPerSeason: 3 })
 
-      const res = await app.inject({ method: 'GET', url: '/api/v1/shows' })
+      const res = await app.inject({ method: 'GET', url: '/api/v1/shows', headers: { Cookie: sessionCookie } })
       expect(res.statusCode).toBe(200)
       const body = JSON.parse(res.body)
       expect(body.ok).toBe(true)
@@ -175,6 +175,7 @@ describe('TV API routes', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/api/v1/shows?library_id=${libraryId}`,
+        headers: { Cookie: sessionCookie },
       })
       const body = JSON.parse(res.body)
       expect(body.data.length).toBe(1)
@@ -192,6 +193,7 @@ describe('TV API routes', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/api/v1/shows/${showId}`,
+        headers: { Cookie: sessionCookie },
       })
       expect(res.statusCode).toBe(200)
       const body = JSON.parse(res.body)
@@ -208,6 +210,7 @@ describe('TV API routes', () => {
       const res = await app.inject({
         method: 'GET',
         url: '/api/v1/shows/nonexistent-id',
+        headers: { Cookie: sessionCookie },
       })
       expect(res.statusCode).toBe(404)
     })
@@ -230,6 +233,7 @@ describe('TV API routes', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/api/v1/shows/${movieId}`,
+        headers: { Cookie: sessionCookie },
       })
       expect(res.statusCode).toBe(404)
     })
@@ -242,6 +246,7 @@ describe('TV API routes', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/api/v1/shows/${showId}/seasons`,
+        headers: { Cookie: sessionCookie },
       })
       expect(res.statusCode).toBe(200)
       const body = JSON.parse(res.body)
@@ -335,6 +340,7 @@ describe('TV API routes', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/api/v1/episodes/${ep.id}`,
+        headers: { Cookie: sessionCookie },
       })
       expect(res.statusCode).toBe(200)
       const body = JSON.parse(res.body)
@@ -350,6 +356,7 @@ describe('TV API routes', () => {
       const res = await app.inject({
         method: 'GET',
         url: '/api/v1/episodes/nonexistent',
+        headers: { Cookie: sessionCookie },
       })
       expect(res.statusCode).toBe(404)
     })
@@ -391,6 +398,7 @@ describe('TV API routes', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/api/v1/shows/${showId}/seasons`,
+        headers: { Cookie: sessionCookie },
       })
       const body = JSON.parse(res.body)
       const nums = body.data.map((s: any) => s.seasonNumber)

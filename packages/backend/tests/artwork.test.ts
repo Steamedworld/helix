@@ -8,6 +8,7 @@ import { runMigrations } from '../src/db/migrate'
 import { bootstrap } from '../src/bootstrap'
 import { buildServer } from '../src/server'
 import { libraries, mediaItems, mediaVersions, mediaFiles } from '../src/db/schema'
+import { setupAuth } from './helpers/auth'
 
 function createTestDb(testDir: string) {
   mkdirSync(testDir, { recursive: true })
@@ -85,6 +86,7 @@ describe('artwork endpoint', () => {
   let localNodeId: string
   let libraryId: string
   let mediaItemId: string
+  let sessionCookie: string
 
   beforeEach(async () => {
     testDir = join(tmpdir(), `helix-artwork-ep-${crypto.randomUUID()}`)
@@ -93,6 +95,8 @@ describe('artwork endpoint', () => {
     db = createTestDb(testDir)
     localNodeId = await bootstrap(db, testDir)
     app = buildServer(db, localNodeId)
+    await app.ready()
+    sessionCookie = await setupAuth(app)
 
     const now = new Date().toISOString()
 
@@ -148,6 +152,7 @@ describe('artwork endpoint', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/media/${mediaItemId}/artwork/poster`,
+      headers: { Cookie: sessionCookie },
     })
     expect(res.statusCode).toBe(200)
     expect(res.headers['content-type']).toMatch(/image\/jpeg/)
@@ -159,6 +164,7 @@ describe('artwork endpoint', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/media/${mediaItemId}/artwork/backdrop`,
+      headers: { Cookie: sessionCookie },
     })
     expect(res.statusCode).toBe(404)
   })
@@ -177,6 +183,7 @@ describe('artwork endpoint', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/media/nonexistent-id/artwork/poster`,
+      headers: { Cookie: sessionCookie },
     })
     expect(res.statusCode).toBe(404)
   })
@@ -212,6 +219,7 @@ describe('artwork endpoint', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/media/${evilItemId}/artwork/poster`,
+      headers: { Cookie: sessionCookie },
     })
     // Should be 403 (outside library roots) or 404 (doesn't exist + path check)
     expect([403, 404]).toContain(res.statusCode)
@@ -227,6 +235,7 @@ describe('media API — posterUrl field', () => {
   let app: ReturnType<typeof buildServer>
   let localNodeId: string
   let libraryId: string
+  let sessionCookie: string
 
   beforeEach(async () => {
     testDir = join(tmpdir(), `helix-posterurl-${crypto.randomUUID()}`)
@@ -235,6 +244,8 @@ describe('media API — posterUrl field', () => {
     db = createTestDb(testDir)
     localNodeId = await bootstrap(db, testDir)
     app = buildServer(db, localNodeId)
+    await app.ready()
+    sessionCookie = await setupAuth(app)
 
     const now = new Date().toISOString()
     libraryId = crypto.randomUUID()
@@ -289,7 +300,7 @@ describe('media API — posterUrl field', () => {
     writeFileSync(posterFile, 'img')
     const id = await insertItem(posterFile)
 
-    const res = await app.inject({ method: 'GET', url: `/api/v1/media/${id}` })
+    const res = await app.inject({ method: 'GET', url: `/api/v1/media/${id}`, headers: { Cookie: sessionCookie } })
     expect(res.statusCode).toBe(200)
     const body = JSON.parse(res.body)
     expect(body.data.posterUrl).toBeTruthy()
@@ -301,7 +312,7 @@ describe('media API — posterUrl field', () => {
   it('posterUrl is null when poster_path is not set', async () => {
     const id = await insertItem(null)
 
-    const res = await app.inject({ method: 'GET', url: `/api/v1/media/${id}` })
+    const res = await app.inject({ method: 'GET', url: `/api/v1/media/${id}`, headers: { Cookie: sessionCookie } })
     expect(res.statusCode).toBe(200)
     const body = JSON.parse(res.body)
     expect(body.data.posterUrl).toBeNull()
@@ -312,7 +323,7 @@ describe('media API — posterUrl field', () => {
     writeFileSync(posterFile, 'img')
     await insertItem(posterFile)
 
-    const res = await app.inject({ method: 'GET', url: '/api/v1/media' })
+    const res = await app.inject({ method: 'GET', url: '/api/v1/media', headers: { Cookie: sessionCookie } })
     expect(res.statusCode).toBe(200)
     const body = JSON.parse(res.body)
     expect(body.data[0].posterUrl).toBeTruthy()

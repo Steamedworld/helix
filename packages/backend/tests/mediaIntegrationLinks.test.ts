@@ -110,6 +110,7 @@ describe('media/show integration links in detail endpoints', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/media/${movieId}`,
+      headers: { Cookie: adminCookie },
     })
     expect(res.statusCode).toBe(200)
     const body = JSON.parse(res.body)
@@ -173,6 +174,7 @@ describe('media/show integration links in detail endpoints', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/shows/${showId}`,
+      headers: { Cookie: adminCookie },
     })
     expect(res.statusCode).toBe(200)
     const body = JSON.parse(res.body)
@@ -204,6 +206,7 @@ describe('media/show integration links in detail endpoints', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/media/${movieId}`,
+      headers: { Cookie: adminCookie },
     })
     expect(res.statusCode).toBe(200)
     const body = JSON.parse(res.body)

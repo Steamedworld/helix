@@ -15,6 +15,8 @@ A self-hosted media hub. Simpler than Plex, prettier than Jellyfin. Scans your l
 - **Watch progress** — position and completion tracked per user per item; "Continue Watching" row on the dashboard
 - **Up-next auto-advance** — 10-second countdown after an episode ends, navigates automatically to the next
 - **Multi-user auth** — bcrypt passwords, HTTP-only session cookies, admin and user roles
+- **Per-library access control** — admins grant view and/or play permissions per user per library; normal users only see the libraries they have been granted access to
+- **Signed streaming URLs** — media stream and artwork URLs are HMAC-signed per user with a configurable TTL; tokens are validated on every request so shared URLs cannot be used by another account
 - **Radarr / Sonarr integration** — read-only: surfaces monitored status and quality profile on media detail pages
 - **Webhook auto-sync** — Radarr/Sonarr push events (MovieAdded, Download, Rename, etc.) trigger instant catalog sync; Helix never sends write commands
 - **Background enrichment queue** — new items from library scans and Arr syncs are automatically queued for TMDB enrichment; visible in the admin UI with retry logic and failure reporting
@@ -86,6 +88,8 @@ Copy `.env.example` to `packages/backend/.env` and fill in the values you need. 
 | `ENRICHMENT_JOB_STALE_AFTER_MS` | `600000` (10 min) | Jobs stuck in `running` state longer than this are reset to `pending` on startup. |
 | `ENRICHMENT_PERIODIC_ENABLED` | `true` | Periodically re-enqueue unenriched items in the background. |
 | `ENRICHMENT_PERIODIC_INTERVAL_MS` | `21600000` (6 h) | How often the periodic enqueue runs. |
+| `MEDIA_TOKEN_SECRET` | (random per-process) | HMAC-SHA256 secret for signed stream and artwork tokens. Set a stable value in production so tokens survive server restarts. |
+| `MEDIA_TOKEN_TTL_SECONDS` | `14400` (4 h) | Lifetime of signed media stream and artwork tokens. |
 
 ---
 
@@ -180,7 +184,7 @@ pnpm start            # run built backend
 
 ```bash
 cd packages/backend
-pnpm test             # run all Vitest tests (424 tests)
+pnpm test             # run all Vitest tests (465 tests)
 pnpm test -- --run tests/auth.test.ts   # run a single test file
 ```
 
@@ -196,7 +200,7 @@ pnpm -r run check     # type-check all packages
 helix/
 ├── packages/
 │   ├── backend/          # Fastify API server
-│   │   ├── drizzle/      # SQL migrations (7 files)
+│   │   ├── drizzle/      # SQL migrations (8 files)
 │   │   ├── src/
 │   │   │   ├── routes/   # HTTP route handlers
 │   │   │   ├── services/ # Business logic (scanner, metadata, auth, integrations)
@@ -226,7 +230,7 @@ Browser (React + Vite :5173)
                          (fs walk)    (TMDB)       (bcrypt + sessions)
                              │
                          SQLite via Drizzle ORM
-                         (7 migrations, 10 tables)
+                         (8 migrations, 11 tables)
 ```
 
 The DB schema is federation-aware from day one: every `media_file` carries a `node_id`. When multi-node support ships, remote nodes register files without schema changes. Five federation seams are stubbed in `packages/backend/src/services/federation/`.
@@ -250,15 +254,18 @@ The DB schema is federation-aware from day one: every `media_file` carries a `no
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET/POST | `/api/v1/libraries` | List / create libraries |
+| GET/POST | `/api/v1/libraries` | List / create libraries (list filtered by user permissions) |
 | GET/PUT/DELETE | `/api/v1/libraries/:id` | Get / update / delete |
 | POST | `/api/v1/libraries/:id/scan` | Trigger scan |
-| GET | `/api/v1/media` | List items (`kind?`, `q?`, `limit?`, `offset?`) |
+| GET | `/api/v1/libraries/:id/permissions` | List user access grants for a library (admin only) |
+| PUT | `/api/v1/libraries/:id/permissions/:userId` | Grant or update access for a user (admin only) |
+| DELETE | `/api/v1/libraries/:id/permissions/:userId` | Revoke access for a user (admin only) |
+| GET | `/api/v1/media` | List items (`kind?`, `q?`, `limit?`, `offset?`) — filtered by user permissions |
 | GET | `/api/v1/media/:id` | Item detail with versions and files |
-| GET | `/api/v1/media/:id/playback-source` | Best playback source for this client |
-| GET | `/api/v1/media/:id/artwork/poster` | Stream poster image |
-| GET | `/api/v1/media/:id/artwork/backdrop` | Stream backdrop image |
-| GET | `/api/v1/stream/:fileId` | Range-request video stream |
+| GET | `/api/v1/media/:id/playback-source` | Best playback source (returns signed stream URL) |
+| GET | `/api/v1/media/:id/artwork/poster` | Stream poster image (signed URL or session auth) |
+| GET | `/api/v1/media/:id/artwork/backdrop` | Stream backdrop image (signed URL or session auth) |
+| GET | `/api/v1/media-files/:fileId/stream` | Range-request video stream (signed URL or session + can_play) |
 
 ### TV
 
@@ -324,12 +331,17 @@ The DB schema is federation-aware from day one: every `media_file` carries a `no
 - **No music enrichment** — MusicBrainz is not yet integrated.
 - **No episode still caching** — episode thumbnails are resolved from TMDB but not downloaded to disk.
 - **Single-node only** — federation seams are stubbed; multi-node support is a future milestone.
+- **Permissions are library-level only** — no per-item or per-collection access control; no parental controls or age-based content filtering.
+- **Signed tokens are not revocable** — tokens are stateless JWS-like tokens; invalidating a user's access requires revoking the library permission and waiting for existing tokens to expire (default 4 h). Set `MEDIA_TOKEN_TTL_SECONDS` to a shorter value if tighter revocation is needed.
+- **No OAuth or SSO** — authentication is local username/password only.
 
 ---
 
 ## Roadmap
 
 - [x] Background metadata enrichment (event-driven queue after scan and Arr sync)
+- [x] Webhook-driven auto-sync from Arr events
+- [x] Per-library access permissions with signed stream and artwork URLs
 - [ ] Episode still image download and caching
 - [ ] MusicBrainz provider for music libraries
 - [ ] TVDB provider for alternate TV metadata
@@ -337,7 +349,7 @@ The DB schema is federation-aware from day one: every `media_file` carries a `no
 - [ ] Multi-node federation (catalog sync, remote playback signing)
 - [ ] User request management (non-admin users request missing content)
 - [ ] Lidarr integration for music
-- [x] Webhook-driven auto-sync from Arr events
+- [ ] Parental controls / per-profile content rating filters
 
 ---
 

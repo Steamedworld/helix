@@ -156,6 +156,19 @@ export const enrichmentJobs = sqliteTable('enrichment_jobs', {
   updated_at: integer('updated_at').notNull(),
 })
 
+export const libraryPermissions = sqliteTable('library_permissions', {
+  id: text('id').primaryKey(),
+  library_id: text('library_id').notNull().references(() => libraries.id, { onDelete: 'cascade' }),
+  user_id: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  can_view: integer('can_view', { mode: 'boolean' }).notNull().default(true),
+  can_play: integer('can_play', { mode: 'boolean' }).notNull().default(true),
+  created_at: text('created_at').notNull(),
+  updated_at: text('updated_at').notNull(),
+}, (t) => ({
+  unique_user_library: uniqueIndex('idx_lib_perms_unique').on(t.library_id, t.user_id),
+  idx_user: index('idx_lib_perms_user').on(t.user_id),
+}))
+
 export const externalMediaLinks = sqliteTable('external_media_links', {
   id: text('id').primaryKey(),
   media_item_id: text('media_item_id').notNull().references(() => mediaItems.id, { onDelete: 'cascade' }),

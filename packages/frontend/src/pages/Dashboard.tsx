@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react'
 import { listMedia } from '../api/media'
 import { listLibraries } from '../api/libraries'
 import { getContinueWatching } from '../api/watchstate'
+import { useAuth } from '../context/AuthContext'
 import type { MediaItem, Library } from '@helix/shared'
 import { MediaCard } from '../components/MediaCard'
 import { PosterGrid } from '../components/PosterGrid'
 import { EmptyState } from '../components/EmptyState'
 
 export function Dashboard() {
+  const { user } = useAuth()
   const [recentItems, setRecentItems] = useState<MediaItem[]>([])
   const [continueItems, setContinueItems] = useState<MediaItem[]>([])
   const [libraries, setLibraries] = useState<Library[]>([])
@@ -33,12 +35,20 @@ export function Dashboard() {
   }
 
   if (libraries.length === 0) {
+    if (user?.role === 'admin') {
+      return (
+        <EmptyState
+          title="Welcome to Helix"
+          description="Add your first media library to get started. Helix will scan your files and build your catalog automatically."
+          ctaLabel="Add a Library"
+          ctaHref="/libraries/new"
+        />
+      )
+    }
     return (
       <EmptyState
-        title="Welcome to Helix"
-        description="Add your first media library to get started. Helix will scan your files and build your catalog automatically."
-        ctaLabel="Add a Library"
-        ctaHref="/libraries/new"
+        title="No libraries available"
+        description="You haven't been granted access to any libraries yet. Ask your Helix administrator to grant you access."
       />
     )
   }

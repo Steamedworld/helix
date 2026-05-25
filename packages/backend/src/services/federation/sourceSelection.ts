@@ -2,6 +2,7 @@ import { existsSync } from 'fs'
 import { eq, isNotNull } from 'drizzle-orm'
 import type { DrizzleDB } from '../../db/client'
 import { mediaFiles, mediaVersions, nodes, mediaItems } from '../../db/schema'
+import { signStreamToken } from '../../lib/signedTokens'
 
 export interface PlaybackSource {
   nodeId: string
@@ -47,7 +48,7 @@ function resolutionScore(width: number | null, height: number | null): number {
 
 export async function selectBestSource(
   mediaItemId: string,
-  _userId: string,
+  userId: string,
   db?: DrizzleDB,
   localNodeId?: string,
   baseUrl?: string | null
@@ -55,14 +56,15 @@ export async function selectBestSource(
   // Legacy stub call (no db) — federation not implemented
   if (!db || !localNodeId) return null
 
-  return selectBestLocalSource(mediaItemId, db, localNodeId, baseUrl ?? null)
+  return selectBestLocalSource(mediaItemId, db, localNodeId, baseUrl ?? null, userId)
 }
 
 export async function selectBestLocalSource(
   mediaItemId: string,
   db: DrizzleDB,
   localNodeId: string,
-  baseUrl: string | null
+  baseUrl: string | null,
+  userId?: string
 ): Promise<PlaybackSource | null> {
   // Get all files for this media item on the local node, joined with version info
   const rows = await db
@@ -97,7 +99,10 @@ export async function selectBestLocalSource(
 
   const best = scored[0]
   const nodeBaseUrl = baseUrl ?? 'http://localhost:3001'
-  const streamUrl = `${nodeBaseUrl}/api/v1/media-files/${best.file.id}/stream`
+  const basePath = `${nodeBaseUrl}/api/v1/media-files/${best.file.id}/stream`
+  const streamUrl = userId
+    ? `${basePath}?token=${signStreamToken(best.file.id, userId)}`
+    : basePath
 
   return {
     nodeId: localNodeId,
@@ -121,7 +126,8 @@ export async function getPlaybackSource(
   mediaItemId: string,
   db: DrizzleDB,
   localNodeId: string,
-  baseUrl: string | null
+  baseUrl: string | null,
+  userId?: string
 ): Promise<PlaybackSourceOrUnavailable> {
   // Check the item kind — containers (show, season) cannot be played directly
   const [item] = await db
@@ -169,7 +175,7 @@ export async function getPlaybackSource(
     return { unavailable: true, reason: 'File(s) found in catalog but not on disk — library may need re-scan' }
   }
 
-  const source = await selectBestLocalSource(mediaItemId, db, localNodeId, baseUrl)
+  const source = await selectBestLocalSource(mediaItemId, db, localNodeId, baseUrl, userId)
   if (!source) {
     return { unavailable: true, reason: 'Source selection failed unexpectedly' }
   }

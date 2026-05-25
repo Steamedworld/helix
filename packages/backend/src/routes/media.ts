@@ -1,21 +1,27 @@
 import type { FastifyInstance } from 'fastify'
-import { eq, and, like, sql } from 'drizzle-orm'
+import { eq, and, like, sql, inArray } from 'drizzle-orm'
 import { mediaItems, mediaVersions, mediaFiles, externalMediaLinks, integrations } from '../db/schema'
 import { ok, err } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
 import type { MediaItemKind } from '@helix/shared'
 import { getPlaybackSource } from '../services/federation/sourceSelection'
+import { makeRequireAuth } from '../middleware/auth'
+import { canViewLibrary, canPlayLibrary, getViewableLibraryIds } from '../lib/permissions'
+import { signArtworkToken } from '../lib/signedTokens'
 
-// Build public artwork URL — never expose raw filesystem path to client
 function artworkUrl(
   mediaItemId: string,
   kind: 'poster' | 'backdrop',
   hasPath: boolean,
-  baseUrl: string | null | undefined
+  baseUrl: string | null | undefined,
+  userId?: string
 ): string | null {
   if (!hasPath) return null
   const base = baseUrl ?? ''
-  return `${base}/api/v1/media/${mediaItemId}/artwork/${kind}`
+  const path = `${base}/api/v1/media/${mediaItemId}/artwork/${kind}`
+  if (!userId) return path
+  const token = signArtworkToken(mediaItemId, kind, userId)
+  return `${path}?token=${token}`
 }
 
 export async function mediaRoutes(
@@ -23,6 +29,7 @@ export async function mediaRoutes(
   opts: { db: DrizzleDB; localNodeId?: string; baseUrl?: string | null }
 ) {
   const { db, localNodeId, baseUrl } = opts
+  const requireAuth = makeRequireAuth(db)
 
   // GET /media
   app.get<{
@@ -33,11 +40,25 @@ export async function mediaRoutes(
       limit?: string
       offset?: string
     }
-  }>('/', async (req) => {
+  }>('/', { preHandler: requireAuth }, async (req) => {
+    const user = req.user!
     const { library_id, kind, q, limit = '50', offset = '0' } = req.query
-    const conditions = []
 
-    if (library_id) conditions.push(eq(mediaItems.library_id, library_id))
+    // Build library filter based on permissions
+    const viewableIds = user.role === 'admin' ? null : await getViewableLibraryIds(user, db)
+    if (viewableIds !== null && viewableIds.length === 0) return ok([])
+
+    const conditions: ReturnType<typeof eq>[] = []
+
+    if (library_id) {
+      if (viewableIds !== null && !viewableIds.includes(library_id)) {
+        return ok([])
+      }
+      conditions.push(eq(mediaItems.library_id, library_id))
+    } else if (viewableIds !== null) {
+      conditions.push(inArray(mediaItems.library_id, viewableIds))
+    }
+
     if (kind) conditions.push(eq(mediaItems.kind, kind))
     if (q) conditions.push(like(mediaItems.title, `%${q}%`))
 
@@ -53,9 +74,8 @@ export async function mediaRoutes(
       ...item,
       poster_path: undefined,
       backdrop_path: undefined,
-      posterUrl: artworkUrl(item.id, 'poster', !!item.poster_path, baseUrl),
-      backdropUrl: artworkUrl(item.id, 'backdrop', !!item.backdrop_path, baseUrl),
-      // Provide a kind label for search results
+      posterUrl: artworkUrl(item.id, 'poster', !!item.poster_path, baseUrl, user.id),
+      backdropUrl: artworkUrl(item.id, 'backdrop', !!item.backdrop_path, baseUrl, user.id),
       kindLabel:
         item.kind === 'show'
           ? 'Show'
@@ -72,12 +92,19 @@ export async function mediaRoutes(
   })
 
   // GET /media/:id
-  app.get<{ Params: { id: string } }>('/:id', async (req, reply) => {
+  app.get<{ Params: { id: string } }>('/:id', { preHandler: requireAuth }, async (req, reply) => {
+    const user = req.user!
+
     const [item] = await db
       .select()
       .from(mediaItems)
       .where(eq(mediaItems.id, req.params.id))
     if (!item) {
+      reply.status(404)
+      return err('Media item not found')
+    }
+
+    if (!await canViewLibrary(user, item.library_id, db)) {
       reply.status(404)
       return err('Media item not found')
     }
@@ -92,7 +119,6 @@ export async function mediaRoutes(
       .from(mediaFiles)
       .where(eq(mediaFiles.media_item_id, item.id))
 
-    // Integration links — left-join external_media_links + integrations
     const linkRows = await db
       .select({
         kind: integrations.kind,
@@ -122,8 +148,8 @@ export async function mediaRoutes(
       ...item,
       poster_path: undefined,
       backdrop_path: undefined,
-      posterUrl: artworkUrl(item.id, 'poster', !!item.poster_path, baseUrl),
-      backdropUrl: artworkUrl(item.id, 'backdrop', !!item.backdrop_path, baseUrl),
+      posterUrl: artworkUrl(item.id, 'poster', !!item.poster_path, baseUrl, user.id),
+      backdropUrl: artworkUrl(item.id, 'backdrop', !!item.backdrop_path, baseUrl, user.id),
       versions,
       files,
       integrationLinks,
@@ -131,12 +157,19 @@ export async function mediaRoutes(
   })
 
   // GET /media/:id/versions
-  app.get<{ Params: { id: string } }>('/:id/versions', async (req, reply) => {
+  app.get<{ Params: { id: string } }>('/:id/versions', { preHandler: requireAuth }, async (req, reply) => {
+    const user = req.user!
+
     const [item] = await db
-      .select({ id: mediaItems.id })
+      .select({ id: mediaItems.id, library_id: mediaItems.library_id })
       .from(mediaItems)
       .where(eq(mediaItems.id, req.params.id))
     if (!item) {
+      reply.status(404)
+      return err('Media item not found')
+    }
+
+    if (!await canViewLibrary(user, item.library_id, db)) {
       reply.status(404)
       return err('Media item not found')
     }
@@ -150,14 +183,21 @@ export async function mediaRoutes(
   })
 
   // GET /media/:id/files
-  app.get<{ Params: { id: string } }>('/:id/files', async (req, reply) => {
+  app.get<{ Params: { id: string } }>('/:id/files', { preHandler: requireAuth }, async (req, reply) => {
+    const user = req.user!
+
     const [item] = await db
-      .select({ id: mediaItems.id })
+      .select({ id: mediaItems.id, library_id: mediaItems.library_id })
       .from(mediaItems)
       .where(eq(mediaItems.id, req.params.id))
     if (!item) {
       reply.status(404)
       return err('Media item not found')
+    }
+
+    if (!await canPlayLibrary(user, item.library_id, db)) {
+      reply.status(403)
+      return err('Playback not permitted for this library')
     }
 
     const files = await db
@@ -168,15 +208,17 @@ export async function mediaRoutes(
     return ok(files)
   })
 
-  // GET /media/:id/playback-source — pick best available local file
-  app.get<{ Params: { id: string } }>('/:id/playback-source', async (req, reply) => {
+  // GET /media/:id/playback-source — requires auth and canPlay
+  app.get<{ Params: { id: string } }>('/:id/playback-source', { preHandler: requireAuth }, async (req, reply) => {
+    const user = req.user!
+
     if (!localNodeId) {
       reply.status(503)
       return err('Local node not available')
     }
 
     const [item] = await db
-      .select({ id: mediaItems.id, kind: mediaItems.kind })
+      .select({ id: mediaItems.id, kind: mediaItems.kind, library_id: mediaItems.library_id })
       .from(mediaItems)
       .where(eq(mediaItems.id, req.params.id))
 
@@ -185,7 +227,12 @@ export async function mediaRoutes(
       return err('Media item not found')
     }
 
-    const result = await getPlaybackSource(req.params.id, db, localNodeId, baseUrl ?? null)
+    if (!await canPlayLibrary(user, item.library_id, db)) {
+      reply.status(403)
+      return err('Playback not permitted for this library')
+    }
+
+    const result = await getPlaybackSource(req.params.id, db, localNodeId, baseUrl ?? null, user.id)
     return ok(result)
   })
 }

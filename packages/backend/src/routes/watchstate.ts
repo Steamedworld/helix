@@ -1,10 +1,11 @@
 import type { FastifyInstance } from 'fastify'
-import { eq, and } from 'drizzle-orm'
+import { eq, and, inArray } from 'drizzle-orm'
 import { watchStates, mediaItems } from '../db/schema'
 import { ok, err } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
 import { sql } from 'drizzle-orm'
 import { makeRequireAuth } from '../middleware/auth'
+import { canViewLibrary, getViewableLibraryIds } from '../lib/permissions'
 
 export async function watchStateRoutes(
   app: FastifyInstance,
@@ -23,15 +24,33 @@ export async function watchStateRoutes(
     }
   }>('/:media_item_id', { preHandler: requireAuth }, async (req, reply) => {
     const { position_seconds, duration_seconds, completed } = req.body
-    const user_id = req.user!.id
+    const user = req.user!
 
     if (position_seconds === undefined) {
       reply.status(400)
       return err('position_seconds is required')
     }
 
-    const now = new Date().toISOString()
     const mediaItemId = req.params.media_item_id
+
+    // Check the item exists and user can view it
+    const [item] = await db
+      .select({ library_id: mediaItems.library_id })
+      .from(mediaItems)
+      .where(eq(mediaItems.id, mediaItemId))
+      .limit(1)
+
+    if (!item) {
+      reply.status(404)
+      return err('Media item not found')
+    }
+
+    if (!await canViewLibrary(user, item.library_id, db)) {
+      reply.status(404)
+      return err('Media item not found')
+    }
+
+    const now = new Date().toISOString()
 
     // Check if a watch state already exists
     const [existing] = await db
@@ -39,7 +58,7 @@ export async function watchStateRoutes(
       .from(watchStates)
       .where(
         and(
-          eq(watchStates.user_id, user_id),
+          eq(watchStates.user_id, user.id),
           eq(watchStates.media_item_id, mediaItemId)
         )
       )
@@ -80,7 +99,7 @@ export async function watchStateRoutes(
       const id = crypto.randomUUID()
       await db.insert(watchStates).values({
         id,
-        user_id,
+        user_id: user.id,
         media_item_id: mediaItemId,
         position_seconds,
         duration_seconds: duration_seconds ?? null,
@@ -96,9 +115,21 @@ export async function watchStateRoutes(
   })
 
   // GET /watchstate/continue-watching
-  app.get('/continue-watching', { preHandler: requireAuth }, async (req, reply) => {
-    const user_id = req.user!.id
+  app.get('/continue-watching', { preHandler: requireAuth }, async (req) => {
+    const user = req.user!
     const limit = 20
+
+    // Get accessible library IDs for filtering
+    const viewableIds = user.role === 'admin' ? null : await getViewableLibraryIds(user, db)
+    if (viewableIds !== null && viewableIds.length === 0) return ok([])
+
+    const conditions: ReturnType<typeof eq>[] = [
+      eq(watchStates.user_id, user.id) as any,
+      eq(watchStates.completed, false) as any,
+    ]
+    if (viewableIds !== null) {
+      conditions.push(inArray(mediaItems.library_id, viewableIds) as any)
+    }
 
     const rows = await db
       .select({
@@ -107,12 +138,7 @@ export async function watchStateRoutes(
       })
       .from(watchStates)
       .innerJoin(mediaItems, eq(watchStates.media_item_id, mediaItems.id))
-      .where(
-        and(
-          eq(watchStates.user_id, user_id),
-          eq(watchStates.completed, false)
-        )
-      )
+      .where(and(...(conditions as any[])))
       .orderBy(sql`${watchStates.updated_at} DESC`)
       .limit(limit)
 
