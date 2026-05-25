@@ -16,6 +16,8 @@ import { authRoutes } from './routes/auth'
 import { userRoutes } from './routes/users'
 import { integrationRoutes } from './routes/integrations'
 import { webhookRoutes } from './routes/webhooks'
+import { enrichmentQueueRoutes } from './routes/enrichmentQueue'
+import { enrichmentQueue } from './services/enrichmentQueue'
 import { err } from './lib/response'
 import type { DrizzleDB } from './db/client'
 import { metadataRegistry } from './services/metadata/registry'
@@ -133,6 +135,20 @@ export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string
     db,
     dataDir: resolvedDataDir,
   } as Parameters<typeof webhookRoutes>[1] & { prefix: string })
+
+  // Enrichment queue routes + background runner
+  app.register(enrichmentQueueRoutes, {
+    prefix: '/api/v1/enrichment-queue',
+    db,
+  } as Parameters<typeof enrichmentQueueRoutes>[1] & { prefix: string })
+
+  app.addHook('onReady', async () => {
+    enrichmentQueue.start(db)
+  })
+
+  app.addHook('onClose', async () => {
+    enrichmentQueue.stop()
+  })
 
   // TV hierarchy routes
   app.register(tvRoutes, {

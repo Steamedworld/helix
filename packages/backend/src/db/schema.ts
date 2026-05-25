@@ -145,6 +145,17 @@ export const integrations = sqliteTable('integrations', {
   updated_at: integer('updated_at').notNull(),
 })
 
+export const enrichmentJobs = sqliteTable('enrichment_jobs', {
+  id: text('id').primaryKey(),
+  media_item_id: text('media_item_id').notNull().references(() => mediaItems.id, { onDelete: 'cascade' }),
+  status: text('status', { enum: ['pending', 'running', 'done', 'failed'] }).notNull().default('pending'),
+  attempts: integer('attempts').notNull().default(0),
+  max_attempts: integer('max_attempts').notNull().default(3),
+  last_error: text('last_error'),
+  created_at: integer('created_at').notNull(),
+  updated_at: integer('updated_at').notNull(),
+})
+
 export const externalMediaLinks = sqliteTable('external_media_links', {
   id: text('id').primaryKey(),
   media_item_id: text('media_item_id').notNull().references(() => mediaItems.id, { onDelete: 'cascade' }),

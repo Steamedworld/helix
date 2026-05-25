@@ -17,6 +17,7 @@ A self-hosted media hub. Simpler than Plex, prettier than Jellyfin. Scans your l
 - **Multi-user auth** — bcrypt passwords, HTTP-only session cookies, admin and user roles
 - **Radarr / Sonarr integration** — read-only: surfaces monitored status and quality profile on media detail pages
 - **Webhook auto-sync** — Radarr/Sonarr push events (MovieAdded, Download, Rename, etc.) trigger instant catalog sync; Helix never sends write commands
+- **Background enrichment queue** — new items from library scans and Arr syncs are automatically queued for TMDB enrichment; visible in the admin UI with retry logic and failure reporting
 - **API key encryption** — AES-256-GCM at rest; the browser never receives a plaintext key
 - **Federation-ready** — architecture and DB schema designed for future multi-node support; seams are stubbed and documented
 
@@ -176,7 +177,7 @@ pnpm start            # run built backend
 
 ```bash
 cd packages/backend
-pnpm test             # run all Vitest tests (399 tests)
+pnpm test             # run all Vitest tests (424 tests)
 pnpm test -- --run tests/auth.test.ts   # run a single test file
 ```
 
@@ -192,7 +193,7 @@ pnpm -r run check     # type-check all packages
 helix/
 ├── packages/
 │   ├── backend/          # Fastify API server
-│   │   ├── drizzle/      # SQL migrations (6 files)
+│   │   ├── drizzle/      # SQL migrations (7 files)
 │   │   ├── src/
 │   │   │   ├── routes/   # HTTP route handlers
 │   │   │   ├── services/ # Business logic (scanner, metadata, auth, integrations)
@@ -222,7 +223,7 @@ Browser (React + Vite :5173)
                          (fs walk)    (TMDB)       (bcrypt + sessions)
                              │
                          SQLite via Drizzle ORM
-                         (6 migrations, 9 tables)
+                         (7 migrations, 10 tables)
 ```
 
 The DB schema is federation-aware from day one: every `media_file` carries a `node_id`. When multi-node support ships, remote nodes register files without schema changes. Five federation seams are stubbed in `packages/backend/src/services/federation/`.
@@ -286,6 +287,14 @@ The DB schema is federation-aware from day one: every `media_file` carries a `no
 | POST | `/api/v1/integrations/:id/sync` | Run sync |
 | POST | `/api/v1/integrations/:id/webhook-secret` | Generate (or regenerate) webhook secret — returns token once |
 
+### Enrichment queue (admin only)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/enrichment-queue/stats` | Counts by status + recent failures |
+| POST | `/api/v1/enrichment-queue/clear` | Remove all done/failed jobs |
+| POST | `/api/v1/enrichment-queue/enqueue` | Enqueue all unenriched items across all libraries |
+
 ### Webhooks (public, token-authenticated)
 
 | Method | Path | Description |
@@ -316,7 +325,7 @@ The DB schema is federation-aware from day one: every `media_file` carries a `no
 
 ## Roadmap
 
-- [ ] Background metadata enrichment (scheduled or event-driven)
+- [x] Background metadata enrichment (event-driven queue after scan and Arr sync)
 - [ ] Episode still image download and caching
 - [ ] MusicBrainz provider for music libraries
 - [ ] TVDB provider for alternate TV metadata

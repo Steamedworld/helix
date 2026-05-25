@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import {
   listIntegrations,
@@ -10,6 +10,8 @@ import {
   generateWebhookSecret,
 } from '../api/integrations'
 import type { Integration, IntegrationKind, SyncResult } from '../api/integrations'
+import { getQueueStats, clearQueue, enqueueAll } from '../api/enrichmentQueue'
+import type { QueueStats } from '../api/enrichmentQueue'
 
 // ─── Status chip ──────────────────────────────────────────────────────────────
 
@@ -488,6 +490,135 @@ function IntegrationCard({ integration, onUpdated, onDeleted }: IntegrationCardP
   )
 }
 
+// ─── Enrichment queue widget ───────────────────────────────────────────────────
+
+function EnrichmentQueueWidget() {
+  const [stats, setStats] = useState<QueueStats | null>(null)
+  const [clearing, setClearing] = useState(false)
+  const [enqueueing, setEnqueueing] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  async function refresh() {
+    const res = await getQueueStats()
+    if (res.ok) setStats(res.data)
+  }
+
+  useEffect(() => {
+    refresh()
+  }, [])
+
+  // Auto-poll while jobs are active
+  useEffect(() => {
+    if (pollRef.current) clearTimeout(pollRef.current)
+    if (stats && (stats.pending > 0 || stats.running > 0)) {
+      pollRef.current = setTimeout(() => refresh(), 3000)
+    }
+    return () => { if (pollRef.current) clearTimeout(pollRef.current) }
+  }, [stats])
+
+  async function handleClear() {
+    setClearing(true)
+    setMessage(null)
+    const res = await clearQueue()
+    setClearing(false)
+    if (res.ok) {
+      setMessage(`Removed ${res.data.removed} completed job${res.data.removed === 1 ? '' : 's'}.`)
+      refresh()
+    }
+  }
+
+  async function handleEnqueueAll() {
+    setEnqueueing(true)
+    setMessage(null)
+    const res = await enqueueAll()
+    setEnqueueing(false)
+    if (res.ok) {
+      setMessage(res.data.enqueued > 0
+        ? `Enqueued ${res.data.enqueued} item${res.data.enqueued === 1 ? '' : 's'} for enrichment.`
+        : 'No unenriched items found.')
+      refresh()
+    }
+  }
+
+  const isActive = stats !== null && (stats.pending > 0 || stats.running > 0)
+
+  return (
+    <div className="surface" style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--ink-1)' }}>Background Enrichment</span>
+        {isActive && (
+          <span className="chip chip-accent" style={{ fontSize: 10 }}>Active</span>
+        )}
+      </div>
+
+      {stats === null ? (
+        <p style={{ fontSize: 12, color: 'var(--ink-4)', margin: 0 }}>Loading…</p>
+      ) : (
+        <>
+          <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--ink-3)', flexWrap: 'wrap' }}>
+            <span>Pending: <strong style={{ color: stats.pending > 0 ? 'var(--ink-1)' : 'var(--ink-4)' }}>{stats.pending}</strong></span>
+            <span>Running: <strong style={{ color: stats.running > 0 ? 'var(--ok)' : 'var(--ink-4)' }}>{stats.running}</strong></span>
+            <span>Done: <strong style={{ color: 'var(--ink-4)' }}>{stats.done}</strong></span>
+            <span>Failed: <strong style={{ color: stats.failed > 0 ? 'var(--bad)' : 'var(--ink-4)' }}>{stats.failed}</strong></span>
+          </div>
+
+          {stats.recentFailed.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600 }}>Recent failures</span>
+              {stats.recentFailed.map((f) => (
+                <div
+                  key={f.id}
+                  className="mono"
+                  style={{ fontSize: 10, color: 'var(--bad)', padding: '4px 8px', background: 'var(--bg-3)', borderRadius: 'var(--r-1)' }}
+                >
+                  {f.lastError ?? 'Unknown error'}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <button
+              onClick={handleEnqueueAll}
+              disabled={enqueueing}
+              className="btn btn-sm btn-ghost"
+              style={{ fontSize: 11, opacity: enqueueing ? 0.6 : 1 }}
+            >
+              {enqueueing ? 'Enqueueing…' : 'Enqueue all unenriched'}
+            </button>
+            <button
+              onClick={handleClear}
+              disabled={clearing || (stats.done === 0 && stats.failed === 0)}
+              className="btn btn-sm btn-ghost"
+              style={{ fontSize: 11, opacity: clearing ? 0.6 : 1 }}
+            >
+              {clearing ? 'Clearing…' : 'Clear completed'}
+            </button>
+            <button
+              onClick={refresh}
+              className="btn btn-sm btn-ghost"
+              style={{ fontSize: 11 }}
+            >
+              Refresh
+            </button>
+          </div>
+
+          {message && (
+            <p style={{ fontSize: 11, color: 'var(--ink-3)', margin: 0 }}>{message}</p>
+          )}
+
+          <p style={{ fontSize: 11, color: 'var(--ink-4)', margin: 0, lineHeight: 1.5 }}>
+            Items are queued automatically after library scans and Arr syncs.
+            Requires TMDB credentials — configure in{' '}
+            <a href="/settings" style={{ color: 'var(--accent)' }}>Settings</a>.
+          </p>
+        </>
+      )}
+    </div>
+  )
+}
+
 // ─── Integrations page ─────────────────────────────────────────────────────────
 
 export function Integrations() {
@@ -587,6 +718,9 @@ export function Integrations() {
           onDeleted={handleDeleted}
         />
       ))}
+
+      {/* Enrichment queue status */}
+      <EnrichmentQueueWidget />
 
       {/* Info box */}
       <div

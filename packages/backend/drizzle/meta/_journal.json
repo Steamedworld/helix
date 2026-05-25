@@ -47,5 +47,13 @@
       "tag": "0005_webhook_fields",
       "breakpoints": true
     }
+    ,
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1748649600000,
+      "tag": "0006_enrichment_queue",
+      "breakpoints": true
+    }
   ]
 }

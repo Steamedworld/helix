@@ -6,6 +6,7 @@ import { decryptApiKey } from './encryption'
 import { fetchMovies } from './providers/radarr'
 import { fetchSeries } from './providers/sonarr'
 import { mapRadarrMovies, mapSonarrSeries } from './mapping'
+import { enrichmentQueue } from '../enrichmentQueue'
 
 const MAX_ITEMS_PER_SYNC = 1000
 
@@ -49,6 +50,8 @@ export async function syncIntegration(
 
   const now = Date.now()
 
+  const mappedHelixIds: string[] = []
+
   try {
     if (integration.kind === 'radarr') {
       const movies = await fetchMovies(integration.base_url, apiKey)
@@ -59,6 +62,7 @@ export async function syncIntegration(
       result.itemsMapped = mapped.length
 
       for (const { helixItemId, arrMovie } of mapped) {
+        mappedHelixIds.push(helixItemId)
         if (!arrMovie) continue
         const externalKind = 'radarr_movie' as const
         const externalId = String(arrMovie.externalId)
@@ -116,6 +120,7 @@ export async function syncIntegration(
       result.itemsMapped = mapped.length
 
       for (const { helixItemId, arrSeries } of mapped) {
+        mappedHelixIds.push(helixItemId)
         if (!arrSeries) continue
         const externalKind = 'sonarr_series' as const
         const externalId = String(arrSeries.externalId)
@@ -168,6 +173,11 @@ export async function syncIntegration(
     }
   } catch (err: unknown) {
     result.errors.push(err instanceof Error ? err.message : String(err))
+  }
+
+  // Enqueue mapped items for background metadata enrichment
+  if (mappedHelixIds.length > 0) {
+    enrichmentQueue.enqueue(db, mappedHelixIds).catch(() => {})
   }
 
   // Update last_synced_at

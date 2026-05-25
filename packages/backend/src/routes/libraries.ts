@@ -7,6 +7,7 @@ import type { DrizzleDB } from '../db/client'
 import type { LibraryKind } from '@helix/shared'
 import { count } from 'drizzle-orm'
 import { makeRequireAdmin } from '../middleware/auth'
+import { enrichmentQueue } from '../services/enrichmentQueue'
 
 export async function libraryRoutes(
   app: FastifyInstance,
@@ -111,6 +112,8 @@ export async function libraryRoutes(
           .update(libraries)
           .set({ scan_status: 'idle', updated_at: done })
           .where(eq(libraries.id, lib.id))
+        // Enqueue newly discovered items for background enrichment
+        enrichmentQueue.enqueueLibraryItems(db, lib.id).catch(() => {})
       })
       .catch(async () => {
         const done = new Date().toISOString()
