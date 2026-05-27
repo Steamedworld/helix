@@ -12,12 +12,16 @@ import { signArtworkToken } from '../lib/signedTokens'
 function artworkUrl(
   mediaItemId: string,
   kind: 'poster' | 'backdrop',
-  hasPath: boolean,
+  pathValue: string | null | undefined,
   baseUrl: string | null | undefined,
   userId?: string
 ): string | null {
-  if (!hasPath) return null
+  if (!pathValue) return null
   const base = baseUrl ?? ''
+  if (pathValue.startsWith('remote-artwork://')) {
+    const nodeId = pathValue.slice('remote-artwork://'.length)
+    return `${base}/api/v1/nodes/${nodeId}/media/${mediaItemId}/artwork/${kind}`
+  }
   const path = `${base}/api/v1/media/${mediaItemId}/artwork/${kind}`
   if (!userId) return path
   const token = signArtworkToken(mediaItemId, kind, userId)
@@ -74,8 +78,8 @@ export async function mediaRoutes(
       ...item,
       poster_path: undefined,
       backdrop_path: undefined,
-      posterUrl: artworkUrl(item.id, 'poster', !!item.poster_path, baseUrl, user.id),
-      backdropUrl: artworkUrl(item.id, 'backdrop', !!item.backdrop_path, baseUrl, user.id),
+      posterUrl: artworkUrl(item.id, 'poster', item.poster_path, baseUrl, user.id),
+      backdropUrl: artworkUrl(item.id, 'backdrop', item.backdrop_path, baseUrl, user.id),
       kindLabel:
         item.kind === 'show'
           ? 'Show'
@@ -148,8 +152,8 @@ export async function mediaRoutes(
       ...item,
       poster_path: undefined,
       backdrop_path: undefined,
-      posterUrl: artworkUrl(item.id, 'poster', !!item.poster_path, baseUrl, user.id),
-      backdropUrl: artworkUrl(item.id, 'backdrop', !!item.backdrop_path, baseUrl, user.id),
+      posterUrl: artworkUrl(item.id, 'poster', item.poster_path, baseUrl, user.id),
+      backdropUrl: artworkUrl(item.id, 'backdrop', item.backdrop_path, baseUrl, user.id),
       versions,
       files,
       integrationLinks,

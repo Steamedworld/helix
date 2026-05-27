@@ -1,5 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { createHash, timingSafeEqual, randomBytes } from 'crypto'
+import { createReadStream, existsSync, statSync } from 'fs'
+import { extname } from 'path'
 import { eq, inArray, gt, and } from 'drizzle-orm'
 import { nodes, libraries, mediaItems, mediaVersions, mediaFiles } from '../db/schema'
 import { ok, err } from '../lib/response'
@@ -230,6 +232,74 @@ export async function federationRoutes(
       }
 
       return ok(catalogData)
+    }
+  )
+
+  // ── Artwork serving (federation token only) ───────────────────────────────────
+
+  // GET /federation/media/:id/artwork/:kind — stream local artwork to remote nodes
+  app.get<{ Params: { id: string; kind: string } }>(
+    '/media/:id/artwork/:kind',
+    { preHandler: requireFederationToken },
+    async (req, reply) => {
+      const { id, kind } = req.params
+
+      if (kind !== 'poster' && kind !== 'backdrop') {
+        reply.status(400)
+        return err('kind must be "poster" or "backdrop"')
+      }
+      const artworkKind = kind as 'poster' | 'backdrop'
+
+      // Look up the item — must belong to a local library (not an imported remote item)
+      const [item] = await db
+        .select({
+          id: mediaItems.id,
+          poster_path: mediaItems.poster_path,
+          backdrop_path: mediaItems.backdrop_path,
+        })
+        .from(mediaItems)
+        .innerJoin(libraries, eq(mediaItems.library_id, libraries.id))
+        .where(and(eq(mediaItems.id, id), eq(libraries.node_id, localNodeId)))
+
+      if (!item) {
+        reply.status(404)
+        return err('Media item not found')
+      }
+
+      const artworkPath = artworkKind === 'poster' ? item.poster_path : item.backdrop_path
+
+      if (!artworkPath || artworkPath.startsWith('remote-artwork://')) {
+        reply.status(404)
+        return err(`No ${artworkKind} artwork for this item`)
+      }
+
+      if (!existsSync(artworkPath)) {
+        reply.status(404)
+        return err('Artwork file not found on disk')
+      }
+
+      let fileSize: number
+      try {
+        const stat = statSync(artworkPath)
+        fileSize = stat.size
+      } catch {
+        reply.status(500)
+        return err('Failed to stat artwork file')
+      }
+
+      const EXT_MIME: Record<string, string> = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+      }
+      const ext = extname(artworkPath).toLowerCase()
+      const mimeType = EXT_MIME[ext] ?? 'application/octet-stream'
+
+      reply.header('Content-Type', mimeType)
+      reply.header('Content-Length', String(fileSize))
+      reply.header('Cache-Control', 'public, max-age=86400')
+
+      return reply.send(createReadStream(artworkPath))
     }
   )
 }

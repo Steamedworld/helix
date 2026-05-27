@@ -173,7 +173,7 @@ API keys are encrypted at rest with AES-256-GCM. The browser only ever sees a ma
 
 ## Federation (multi-node)
 
-Federation lets two Helix instances share catalog data so you can browse a remote node's library alongside your own. Remote items appear in search and browse views but are not yet playable (the playback-source endpoint returns a clear "remote node" message).
+Federation lets two Helix instances share catalog data so you can browse a remote node's library alongside your own. Remote items appear in search and browse views with posters and backdrops proxied transparently through the local hub. Remote files are not yet playable (the playback-source endpoint returns a clear "remote node" message).
 
 ### Security model
 
@@ -200,7 +200,6 @@ Federation lets two Helix instances share catalog data so you can browse a remot
 ### What is deferred
 
 - **Cross-node playback** — stream URLs for remote files are not yet signed; clicking play shows an informational message.
-- **Remote artwork** — poster and backdrop images from remote nodes are not proxied; the `has_poster` flag is preserved in the catalog so artwork can be added later without re-syncing.
 - **Shared authentication** — users are local to each node; no SSO or shared user database.
 - **Incremental sync** — the `?since=<unix_ms>` parameter is supported by the catalog endpoint but the UI sync button always does a full import (idempotent via upsert).
 
@@ -219,7 +218,7 @@ pnpm start            # run built backend
 
 ```bash
 cd packages/backend
-pnpm test             # run all Vitest tests (496 tests)
+pnpm test             # run all Vitest tests (518 tests)
 pnpm test -- --run tests/auth.test.ts   # run a single test file
 ```
 
@@ -347,12 +346,19 @@ The DB schema is federation-aware: every `media_file` carries a `node_id`. Remot
 | POST | `/api/v1/federation/token` | Generate (or regenerate) federation token — returns raw token once |
 | DELETE | `/api/v1/federation/token` | Revoke federation token |
 
+### Remote artwork proxy (session auth)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/nodes/:nodeId/media/:mediaId/artwork/:kind` | Proxy poster or backdrop from a remote node; requires session auth and view permission on the item's library. The remote federation token is used server-side and never sent to the browser. |
+
 ### Federation API (federation token auth)
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/v1/federation/health` | Health check (used by remote nodes to test connectivity) |
 | GET | `/api/v1/federation/catalog` | Export full catalog (`?since=<unix_ms>` for incremental) |
+| GET | `/api/v1/federation/media/:id/artwork/:kind` | Stream a local artwork file to a remote hub; accepts only items owned by this node |
 
 ### Enrichment queue (admin only)
 
@@ -387,7 +393,7 @@ The DB schema is federation-aware: every `media_file` carries a `node_id`. Remot
 - **No TVDB** — TV metadata is TMDB-only; `external_tvdb_id` is reserved in the schema for a future provider.
 - **No music enrichment** — MusicBrainz is not yet integrated.
 - **No episode still caching** — episode thumbnails are resolved from TMDB but not downloaded to disk.
-- **Remote items are not playable** — synced catalog entries appear in the UI but clicking play returns an "available on a remote node" message; cross-node playback signing is a future milestone.
+- **Remote items are not playable** — synced catalog entries appear in the UI with proxied artwork, but clicking play returns an "available on a remote node" message; cross-node playback signing is a future milestone.
 - **Permissions are library-level only** — no per-item or per-collection access control; no parental controls or age-based content filtering.
 - **Signed tokens are not revocable** — tokens are stateless JWS-like tokens; invalidating a user's access requires revoking the library permission and waiting for existing tokens to expire (default 4 h). Set `MEDIA_TOKEN_TTL_SECONDS` to a shorter value if tighter revocation is needed.
 - **No OAuth or SSO** — authentication is local username/password only.
@@ -400,8 +406,8 @@ The DB schema is federation-aware: every `media_file` carries a `node_id`. Remot
 - [x] Webhook-driven auto-sync from Arr events
 - [x] Per-library access permissions with signed stream and artwork URLs
 - [x] Federation foundation — node registration, federation token auth, catalog sync, remote items in UI
+- [x] Remote artwork proxy — poster and backdrop images from remote nodes proxied through the local hub; remote token never reaches the browser
 - [ ] Remote playback signing (cross-node stream URLs)
-- [ ] Remote artwork proxy (poster/backdrop from remote nodes)
 - [ ] Episode still image download and caching
 - [ ] MusicBrainz provider for music libraries
 - [ ] TVDB provider for alternate TV metadata

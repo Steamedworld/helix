@@ -646,12 +646,12 @@ describe('Catalog sync', () => {
     expect(libs.length).toBe(1)
     expect(libs[0].name).toBe('Remote Movies')
 
-    // Item should be imported with sentinel path
+    // Item should be imported with artwork sentinels
     const items = await db.select().from(mediaItems).where(eq(mediaItems.library_id, 'lib-remote-1'))
     expect(items.length).toBe(1)
     expect(items[0].title).toBe('Synced Movie')
-    // No local artwork paths stored
-    expect(items[0].poster_path).toBeNull()
+    // has_poster=true → sentinel; has_backdrop=false → null
+    expect(items[0].poster_path).toBe(`remote-artwork://${nodeId}`)
     expect(items[0].backdrop_path).toBeNull()
 
     // File should use sentinel path

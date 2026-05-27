@@ -88,12 +88,16 @@ export interface EpisodeDetail extends EpisodeListItem {
 function artworkUrl(
   mediaItemId: string,
   kind: 'poster' | 'backdrop',
-  hasPath: boolean,
+  pathValue: string | null | undefined,
   baseUrl: string | null | undefined,
   userId?: string
 ): string | null {
-  if (!hasPath) return null
+  if (!pathValue) return null
   const base = baseUrl ?? ''
+  if (pathValue.startsWith('remote-artwork://')) {
+    const nodeId = pathValue.slice('remote-artwork://'.length)
+    return `${base}/api/v1/nodes/${nodeId}/media/${mediaItemId}/artwork/${kind}`
+  }
   const path = `${base}/api/v1/media/${mediaItemId}/artwork/${kind}`
   if (!userId) return path
   const token = signArtworkToken(mediaItemId, kind, userId)
@@ -154,8 +158,8 @@ export async function tvRoutes(
           id: show.id,
           title: show.title,
           year: show.year,
-          posterUrl: artworkUrl(show.id, 'poster', !!show.poster_path, baseUrl, user.id),
-          backdropUrl: artworkUrl(show.id, 'backdrop', !!show.backdrop_path, baseUrl, user.id),
+          posterUrl: artworkUrl(show.id, 'poster', show.poster_path, baseUrl, user.id),
+          backdropUrl: artworkUrl(show.id, 'backdrop', show.backdrop_path, baseUrl, user.id),
           episodeCount,
           overview: show.overview,
           metadataStatus: show.metadata_status,
@@ -201,7 +205,7 @@ export async function tvRoutes(
           id: season.id,
           seasonNumber: season.season_number ?? 0,
           episodeCount: c,
-          posterUrl: artworkUrl(season.id, 'poster', !!season.poster_path, baseUrl, user.id),
+          posterUrl: artworkUrl(season.id, 'poster', season.poster_path, baseUrl, user.id),
           overview: season.overview,
         }
       })
@@ -236,8 +240,8 @@ export async function tvRoutes(
       id: show.id,
       title: show.title,
       year: show.year,
-      posterUrl: artworkUrl(show.id, 'poster', !!show.poster_path, baseUrl, user.id),
-      backdropUrl: artworkUrl(show.id, 'backdrop', !!show.backdrop_path, baseUrl, user.id),
+      posterUrl: artworkUrl(show.id, 'poster', show.poster_path, baseUrl, user.id),
+      backdropUrl: artworkUrl(show.id, 'backdrop', show.backdrop_path, baseUrl, user.id),
       overview: show.overview,
       contentRating: show.content_rating,
       metadataStatus: show.metadata_status,
@@ -348,7 +352,7 @@ export async function tvRoutes(
           id: season.id,
           seasonNumber: season.season_number ?? 0,
           episodeCount: c,
-          posterUrl: artworkUrl(season.id, 'poster', !!season.poster_path, baseUrl, user.id),
+          posterUrl: artworkUrl(season.id, 'poster', season.poster_path, baseUrl, user.id),
           overview: season.overview,
         }
       })
@@ -436,7 +440,7 @@ export async function seasonRoutes(
       episodeTitle: ep.episode_title,
       overview: ep.overview,
       runtime: ep.runtime_seconds,
-      posterUrl: artworkUrl(ep.id, 'poster', !!ep.poster_path, baseUrl, user.id),
+      posterUrl: artworkUrl(ep.id, 'poster', ep.poster_path, baseUrl, user.id),
       hasPlayableFile: playableFileSet.has(ep.id),
       watchState: watchStateMap.get(ep.id) ?? null,
     }))
@@ -541,7 +545,7 @@ export async function episodeRoutes(
       episodeTitle: episode.episode_title,
       overview: episode.overview,
       runtime: episode.runtime_seconds,
-      posterUrl: artworkUrl(episode.id, 'poster', !!episode.poster_path, baseUrl, user.id),
+      posterUrl: artworkUrl(episode.id, 'poster', episode.poster_path, baseUrl, user.id),
       hasPlayableFile: !!playableFileRow,
       showId: show.id,
       showTitle: show.title,

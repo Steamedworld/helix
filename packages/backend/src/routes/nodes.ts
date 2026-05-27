@@ -1,12 +1,13 @@
 import type { FastifyInstance } from 'fastify'
 import { eq } from 'drizzle-orm'
-import { nodes } from '../db/schema'
+import { nodes, mediaItems } from '../db/schema'
 import { ok, err } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
-import { makeRequireAdmin } from '../middleware/auth'
+import { makeRequireAdmin, makeRequireAuth } from '../middleware/auth'
 import { encryptApiKey, decryptApiKey } from '../services/integrations/encryption'
 import { checkRemoteHealth } from '../services/federation/healthCheck'
 import { syncRemoteNode } from '../services/federation/catalogSync'
+import { canViewLibrary } from '../lib/permissions'
 
 type NodeRow = typeof nodes.$inferSelect
 
@@ -25,6 +26,7 @@ export async function nodeRoutes(
 ) {
   const { db, localNodeId, dataDir } = opts
   const requireAdmin = makeRequireAdmin(db)
+  const requireAuth = makeRequireAuth(db)
 
   // GET / — list all nodes
   app.get('/', { preHandler: requireAdmin }, async () => {
@@ -227,6 +229,79 @@ export async function nodeRoutes(
         reply.status(500)
         return err(errMsg)
       }
+    }
+  )
+
+  // GET /:nodeId/media/:mediaId/artwork/:kind — proxy remote artwork to authenticated user
+  app.get<{ Params: { nodeId: string; mediaId: string; kind: string } }>(
+    '/:nodeId/media/:mediaId/artwork/:kind',
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      const { nodeId, mediaId, kind } = req.params
+
+      if (kind !== 'poster' && kind !== 'backdrop') {
+        reply.status(400)
+        return err('kind must be "poster" or "backdrop"')
+      }
+
+      const user = req.user!
+
+      // Verify user has permission to view the media item
+      const [item] = await db
+        .select({ library_id: mediaItems.library_id })
+        .from(mediaItems)
+        .where(eq(mediaItems.id, mediaId))
+
+      if (!item) {
+        reply.status(404)
+        return err('Media item not found')
+      }
+
+      if (!await canViewLibrary(user, item.library_id, db)) {
+        reply.status(404)
+        return err('Media item not found')
+      }
+
+      // Look up remote node and decrypt token
+      const [node] = await db.select().from(nodes).where(eq(nodes.id, nodeId))
+      if (!node || node.kind !== 'remote' || !node.base_url || !node.api_token_encrypted) {
+        reply.status(404)
+        return err('Remote node not found')
+      }
+
+      const rawToken = decryptApiKey(node.api_token_encrypted, dataDir)
+
+      let remoteRes: Response
+      try {
+        remoteRes = await fetch(
+          `${node.base_url}/api/v1/federation/media/${mediaId}/artwork/${kind}`,
+          {
+            headers: { Authorization: `Bearer ${rawToken}` },
+            signal: AbortSignal.timeout(15000),
+          }
+        )
+      } catch {
+        reply.status(502)
+        return err('Remote node unreachable')
+      }
+
+      if (remoteRes.status === 404) {
+        reply.status(404)
+        return err('Artwork not available on remote node')
+      }
+
+      if (!remoteRes.ok) {
+        reply.status(502)
+        return err('Remote node returned an error')
+      }
+
+      const contentType = remoteRes.headers.get('content-type') ?? 'application/octet-stream'
+      const buffer = Buffer.from(await remoteRes.arrayBuffer())
+
+      reply.header('Content-Type', contentType)
+      reply.header('Content-Length', String(buffer.length))
+      reply.header('Cache-Control', 'public, max-age=86400')
+      return reply.send(buffer)
     }
   )
 }
