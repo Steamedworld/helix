@@ -1,5 +1,5 @@
 export type NodeKind = 'local' | 'remote'
-export type NodeStatus = 'online' | 'offline' | 'unknown'
+export type NodeStatus = 'online' | 'offline' | 'unknown' | 'error'
 export type LibraryKind = 'movies' | 'tv' | 'music' | 'photos' | 'other'
 export type ScanStatus = 'idle' | 'scanning' | 'error'
 export type MediaItemKind = 'movie' | 'show' | 'season' | 'episode' | 'track' | 'album' | 'photo' | 'other'
@@ -13,6 +13,9 @@ export interface Node {
   kind: NodeKind
   base_url: string | null
   status: NodeStatus
+  last_seen_at?: number | null
+  last_sync_at?: number | null
+  last_error?: string | null
   created_at: string
   updated_at: string
 }

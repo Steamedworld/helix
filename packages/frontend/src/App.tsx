@@ -9,6 +9,7 @@ import { Shows } from './pages/Shows'
 import { ShowDetail } from './pages/ShowDetail'
 import { Settings } from './pages/Settings'
 import { Integrations } from './pages/Integrations'
+import { Nodes } from './pages/Nodes'
 import { Setup } from './pages/Setup'
 import { Login } from './pages/Login'
 import { AuthProvider, useAuth } from './context/AuthContext'
@@ -27,6 +28,7 @@ const router = createBrowserRouter([
       { path: 'shows/:id', element: <ShowDetail /> },
       { path: 'settings', element: <Settings /> },
       { path: 'integrations', element: <Integrations /> },
+      { path: 'nodes', element: <Nodes /> },
     ],
   },
 ])

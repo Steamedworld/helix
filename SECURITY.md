@@ -36,5 +36,13 @@ You should receive an acknowledgement within 72 hours and a resolution timeline 
 **Local-network scope**
 - Helix is designed for trusted local-network deployment. There is no built-in HTTPS, reverse-proxy, or remote-access hardening. Do not expose port 3001 to the public internet without a hardening layer (nginx/Caddy with TLS).
 
+**Federation tokens**
+- Each node generates a federation token (random 32 bytes → 64 hex chars) on demand. The token is hashed with SHA-256 before storage; the raw token is shown exactly once and never persisted.
+- When a consumer node stores a remote node's token, it is encrypted at rest with AES-256-GCM (same key as integration API keys). The plaintext is only decrypted in-process for health checks and catalog syncs.
+- The federation HTTP endpoints (`/api/v1/federation/health`, `/api/v1/federation/catalog`) accept only Bearer token auth. Session cookies are explicitly rejected so admin browser sessions cannot be reused by cross-origin requests.
+- Token comparison uses `timingSafeEqual` to prevent timing attacks.
+- The federation catalog export strips all local filesystem paths. Remote consumers receive `has_poster`/`has_backdrop` booleans rather than `poster_path`/`backdrop_path` strings.
+- Remote files are stored with sentinel paths (`remote://<nodeId>/<fileId>`) — no real filesystem paths from a remote node are ever written to the local database.
+
 **No telemetry**
-- Helix makes no outbound connections except to configured metadata providers (TMDB) and integrations (Radarr/Sonarr) at user direction. There is no analytics, crash reporting, or phoning home.
+- Helix makes no outbound connections except to configured metadata providers (TMDB), integrations (Radarr/Sonarr), and federated Helix nodes, all at user direction. There is no analytics, crash reporting, or phoning home.

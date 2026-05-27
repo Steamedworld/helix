@@ -7,6 +7,7 @@ import { libraryRoutes } from './routes/libraries'
 import { mediaRoutes } from './routes/media'
 import { artworkRoutes } from './routes/artwork'
 import { nodeRoutes } from './routes/nodes'
+import { federationRoutes } from './routes/federation'
 import { watchStateRoutes } from './routes/watchstate'
 import { streamRoutes } from './routes/stream'
 import { playbackRoutes } from './routes/playback'
@@ -94,7 +95,15 @@ export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string
   app.register(nodeRoutes, {
     prefix: '/api/v1/nodes',
     db,
+    localNodeId,
+    dataDir: resolvedDataDir,
   } as Parameters<typeof nodeRoutes>[1] & { prefix: string })
+  app.register(federationRoutes, {
+    prefix: '/api/v1/federation',
+    db,
+    localNodeId,
+    dataDir: resolvedDataDir,
+  } as Parameters<typeof federationRoutes>[1] & { prefix: string })
   app.register(watchStateRoutes, {
     prefix: '/api/v1/watchstate',
     db,

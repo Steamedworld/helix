@@ -5,7 +5,12 @@ export const nodes = sqliteTable('nodes', {
   name: text('name').notNull(),
   kind: text('kind', { enum: ['local', 'remote'] }).notNull().default('local'),
   base_url: text('base_url'),
-  status: text('status', { enum: ['online', 'offline', 'unknown'] }).notNull().default('unknown'),
+  status: text('status', { enum: ['online', 'offline', 'unknown', 'error'] }).notNull().default('unknown'),
+  api_token_encrypted: text('api_token_encrypted'),
+  federation_token_hash: text('federation_token_hash'),
+  last_seen_at: integer('last_seen_at'),
+  last_sync_at: integer('last_sync_at'),
+  last_error: text('last_error'),
   created_at: text('created_at').notNull(),
   updated_at: text('updated_at').notNull(),
 })

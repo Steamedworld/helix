@@ -157,6 +157,13 @@ export async function getPlaybackSource(
   // Check local files
   const localFiles = allFiles.filter((f) => f.node_id === localNodeId)
   if (localFiles.length === 0) {
+    const remoteFiles = allFiles.filter((f) => f.node_id !== localNodeId)
+    if (remoteFiles.length > 0) {
+      return {
+        unavailable: true,
+        reason: 'Available on a remote node. Remote playback is not yet implemented.',
+      }
+    }
     return { unavailable: true, reason: 'No files available on the local node' }
   }
 
