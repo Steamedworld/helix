@@ -205,24 +205,57 @@ Each node advertises what it supports via `GET /api/v1/federation/capabilities`.
 |-------|-------|---------|
 | `supportsCatalogSync` | `true` | Catalog export endpoint is available |
 | `supportsArtworkProxy` | `true` | Artwork streaming endpoint is available |
-| `supportsRemotePlayback` | `false` | Cross-node playback not yet implemented |
-| `supportedPlaybackModes` | `[]` | No remote playback modes yet |
-| `supportsSignedPlaybackUrls` | `false` | No signed stream tokens yet |
+| `supportsRemotePlayback` | `true` | Cross-node playback via signed direct URLs |
+| `supportedPlaybackModes` | `["direct"]` | Browser streams directly from the remote node |
+| `supportsSignedPlaybackUrls` | `true` | Remote node generates HMAC-signed per-file tokens |
+| `directPlaybackUrlTtlSeconds` | `14400` | Signed URL lifetime (controlled by `MEDIA_TOKEN_TTL_SECONDS`) |
+| `federationProtocolVersion` | `"1"` | Protocol version for backward compatibility checks |
 
 The playback-source endpoint (`GET /api/v1/media/:id/playback-source`) reads the cached capabilities and returns one of four codes:
 
 | Code | Meaning |
 |------|---------|
 | `local_playable` | File is local; signed stream URL included |
-| `remote_available` | Remote node supports playback (future) |
-| `remote_playback_unsupported` | File is on a remote node; playback not enabled |
+| `remote_direct` | File is on a remote node; short-lived direct stream URL returned |
+| `remote_available` | Remote node claims playback support but intent fetch failed |
+| `remote_playback_unsupported` | File is on a remote node that does not support playback |
 | `unavailable` | No source found on any node |
 
-When a file is remote the response includes `nodeName`, `nodeId`, and `nodeKind` so the UI can show "Available on Living Room — remote playback is not enabled yet."
+For `remote_direct`, the response shape is `{ source: { code, sourceType, nodeId, nodeName, streamUrl, expiresAt, mediaFileId, contentType, container } }`. The `streamUrl` is an absolute URL pointing directly to the remote node's stream endpoint — the browser fetches it without going through the hub.
+
+For `remote_playback_unsupported`, the response includes `nodeName`, `nodeId`, and `nodeKind` so the UI can show "Available on Living Room — remote playback is not supported by this node."
+
+### Federated direct playback
+
+When a remote node supports playback (i.e. `supportsRemotePlayback: true`, `supportsSignedPlaybackUrls: true`), the hub's `GET /api/v1/media/:id/playback-source` endpoint will:
+
+1. Decrypt the stored federation token server-side (never sent to the browser).
+2. POST to the remote node's `/api/v1/federation/playback-intent` with the media item ID.
+3. The remote node verifies it owns the file, generates a short-lived HMAC-signed stream URL, and returns it.
+4. The hub forwards the `{ sourceType: "remote_direct", streamUrl, expiresAt, ... }` shape to the browser.
+5. The browser's `<video>` element streams directly from the remote node using the signed URL.
+
+**Remote node reachability:** The browser must be able to reach the remote node directly (same LAN or routed network). No NAT traversal or hub-proxy is provided. If the remote node is behind a NAT, direct playback will fail — the hub will fall back to an unavailable response.
+
+**Browser and direct-play assumptions:**
+- The signed stream URL is an HTTP byte-range endpoint — all modern browsers support it natively via `<video src=...>`.
+- CORS is not required because `<video src=...>` is not a CORS-restricted fetch; the browser requests video bytes directly.
+- Only browser-native codecs are playable (H.264/AAC in MP4/MKV, WebM/VP9, etc.). No transcoding is performed.
+
+**Security model:**
+- The federation token is decrypted in-process on the hub; it never reaches the browser.
+- The remote node generates a short-lived HMAC-signed token bound to the specific file ID and a synthetic caller identity. The token cannot be used for any other file.
+- The signed URL TTL is controlled by `MEDIA_TOKEN_TTL_SECONDS` on the remote node (default 4 h).
+- No filesystem paths are exposed in any response.
+
+**Watch-state:** Progress is tracked on the hub only. The hub's `PUT /api/v1/watchstate/:mediaItemId` is called as the video plays. Watch state is never synced back to the remote node. "Continue Watching" reflects remote playback position.
 
 ### What is deferred
 
-- **Cross-node playback** — `supportsRemotePlayback` is `false` on all nodes today; a `POST /api/v1/federation/playback-intent` placeholder is in place and always returns `{ status: "unsupported" }` until the signing layer is built.
+- **Hub video proxy** — the browser streams directly from the remote node. No hub-side buffering or re-streaming.
+- **Remote transcoding** — no server-side codec conversion; only formats the browser natively supports play.
+- **NAT traversal** — direct playback requires the browser to reach the remote node. Nodes behind NAT that cannot be reached directly will show an unavailable message.
+- **Cross-node watch-state sync** — watch progress is hub-local only.
 - **Shared authentication** — users are local to each node; no SSO or shared user database.
 - **Incremental sync** — the `?since=<unix_ms>` parameter is supported by the catalog endpoint but the UI sync button always does a full import (idempotent via upsert).
 
@@ -383,7 +416,7 @@ The DB schema is federation-aware: every `media_file` carries a `node_id`. Remot
 | GET | `/api/v1/federation/capabilities` | Advertise what this node supports (catalog sync, artwork, playback) |
 | GET | `/api/v1/federation/catalog` | Export full catalog (`?since=<unix_ms>` for incremental) |
 | GET | `/api/v1/federation/media/:id/artwork/:kind` | Stream a local artwork file to a remote hub; accepts only items owned by this node |
-| POST | `/api/v1/federation/playback-intent` | Playback intent contract (placeholder; always returns `{ status: "unsupported" }`) |
+| POST | `/api/v1/federation/playback-intent` | Playback intent: verifies item ownership, generates signed stream URL; returns `{ status, mode, streamUrl, expiresAt, mediaFileId, contentType, container }` or `{ status: "unavailable" \| "unsupported" }` |
 
 ### Enrichment queue (admin only)
 
@@ -418,7 +451,8 @@ The DB schema is federation-aware: every `media_file` carries a `node_id`. Remot
 - **No TVDB** — TV metadata is TMDB-only; `external_tvdb_id` is reserved in the schema for a future provider.
 - **No music enrichment** — MusicBrainz is not yet integrated.
 - **No episode still caching** — episode thumbnails are resolved from TMDB but not downloaded to disk.
-- **Remote items are not playable** — synced catalog entries appear in the UI with proxied artwork, but clicking play returns an "available on a remote node" message; cross-node playback signing is a future milestone.
+- **Remote playback requires direct browser reachability** — the browser streams directly from the remote node; nodes behind NAT that cannot be reached by the client browser will show an unavailable message rather than playing. No hub proxy or NAT traversal is provided.
+- **No remote transcoding** — remote playback only supports direct stream (no codec conversion); only browser-native formats play.
 - **Permissions are library-level only** — no per-item or per-collection access control; no parental controls or age-based content filtering.
 - **Signed tokens are not revocable** — tokens are stateless JWS-like tokens; invalidating a user's access requires revoking the library permission and waiting for existing tokens to expire (default 4 h). Set `MEDIA_TOKEN_TTL_SECONDS` to a shorter value if tighter revocation is needed.
 - **No OAuth or SSO** — authentication is local username/password only.
@@ -433,7 +467,7 @@ The DB schema is federation-aware: every `media_file` carries a `node_id`. Remot
 - [x] Federation foundation — node registration, federation token auth, catalog sync, remote items in UI
 - [x] Remote artwork proxy — poster and backdrop images from remote nodes proxied through the local hub; remote token never reaches the browser
 - [x] Federation capability contract — capability advertisement endpoint, hub-side capability caching, structured playback-source codes, playback-intent placeholder
-- [ ] Remote playback signing (cross-node stream URLs)
+- [x] Federated direct playback signing — remote node generates HMAC-signed stream URLs; browser streams directly without hub proxy; federation token never exposed
 - [ ] Episode still image download and caching
 - [ ] MusicBrainz provider for music libraries
 - [ ] TVDB provider for alternate TV metadata

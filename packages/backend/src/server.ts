@@ -87,6 +87,7 @@ export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string
     db,
     localNodeId,
     baseUrl: baseUrl ?? null,
+    dataDir: resolvedDataDir,
   } as Parameters<typeof mediaRoutes>[1] & { prefix: string })
   app.register(artworkRoutes, {
     prefix: '/api/v1/media',

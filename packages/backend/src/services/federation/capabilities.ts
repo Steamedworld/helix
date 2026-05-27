@@ -8,6 +8,7 @@ export interface NodeCapabilities {
   supportsRemotePlayback: boolean
   supportedPlaybackModes: string[]
   supportsSignedPlaybackUrls: boolean
+  directPlaybackUrlTtlSeconds: number
 }
 
 export function makeLocalCapabilities(nodeId: string, nodeName: string): NodeCapabilities {
@@ -18,9 +19,10 @@ export function makeLocalCapabilities(nodeId: string, nodeName: string): NodeCap
     federationProtocolVersion: '1',
     supportsCatalogSync: true,
     supportsArtworkProxy: true,
-    supportsRemotePlayback: false,
-    supportedPlaybackModes: [],
-    supportsSignedPlaybackUrls: false,
+    supportsRemotePlayback: true,
+    supportedPlaybackModes: ['direct'],
+    supportsSignedPlaybackUrls: true,
+    directPlaybackUrlTtlSeconds: Number(process.env.MEDIA_TOKEN_TTL_SECONDS ?? 14400),
   }
 }
 

@@ -4,11 +4,13 @@ import type { DrizzleDB } from '../../db/client'
 import { mediaFiles, mediaVersions, nodes, mediaItems } from '../../db/schema'
 import { signStreamToken } from '../../lib/signedTokens'
 import type { NodeCapabilities } from './capabilities'
+import { decryptApiKey } from '../integrations/encryption'
 
 // ─── Discriminator codes ──────────────────────────────────────────────────────
 
 export type PlaybackCode =
   | 'local_playable'
+  | 'remote_direct'
   | 'remote_available'
   | 'remote_playback_unsupported'
   | 'unavailable'
@@ -38,8 +40,20 @@ export interface PlaybackSource {
   score: number
 }
 
+export interface RemoteDirectPlaybackSource {
+  code: 'remote_direct'
+  sourceType: 'remote_direct'
+  nodeId: string
+  nodeName: string
+  streamUrl: string
+  expiresAt: string
+  mediaFileId: string
+  contentType: string | null
+  container: string | null
+}
+
 export interface PlaybackSourceResult {
-  source: PlaybackSource
+  source: PlaybackSource | RemoteDirectPlaybackSource
   unavailable?: never
 }
 
@@ -147,6 +161,43 @@ export async function selectBestLocalSource(
   }
 }
 
+// ─── Remote direct playback intent ───────────────────────────────────────────
+
+interface PlaybackIntentResponse {
+  status: 'ready' | 'unavailable' | 'unsupported'
+  mode?: string
+  streamUrl?: string
+  expiresAt?: string
+  mediaFileId?: string
+  contentType?: string | null
+  container?: string | null
+  reason?: string
+}
+
+async function fetchRemotePlaybackIntent(
+  baseUrl: string,
+  rawToken: string,
+  mediaItemId: string
+): Promise<PlaybackIntentResponse | null> {
+  try {
+    const res = await fetch(`${baseUrl}/api/v1/federation/playback-intent`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${rawToken}`,
+      },
+      body: JSON.stringify({ mediaItemId, requestedMode: 'direct' }),
+      signal: AbortSignal.timeout(15000),
+    })
+    if (!res.ok) return null
+    const json = await res.json() as { ok: boolean; data: PlaybackIntentResponse }
+    if (!json.ok) return null
+    return json.data
+  } catch {
+    return null
+  }
+}
+
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
 export async function getPlaybackSource(
@@ -154,7 +205,8 @@ export async function getPlaybackSource(
   db: DrizzleDB,
   localNodeId: string,
   baseUrl: string | null,
-  userId?: string
+  userId?: string,
+  dataDir?: string
 ): Promise<PlaybackSourceOrUnavailable> {
   const [item] = await db
     .select({ kind: mediaItems.kind })
@@ -213,7 +265,13 @@ export async function getPlaybackSource(
       // Look up the remote node name and capabilities
       const remoteNodeId = remoteFiles[0].node_id
       const [remoteNode] = await db
-        .select({ id: nodes.id, name: nodes.name, capabilities_json: nodes.capabilities_json })
+        .select({
+          id: nodes.id,
+          name: nodes.name,
+          base_url: nodes.base_url,
+          api_token_encrypted: nodes.api_token_encrypted,
+          capabilities_json: nodes.capabilities_json,
+        })
         .from(nodes)
         .where(eq(nodes.id, remoteNodeId))
 
@@ -222,11 +280,58 @@ export async function getPlaybackSource(
         ? (() => { try { return JSON.parse(remoteNode.capabilities_json) as NodeCapabilities } catch { return null } })()
         : null
 
+      // Attempt remote direct playback if node supports it and we have a token + dataDir
+      if (
+        capabilities?.supportsRemotePlayback === true &&
+        capabilities?.supportsSignedPlaybackUrls === true &&
+        remoteNode?.base_url &&
+        remoteNode?.api_token_encrypted &&
+        dataDir
+      ) {
+        try {
+          const rawToken = decryptApiKey(remoteNode.api_token_encrypted, dataDir)
+          const intentResult = await fetchRemotePlaybackIntent(remoteNode.base_url, rawToken, mediaItemId)
+
+          if (intentResult?.status === 'ready' && intentResult.streamUrl && intentResult.expiresAt && intentResult.mediaFileId) {
+            return {
+              source: {
+                code: 'remote_direct',
+                sourceType: 'remote_direct',
+                nodeId: remoteNodeId,
+                nodeName: remoteNodeName,
+                streamUrl: intentResult.streamUrl,
+                expiresAt: intentResult.expiresAt,
+                mediaFileId: intentResult.mediaFileId,
+                contentType: intentResult.contentType ?? null,
+                container: intentResult.container ?? null,
+              },
+            }
+          }
+
+          // Remote responded but file unavailable
+          if (intentResult?.status === 'unavailable') {
+            return {
+              unavailable: true,
+              code: 'unavailable',
+              reason: `File is unavailable on ${remoteNodeName}.`,
+              nodeId: remoteNodeId,
+              nodeName: remoteNodeName,
+              nodeKind: 'remote',
+              remoteCapabilities: capabilities,
+            }
+          }
+        } catch {
+          // Remote fetch failed — fall through to unsupported response
+        }
+      }
+
       // If capabilities say remote playback is supported, mark remote_available;
       // otherwise (unknown or explicitly false) treat as remote_playback_unsupported.
       const supportsPlayback = capabilities?.supportsRemotePlayback === true
       const code: PlaybackCode = supportsPlayback ? 'remote_available' : 'remote_playback_unsupported'
-      const reason = `Available on ${remoteNodeName}. Remote playback is not enabled yet.`
+      const reason = supportsPlayback
+        ? `Remote playback from ${remoteNodeName} is temporarily unavailable.`
+        : `Available on ${remoteNodeName}. Remote playback is not supported by this node.`
 
       return {
         unavailable: true,

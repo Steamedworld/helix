@@ -3,11 +3,12 @@ import { apiFetch } from './client'
 
 export type PlaybackCode =
   | 'local_playable'
+  | 'remote_direct'
   | 'remote_available'
   | 'remote_playback_unsupported'
   | 'unavailable'
 
-export interface PlaybackSource {
+export interface LocalPlaybackSource {
   code: 'local_playable'
   nodeId: string
   nodeBaseUrl: string | null
@@ -29,6 +30,21 @@ export interface PlaybackSource {
   streamUrl: string
   score: number
 }
+
+export interface RemoteDirectPlaybackSource {
+  code: 'remote_direct'
+  sourceType: 'remote_direct'
+  nodeId: string
+  nodeName: string
+  streamUrl: string
+  expiresAt: string
+  mediaFileId: string
+  contentType: string | null
+  container: string | null
+}
+
+/** Union of all playable source shapes */
+export type PlaybackSource = LocalPlaybackSource | RemoteDirectPlaybackSource
 
 export interface PlaybackSourceAvailable {
   source: PlaybackSource

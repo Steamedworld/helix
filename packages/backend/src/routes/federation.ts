@@ -9,6 +9,22 @@ import type { DrizzleDB } from '../db/client'
 import { makeRequireAdmin } from '../middleware/auth'
 import type { FederationCatalogData } from '../services/federation/catalogSync'
 import { makeLocalCapabilities } from '../services/federation/capabilities'
+import { signStreamToken } from '../lib/signedTokens'
+
+const CONTAINER_MIME: Record<string, string> = {
+  mp4: 'video/mp4',
+  mkv: 'video/x-matroska',
+  m4v: 'video/x-m4v',
+  avi: 'video/x-msvideo',
+  mov: 'video/quicktime',
+  webm: 'video/webm',
+  mp3: 'audio/mpeg',
+  flac: 'audio/flac',
+  aac: 'audio/aac',
+  ogg: 'audio/ogg',
+  wav: 'audio/wav',
+  m4a: 'audio/mp4',
+}
 
 function hashToken(raw: string): string {
   return createHash('sha256').update(raw).digest('hex')
@@ -120,7 +136,7 @@ export async function federationRoutes(
     return ok(capabilities)
   })
 
-  // POST /federation/playback-intent — placeholder contract; always returns unsupported
+  // POST /federation/playback-intent — generate a short-lived signed stream URL for a remote caller
   app.post<{
     Body: {
       mediaItemId?: string
@@ -128,10 +144,99 @@ export async function federationRoutes(
       requestedMode?: string
       clientInfo?: unknown
     }
-  }>('/playback-intent', { preHandler: requireFederationToken }, async () => {
+  }>('/playback-intent', { preHandler: requireFederationToken }, async (req, reply) => {
+    const { mediaItemId, mediaFileId, requestedMode } = req.body ?? {}
+
+    // Only "direct" mode is supported
+    if (requestedMode && requestedMode !== 'direct') {
+      return ok({ status: 'unsupported', reason: `Mode "${requestedMode}" is not supported. Supported modes: direct.` })
+    }
+
+    // Need at least one identifier
+    if (!mediaItemId && !mediaFileId) {
+      reply.status(400)
+      return err('mediaItemId or mediaFileId is required')
+    }
+
+    // Resolve the file to stream
+    let file: typeof mediaFiles.$inferSelect | undefined
+
+    if (mediaFileId) {
+      const [row] = await db
+        .select()
+        .from(mediaFiles)
+        .where(eq(mediaFiles.id, mediaFileId))
+      file = row ?? undefined
+    } else {
+      // mediaItemId given — pick best local file (first non-missing local one)
+      const rows = await db
+        .select()
+        .from(mediaFiles)
+        .where(
+          and(
+            eq(mediaFiles.media_item_id, mediaItemId!),
+            eq(mediaFiles.node_id, localNodeId)
+          )
+        )
+      file = rows.find((f) => f.missing_at === null && existsSync(f.path))
+    }
+
+    if (!file) {
+      return ok({ status: 'unavailable', reason: 'file_missing' })
+    }
+
+    // Confirm file belongs to this (local) node — reject imported/sentinel remote items
+    if (file.node_id !== localNodeId) {
+      reply.status(400)
+      return err('Requested item does not belong to this node')
+    }
+
+    // Confirm it is a real path (not a sentinel)
+    if (file.path.startsWith('remote://')) {
+      reply.status(400)
+      return err('Requested item is a remote sentinel record, not a local file')
+    }
+
+    // Confirm file exists on disk and is not stale
+    if (file.missing_at !== null || !existsSync(file.path)) {
+      return ok({ status: 'unavailable', reason: 'file_missing' })
+    }
+
+    // Look up the version for content-type metadata
+    const [version] = await db
+      .select({ container: mediaVersions.container })
+      .from(mediaVersions)
+      .where(eq(mediaVersions.id, file.media_version_id))
+
+    // Generate signed stream URL — use a synthetic federation caller ID so the token
+    // is scoped to this specific file request and cannot be reused for other files.
+    const federationCallerId = `federation-caller:${localNodeId}`
+    const token = signStreamToken(file.id, federationCallerId)
+
+    // Build stream URL — we need the node's own base URL to produce an absolute URL.
+    // Use the BASE_URL env var if set; fall back to a localhost default that the
+    // deployment operator must override for cross-node reachability.
+    const nodeBaseUrl = process.env.BASE_URL ?? process.env.PUBLIC_URL ?? 'http://localhost:3001'
+    const streamUrl = `${nodeBaseUrl}/api/v1/media-files/${file.id}/stream?token=${token}`
+
+    const ttlSeconds = Number(process.env.MEDIA_TOKEN_TTL_SECONDS ?? 14400)
+    const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString()
+
+    // CORS note: the browser will make a cross-origin request to this node's stream URL.
+    // The stream endpoint already sends Accept-Ranges and standard headers; no additional
+    // CORS config is needed on the stream endpoint itself because the browser fetches it
+    // via the <video> src attribute (not a fetch() call), which is not subject to CORS.
+
     return ok({
-      status: 'unsupported',
-      reason: 'Remote playback is not implemented yet.',
+      status: 'ready',
+      mode: 'direct',
+      streamUrl,
+      expiresAt,
+      mediaFileId: file.id,
+      contentType: version?.container
+        ? (CONTAINER_MIME[version.container.toLowerCase()] ?? null)
+        : null,
+      container: version?.container ?? null,
     })
   })
 

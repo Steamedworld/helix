@@ -30,9 +30,9 @@ function artworkUrl(
 
 export async function mediaRoutes(
   app: FastifyInstance,
-  opts: { db: DrizzleDB; localNodeId?: string; baseUrl?: string | null }
+  opts: { db: DrizzleDB; localNodeId?: string; baseUrl?: string | null; dataDir?: string }
 ) {
-  const { db, localNodeId, baseUrl } = opts
+  const { db, localNodeId, baseUrl, dataDir } = opts
   const requireAuth = makeRequireAuth(db)
 
   // GET /media
@@ -236,7 +236,7 @@ export async function mediaRoutes(
       return err('Playback not permitted for this library')
     }
 
-    const result = await getPlaybackSource(req.params.id, db, localNodeId, baseUrl ?? null, user.id)
+    const result = await getPlaybackSource(req.params.id, db, localNodeId, baseUrl ?? null, user.id, dataDir)
     return ok(result)
   })
 }

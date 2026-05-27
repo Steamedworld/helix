@@ -10,7 +10,7 @@ import {
 import { searchMetadata, matchMetadata, refreshMetadata } from '../api/metadata'
 import { getNextEpisode } from '../api/tv'
 import type { MediaItemDetail } from '../api/media'
-import type { PlaybackSource, PlaybackCode } from '../api/playback'
+import type { PlaybackSource, PlaybackCode, LocalPlaybackSource, RemoteDirectPlaybackSource } from '../api/playback'
 import type { MetadataCandidate } from '../api/metadata'
 import type { PlayableEpisode } from '../api/tv'
 import type { WatchState } from '@helix/shared'
@@ -163,6 +163,14 @@ interface PlayerProps {
   onEpisodeEnded?: (nextEpisode: PlayableEpisode | null, showFinished: boolean) => void
 }
 
+function isLocalSource(source: PlaybackSource): source is LocalPlaybackSource {
+  return source.code === 'local_playable'
+}
+
+function isRemoteDirectSource(source: PlaybackSource): source is RemoteDirectPlaybackSource {
+  return source.code === 'remote_direct'
+}
+
 function DirectPlayer({
   source,
   mediaItemId,
@@ -176,15 +184,20 @@ function DirectPlayer({
   const lastSavedRef = useRef<number>(0)
   const durationRef = useRef<number | null>(null)
 
-  // Create session on mount
+  // For local sources, create a playback session. Remote direct sessions are hub-only
+  // (watch state is tracked here on the hub; we do not sync back to the remote node).
   useEffect(() => {
-    createPlaybackSession({
-      media_item_id: mediaItemId,
-      media_version_id: source.versionId,
-      media_file_id: source.fileId,
-    }).then((res) => {
-      if (res.ok) sessionIdRef.current = res.data.id
-    })
+    if (isLocalSource(source)) {
+      createPlaybackSession({
+        media_item_id: mediaItemId,
+        media_version_id: source.versionId,
+        media_file_id: source.fileId,
+      }).then((res) => {
+        if (res.ok) sessionIdRef.current = res.data.id
+      })
+    }
+    // Note: for remote_direct, no playback session is created because we don't have
+    // a local mediaFile record. Watch state is still tracked via upsertWatchState below.
 
     // Cleanup: mark session stopped on unmount
     return () => {
@@ -192,7 +205,8 @@ function DirectPlayer({
         updatePlaybackSession(sessionIdRef.current, { state: 'stopped' })
       }
     }
-  }, [mediaItemId, source.fileId, source.versionId])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mediaItemId, isLocalSource(source) ? source.fileId : '', isLocalSource(source) ? source.versionId : ''])
 
   // Seek to saved position once video is ready
   useEffect(() => {
@@ -311,14 +325,44 @@ function DirectPlayer({
           padding: '0 4px',
         }}
       >
-        <span style={{ color: 'var(--accent)', fontWeight: 500 }}>Direct Play from {source.nodeName}.</span>
-        <span>{source.filename}</span>
-        {source.quality_label && <span>{source.quality_label}</span>}
-        {formatResolution(source.resolution_width, source.resolution_height) && (
-          <span>{formatResolution(source.resolution_width, source.resolution_height)}</span>
+        {isRemoteDirectSource(source) ? (
+          <>
+            <span style={{ color: 'var(--accent)', fontWeight: 500 }}>
+              Direct Play from {source.nodeName}
+            </span>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '2px 8px',
+                background: 'rgba(100,120,200,0.10)',
+                border: '1px solid rgba(100,120,200,0.25)',
+                borderRadius: 10,
+                fontSize: 11,
+                color: 'var(--ink-3)',
+              }}
+            >
+              <span style={{ opacity: 0.6, fontSize: 9 }}>⬡</span>
+              {source.nodeName}
+            </span>
+            {source.container && <span>{source.container.toUpperCase()}</span>}
+            <span style={{ opacity: 0.5, fontSize: 11 }}>
+              Expires {new Date(source.expiresAt).toLocaleTimeString()}
+            </span>
+          </>
+        ) : (
+          <>
+            <span style={{ color: 'var(--accent)', fontWeight: 500 }}>Direct Play from {source.nodeName}.</span>
+            <span>{source.filename}</span>
+            {source.quality_label && <span>{source.quality_label}</span>}
+            {formatResolution(source.resolution_width, source.resolution_height) && (
+              <span>{formatResolution(source.resolution_width, source.resolution_height)}</span>
+            )}
+            {source.container && <span>{source.container.toUpperCase()}</span>}
+            {source.video_codec && <span>{source.video_codec}</span>}
+          </>
         )}
-        {source.container && <span>{source.container.toUpperCase()}</span>}
-        {source.video_codec && <span>{source.video_codec}</span>}
       </div>
     </div>
   )
@@ -388,7 +432,7 @@ function PlayerUnavailable({ reason, code, nodeName, isMissing }: PlayerUnavaila
             Available on {nodeName ?? 'a remote node'}.
           </p>
           <p style={{ fontSize: 12, color: 'var(--ink-3)', textAlign: 'center' }}>
-            Remote playback is not enabled yet.
+            Remote playback is not supported by this node.
           </p>
         </div>
       </div>

@@ -100,10 +100,12 @@ describe('GET /api/v1/federation/capabilities', () => {
     expect(typeof caps.federationProtocolVersion).toBe('string')
     expect(caps.supportsCatalogSync).toBe(true)
     expect(caps.supportsArtworkProxy).toBe(true)
-    expect(caps.supportsRemotePlayback).toBe(false)
+    expect(caps.supportsRemotePlayback).toBe(true)
     expect(Array.isArray(caps.supportedPlaybackModes)).toBe(true)
-    expect(caps.supportedPlaybackModes).toHaveLength(0)
-    expect(caps.supportsSignedPlaybackUrls).toBe(false)
+    expect(caps.supportedPlaybackModes).toContain('direct')
+    expect(caps.supportsSignedPlaybackUrls).toBe(true)
+    expect(typeof caps.directPlaybackUrlTtlSeconds).toBe('number')
+    expect(caps.directPlaybackUrlTtlSeconds).toBeGreaterThan(0)
   })
 })
 
@@ -154,12 +156,26 @@ describe('POST /api/v1/federation/playback-intent', () => {
     expect(res.statusCode).toBe(401)
   })
 
-  it('valid token → 200 with unsupported status', async () => {
+  it('valid token with unknown item → 200 with unavailable status (file not found)', async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/federation/playback-intent',
       headers: { Authorization: `Bearer ${rawToken}` },
-      payload: { mediaItemId: 'some-id', requestedMode: 'direct' },
+      payload: { mediaItemId: 'some-nonexistent-id', requestedMode: 'direct' },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.ok).toBe(true)
+    expect(body.data.status).toBe('unavailable')
+    expect(body.data.reason).toBe('file_missing')
+  })
+
+  it('valid token with unsupported mode → 200 with unsupported status', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/federation/playback-intent',
+      headers: { Authorization: `Bearer ${rawToken}` },
+      payload: { mediaItemId: 'some-id', requestedMode: 'transcode' },
     })
     expect(res.statusCode).toBe(200)
     const body = JSON.parse(res.body)
@@ -169,15 +185,13 @@ describe('POST /api/v1/federation/playback-intent', () => {
     expect(body.data.reason.length).toBeGreaterThan(0)
   })
 
-  it('valid token with no body → 200 unsupported', async () => {
+  it('valid token with no body → 400 (missing required identifiers)', async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/federation/playback-intent',
       headers: { Authorization: `Bearer ${rawToken}` },
     })
-    expect(res.statusCode).toBe(200)
-    const body = JSON.parse(res.body)
-    expect(body.data.status).toBe('unsupported')
+    expect(res.statusCode).toBe(400)
   })
 })
 
@@ -225,6 +239,7 @@ describe('Node test — stores capabilities when remote returns them', () => {
       supportsRemotePlayback: false,
       supportedPlaybackModes: [],
       supportsSignedPlaybackUrls: false,
+      directPlaybackUrlTtlSeconds: 14400,
     }
 
     vi.stubGlobal('fetch', vi.fn()
@@ -308,6 +323,7 @@ describe('Node test — stores capabilities when remote returns them', () => {
       supportsRemotePlayback: false,
       supportedPlaybackModes: [],
       supportsSignedPlaybackUrls: false,
+      directPlaybackUrlTtlSeconds: 14400,
     }
     await db.update(nodes).set({ capabilities_json: JSON.stringify(caps) }).where(eq(nodes.id, nodeId))
 
@@ -679,6 +695,7 @@ describe('Node sync — capabilities fetched alongside catalog', () => {
       federationProtocolVersion: '1', supportsCatalogSync: true,
       supportsArtworkProxy: true, supportsRemotePlayback: false,
       supportedPlaybackModes: [], supportsSignedPlaybackUrls: false,
+      directPlaybackUrlTtlSeconds: 14400,
     }
 
     const emptyCatalog = {
