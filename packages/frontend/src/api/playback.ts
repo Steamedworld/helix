@@ -41,6 +41,9 @@ export interface RemoteDirectPlaybackSource {
   mediaFileId: string
   contentType: string | null
   container: string | null
+  /** Informational warning — does not block playback. Present when the stream URL
+   *  points to a loopback address that remote browsers may not be able to reach. */
+  warning?: string
 }
 
 /** Union of all playable source shapes */

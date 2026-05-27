@@ -88,6 +88,8 @@ async function insertRemoteSetup(
     supportedPlaybackModes: ['direct'],
     supportsSignedPlaybackUrls: true,
     directPlaybackUrlTtlSeconds: 14400,
+    baseUrlConfigured: false,
+    directPlaybackRequiresBrowserReachability: true,
     ...opts.nodeCaps,
   }
 

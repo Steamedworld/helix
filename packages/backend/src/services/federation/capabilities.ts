@@ -1,3 +1,5 @@
+import { config, isLoopbackUrl } from '../../config'
+
 export interface NodeCapabilities {
   nodeId: string
   nodeName: string
@@ -9,9 +11,21 @@ export interface NodeCapabilities {
   supportedPlaybackModes: string[]
   supportsSignedPlaybackUrls: boolean
   directPlaybackUrlTtlSeconds: number
+
+  // BASE_URL diagnostics — added in phase 19
+  // Tells remote hubs whether this node has a reachable public base URL configured.
+  // Safe to expose: not a secret, just a deployment-state indicator.
+  baseUrlConfigured: boolean
+  publicBaseUrl?: string
+  // Documentation flag: direct playback requires the browser to reach this node directly.
+  directPlaybackRequiresBrowserReachability: true
 }
 
 export function makeLocalCapabilities(nodeId: string, nodeName: string): NodeCapabilities {
+  // baseUrlConfigured is true only when BASE_URL is explicitly set AND is not a loopback address.
+  const baseUrl = config.baseUrl ?? null
+  const baseUrlConfigured = baseUrl !== null && !isLoopbackUrl(baseUrl)
+
   return {
     nodeId,
     nodeName,
@@ -23,6 +37,9 @@ export function makeLocalCapabilities(nodeId: string, nodeName: string): NodeCap
     supportedPlaybackModes: ['direct'],
     supportsSignedPlaybackUrls: true,
     directPlaybackUrlTtlSeconds: Number(process.env.MEDIA_TOKEN_TTL_SECONDS ?? 14400),
+    baseUrlConfigured,
+    publicBaseUrl: baseUrl ?? undefined,
+    directPlaybackRequiresBrowserReachability: true,
   }
 }
 

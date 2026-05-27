@@ -10,6 +10,7 @@ import { makeRequireAdmin } from '../middleware/auth'
 import type { FederationCatalogData } from '../services/federation/catalogSync'
 import { makeLocalCapabilities } from '../services/federation/capabilities'
 import { signStreamToken } from '../lib/signedTokens'
+import { config } from '../config'
 
 const CONTAINER_MIME: Record<string, string> = {
   mp4: 'video/mp4',
@@ -63,7 +64,7 @@ function makeRequireFederationToken(db: DrizzleDB, localNodeId: string) {
 
 export async function federationRoutes(
   app: FastifyInstance,
-  opts: { db: DrizzleDB; localNodeId: string; dataDir: string }
+  opts: { db: DrizzleDB; localNodeId: string; dataDir: string; baseUrl?: string | null }
 ) {
   const { db, localNodeId } = opts
   const requireAdmin = makeRequireAdmin(db)
@@ -214,9 +215,13 @@ export async function federationRoutes(
     const token = signStreamToken(file.id, federationCallerId)
 
     // Build stream URL — we need the node's own base URL to produce an absolute URL.
-    // Use the BASE_URL env var if set; fall back to a localhost default that the
-    // deployment operator must override for cross-node reachability.
-    const nodeBaseUrl = process.env.BASE_URL ?? process.env.PUBLIC_URL ?? 'http://localhost:3001'
+    // Use the BASE_URL / PUBLIC_URL env var if set (via config); fall back to a
+    // localhost default. The caller should set BASE_URL to the URL browsers use to
+    // reach this server — otherwise remote direct playback will only work on localhost.
+    const nodeBaseUrl =
+      opts.baseUrl ??
+      config.baseUrl ??
+      `http://localhost:${config.port}`
     const streamUrl = `${nodeBaseUrl}/api/v1/media-files/${file.id}/stream?token=${token}`
 
     const ttlSeconds = Number(process.env.MEDIA_TOKEN_TTL_SECONDS ?? 14400)

@@ -351,7 +351,7 @@ function DirectPlayer({
               Expires {new Date(source.expiresAt).toLocaleTimeString()}
             </span>
           </>
-        ) : (
+        ) : isLocalSource(source) ? (
           <>
             <span style={{ color: 'var(--accent)', fontWeight: 500 }}>Direct Play from {source.nodeName}.</span>
             <span>{source.filename}</span>
@@ -362,8 +362,22 @@ function DirectPlayer({
             {source.container && <span>{source.container.toUpperCase()}</span>}
             {source.video_codec && <span>{source.video_codec}</span>}
           </>
-        )}
+        ) : null}
       </div>
+      {/* Informational warning for remote streams pointing to loopback */}
+      {isRemoteDirectSource(source) && source.warning && (
+        <div
+          style={{
+            fontSize: 12,
+            color: 'var(--ink-4)',
+            padding: '4px 4px 0',
+            opacity: 0.8,
+            lineHeight: 1.5,
+          }}
+        >
+          {source.warning}
+        </div>
+      )}
     </div>
   )
 }

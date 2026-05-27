@@ -5,6 +5,7 @@ import { mediaFiles, mediaVersions, nodes, mediaItems } from '../../db/schema'
 import { signStreamToken } from '../../lib/signedTokens'
 import type { NodeCapabilities } from './capabilities'
 import { decryptApiKey } from '../integrations/encryption'
+import { isLoopbackUrl } from '../../config'
 
 // ─── Discriminator codes ──────────────────────────────────────────────────────
 
@@ -50,6 +51,9 @@ export interface RemoteDirectPlaybackSource {
   mediaFileId: string
   contentType: string | null
   container: string | null
+  /** Informational warning — does not block playback. Present when the stream URL
+   *  points to a loopback address that remote browsers may not be able to reach. */
+  warning?: string
 }
 
 export interface PlaybackSourceResult {
@@ -293,6 +297,16 @@ export async function getPlaybackSource(
           const intentResult = await fetchRemotePlaybackIntent(remoteNode.base_url, rawToken, mediaItemId)
 
           if (intentResult?.status === 'ready' && intentResult.streamUrl && intentResult.expiresAt && intentResult.mediaFileId) {
+            // Warn if the stream URL returned by the remote node is a loopback address —
+            // this means the remote node did not configure BASE_URL and direct playback
+            // will only work if the browser is on the same machine as the remote node.
+            let streamWarning: string | undefined
+            if (isLoopbackUrl(intentResult.streamUrl)) {
+              streamWarning =
+                `Remote node stream URL points to localhost. Direct playback will only work ` +
+                `if your browser is on the same machine as the remote node (${remoteNodeName}).`
+            }
+
             return {
               source: {
                 code: 'remote_direct',
@@ -304,6 +318,7 @@ export async function getPlaybackSource(
                 mediaFileId: intentResult.mediaFileId,
                 contentType: intentResult.contentType ?? null,
                 container: intentResult.container ?? null,
+                ...(streamWarning ? { warning: streamWarning } : {}),
               },
             }
           }

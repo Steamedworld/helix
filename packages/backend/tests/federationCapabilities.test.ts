@@ -240,6 +240,8 @@ describe('Node test — stores capabilities when remote returns them', () => {
       supportedPlaybackModes: [],
       supportsSignedPlaybackUrls: false,
       directPlaybackUrlTtlSeconds: 14400,
+      baseUrlConfigured: false,
+      directPlaybackRequiresBrowserReachability: true,
     }
 
     vi.stubGlobal('fetch', vi.fn()
@@ -324,6 +326,8 @@ describe('Node test — stores capabilities when remote returns them', () => {
       supportedPlaybackModes: [],
       supportsSignedPlaybackUrls: false,
       directPlaybackUrlTtlSeconds: 14400,
+      baseUrlConfigured: false,
+      directPlaybackRequiresBrowserReachability: true,
     }
     await db.update(nodes).set({ capabilities_json: JSON.stringify(caps) }).where(eq(nodes.id, nodeId))
 
@@ -696,6 +700,8 @@ describe('Node sync — capabilities fetched alongside catalog', () => {
       supportsArtworkProxy: true, supportsRemotePlayback: false,
       supportedPlaybackModes: [], supportsSignedPlaybackUrls: false,
       directPlaybackUrlTtlSeconds: 14400,
+      baseUrlConfigured: false,
+      directPlaybackRequiresBrowserReachability: true,
     }
 
     const emptyCatalog = {

@@ -3,6 +3,7 @@ import cors from '@fastify/cors'
 import cookie from '@fastify/cookie'
 import { config } from './config'
 import { healthRoutes } from './routes/health'
+import { configRoutes } from './routes/config'
 import { libraryRoutes } from './routes/libraries'
 import { mediaRoutes } from './routes/media'
 import { artworkRoutes } from './routes/artwork'
@@ -65,6 +66,7 @@ export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string
 
   // Routes
   app.register(healthRoutes, { prefix: '/api/v1' })
+  app.register(configRoutes, { prefix: '/api/v1' })
 
   // Auth routes
   app.register(authRoutes, {
@@ -104,6 +106,7 @@ export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string
     db,
     localNodeId,
     dataDir: resolvedDataDir,
+    baseUrl: baseUrl ?? null,
   } as Parameters<typeof federationRoutes>[1] & { prefix: string })
   app.register(watchStateRoutes, {
     prefix: '/api/v1/watchstate',

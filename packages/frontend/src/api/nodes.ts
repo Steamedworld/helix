@@ -1,5 +1,21 @@
 import { apiFetch } from './client'
 
+export interface NodeCapabilities {
+  nodeId: string
+  nodeName: string
+  version: string
+  federationProtocolVersion: string
+  supportsCatalogSync: boolean
+  supportsArtworkProxy: boolean
+  supportsRemotePlayback: boolean
+  supportedPlaybackModes: string[]
+  supportsSignedPlaybackUrls: boolean
+  directPlaybackUrlTtlSeconds: number
+  baseUrlConfigured: boolean
+  publicBaseUrl?: string
+  directPlaybackRequiresBrowserReachability: true
+}
+
 export interface NodeRecord {
   id: string
   name: string
@@ -10,8 +26,17 @@ export interface NodeRecord {
   last_sync_at: number | null
   last_error: string | null
   has_federation_token: boolean
+  capabilities: NodeCapabilities | null
   created_at: string
   updated_at: string
+}
+
+export interface DirectPlaybackDiagnostic {
+  directPlaybackAvailable: boolean
+  supportsRemotePlayback: boolean
+  baseUrlConfigured: boolean
+  publicBaseUrl: string | null
+  warning?: string
 }
 
 export function listNodes() {
@@ -49,6 +74,10 @@ export function testNode(id: string) {
   return apiFetch<{ online: boolean; error?: string }>(`/api/v1/nodes/${id}/test`, {
     method: 'POST',
   })
+}
+
+export function checkNodePlayback(id: string) {
+  return apiFetch<DirectPlaybackDiagnostic>(`/api/v1/nodes/${id}/check`)
 }
 
 export function syncNode(id: string) {

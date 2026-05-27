@@ -10,7 +10,7 @@ import {
   generateFederationToken,
   revokeFederationToken,
 } from '../api/nodes'
-import type { NodeRecord } from '../api/nodes'
+import type { NodeRecord, NodeCapabilities } from '../api/nodes'
 
 // ─── Status chip ──────────────────────────────────────────────────────────────
 
@@ -59,6 +59,48 @@ function RelativeTime({ ts }: { ts: number | null }) {
       {d.toLocaleString()}
     </span>
   )
+}
+
+// ─── Direct playback status ───────────────────────────────────────────────────
+
+function DirectPlaybackStatus({ capabilities }: { capabilities: NodeCapabilities | null }) {
+  if (!capabilities) {
+    return (
+      <span className="chip chip-ghost" title="Run Test or Sync to fetch capabilities">
+        Unknown
+      </span>
+    )
+  }
+  if (!capabilities.supportsRemotePlayback) {
+    return (
+      <span
+        className="chip"
+        style={{
+          background: 'oklch(0.70 0.13 25 / 0.10)',
+          borderColor: 'oklch(0.70 0.13 25 / 0.35)',
+          color: 'var(--bad)',
+        }}
+      >
+        Not supported
+      </span>
+    )
+  }
+  if (!capabilities.baseUrlConfigured) {
+    return (
+      <span
+        className="chip"
+        style={{
+          background: 'oklch(0.78 0.14 65 / 0.12)',
+          borderColor: 'oklch(0.78 0.14 65 / 0.35)',
+          color: '#e6a817',
+        }}
+        title="Remote node BASE_URL is not set or is localhost — direct playback may fail for remote browsers"
+      >
+        ⚠ Needs BASE_URL
+      </span>
+    )
+  }
+  return <span className="chip chip-accent">Ready</span>
 }
 
 // ─── Add node form ────────────────────────────────────────────────────────────
@@ -385,7 +427,29 @@ function RemoteNodeRow({ node, onDeleted, onUpdated }: NodeRowProps) {
       <div style={{ display: 'flex', gap: 24, fontSize: 12, color: 'var(--ink-4)' }}>
         <span>Last seen: <RelativeTime ts={node.last_seen_at} /></span>
         <span>Last sync: <RelativeTime ts={node.last_sync_at} /></span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          Direct Play: <DirectPlaybackStatus capabilities={node.capabilities ?? null} />
+        </span>
       </div>
+
+      {/* BASE_URL warning for direct playback */}
+      {node.capabilities?.supportsRemotePlayback && !node.capabilities.baseUrlConfigured && (
+        <div
+          style={{
+            fontSize: 12,
+            color: '#e6a817',
+            background: 'oklch(0.78 0.14 65 / 0.07)',
+            border: '1px solid oklch(0.78 0.14 65 / 0.25)',
+            borderRadius: 'var(--r-1)',
+            padding: '6px 10px',
+            lineHeight: 1.5,
+          }}
+        >
+          <strong>Direct playback:</strong> this node has not configured <code>BASE_URL</code>.
+          Stream URLs will default to <code>localhost</code> and may not be reachable from your browser.
+          Set <code>BASE_URL=http://&lt;host&gt;:&lt;port&gt;</code> on the remote node.
+        </div>
+      )}
 
       {node.last_error && (
         <div style={{ fontSize: 12, color: 'var(--bad)' }}>{node.last_error}</div>
@@ -525,6 +589,25 @@ export function Nodes() {
             ))}
           </div>
         )}
+
+        {/* Direct playback explainer */}
+        <div
+          className="surface"
+          style={{
+            marginTop: 12,
+            padding: '12px 16px',
+            background: 'var(--bg-3)',
+            fontSize: 12,
+            color: 'var(--ink-3)',
+            lineHeight: 1.6,
+          }}
+        >
+          <strong style={{ color: 'var(--ink-2)' }}>Direct playback</strong> streams media from the
+          remote node directly to your browser — Helix does not relay or transcode.{' '}
+          Set <code>BASE_URL=http://&lt;host&gt;:&lt;port&gt;</code> on each node to a URL your
+          browser can reach. For LAN use: <code>http://media-box.local:3001</code>. For remote
+          access you need a reverse proxy or VPN — Helix does not provide relay or NAT traversal.
+        </div>
       </div>
     </div>
   )

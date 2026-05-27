@@ -8,7 +8,8 @@ import { encryptApiKey, decryptApiKey } from '../services/integrations/encryptio
 import { checkRemoteHealth } from '../services/federation/healthCheck'
 import { syncRemoteNode } from '../services/federation/catalogSync'
 import { canViewLibrary } from '../lib/permissions'
-import { fetchRemoteCapabilities } from '../services/federation/capabilities'
+import { fetchRemoteCapabilities, type NodeCapabilities } from '../services/federation/capabilities'
+import { isLoopbackUrl } from '../config'
 
 type NodeRow = typeof nodes.$inferSelect
 
@@ -22,6 +23,67 @@ function sanitizeNode(node: NodeRow) {
     has_federation_token:
       node.kind === 'local' ? !!node.federation_token_hash : !!node.api_token_encrypted,
     capabilities,
+  }
+}
+
+// ─── Direct playback diagnostic ───────────────────────────────────────────────
+
+export interface DirectPlaybackDiagnostic {
+  directPlaybackAvailable: boolean
+  supportsRemotePlayback: boolean
+  baseUrlConfigured: boolean
+  publicBaseUrl: string | null
+  warning?: string
+}
+
+function buildDirectPlaybackDiagnostic(
+  capabilities: NodeCapabilities | null,
+  remoteBaseUrl: string
+): DirectPlaybackDiagnostic {
+  if (!capabilities) {
+    return {
+      directPlaybackAvailable: false,
+      supportsRemotePlayback: false,
+      baseUrlConfigured: false,
+      publicBaseUrl: null,
+      warning: 'Remote node capabilities are unknown. Run Test or Sync to fetch them.',
+    }
+  }
+
+  const supportsRemotePlayback = capabilities.supportsRemotePlayback === true
+  const baseUrlConfigured = capabilities.baseUrlConfigured === true
+  const publicBaseUrl = capabilities.publicBaseUrl ?? null
+
+  if (!supportsRemotePlayback) {
+    return {
+      directPlaybackAvailable: false,
+      supportsRemotePlayback: false,
+      baseUrlConfigured,
+      publicBaseUrl,
+      warning: 'Remote node does not support direct playback.',
+    }
+  }
+
+  // Check if public base URL points to a loopback address
+  const effectiveStreamHost = publicBaseUrl ?? remoteBaseUrl
+  if (!baseUrlConfigured || isLoopbackUrl(effectiveStreamHost)) {
+    const loopbackAddr = publicBaseUrl ?? remoteBaseUrl
+    return {
+      directPlaybackAvailable: true,
+      supportsRemotePlayback: true,
+      baseUrlConfigured: false,
+      publicBaseUrl,
+      warning:
+        `Remote node BASE_URL is not configured or is a loopback address.` +
+        ` Direct playback may fail unless your browser is on the same machine as the remote node (${loopbackAddr}).`,
+    }
+  }
+
+  return {
+    directPlaybackAvailable: true,
+    supportsRemotePlayback: true,
+    baseUrlConfigured: true,
+    publicBaseUrl,
   }
 }
 
@@ -235,6 +297,48 @@ export async function nodeRoutes(
         reply.status(500)
         return err(errMsg)
       }
+    }
+  )
+
+  // GET /:id/check — fetch and evaluate direct-playback readiness for a remote node
+  app.get<{ Params: { id: string } }>(
+    '/:id/check',
+    { preHandler: requireAdmin },
+    async (req, reply) => {
+      const [node] = await db.select().from(nodes).where(eq(nodes.id, req.params.id))
+      if (!node) {
+        reply.status(404)
+        return err('Node not found')
+      }
+      if (node.kind === 'local') {
+        reply.status(400)
+        return err('Cannot check the local node')
+      }
+      if (!node.base_url || !node.api_token_encrypted) {
+        reply.status(400)
+        return err('Node is missing base_url or api_token')
+      }
+
+      // Use cached capabilities if available (from last test/sync); optionally
+      // refresh by passing ?refresh=1. This avoids a slow network call on every load.
+      let capabilities: NodeCapabilities | null = node.capabilities_json
+        ? (() => { try { return JSON.parse(node.capabilities_json) as NodeCapabilities } catch { return null } })()
+        : null
+
+      if (!capabilities) {
+        // No cached capabilities — try to fetch them now
+        const rawToken = decryptApiKey(node.api_token_encrypted, dataDir)
+        capabilities = await fetchRemoteCapabilities(node.base_url, rawToken)
+        if (capabilities) {
+          await db
+            .update(nodes)
+            .set({ capabilities_json: JSON.stringify(capabilities), updated_at: new Date().toISOString() })
+            .where(eq(nodes.id, node.id))
+        }
+      }
+
+      const diagnostic = buildDirectPlaybackDiagnostic(capabilities, node.base_url)
+      return ok(diagnostic)
     }
   )
 

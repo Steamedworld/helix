@@ -1,15 +1,21 @@
 import { useEffect, useState } from 'react'
 import { listProviders } from '../api/metadata'
+import { getServerConfig } from '../api/config'
 import type { ProviderInfo } from '../api/metadata'
+import type { ServerConfig } from '../api/config'
 
 export function Settings() {
   const [providers, setProviders] = useState<ProviderInfo[] | null>(null)
   const [loading, setLoading] = useState(true)
+  const [serverConfig, setServerConfig] = useState<ServerConfig | null>(null)
 
   useEffect(() => {
     listProviders().then((res) => {
       if (res.ok) setProviders(res.data.providers)
       setLoading(false)
+    })
+    getServerConfig().then((res) => {
+      if (res.ok) setServerConfig(res.data)
     })
   }, [])
 
@@ -27,6 +33,80 @@ export function Settings() {
           Helix configuration and provider status.
         </p>
       </div>
+
+      {/* Node base URL */}
+      <section>
+        <h2 className="display" style={{ fontSize: 28, lineHeight: 1.1, marginBottom: 4 }}>
+          Node Base URL
+        </h2>
+        <p style={{ fontSize: 13, color: 'var(--ink-3)', marginBottom: 16, lineHeight: 1.6 }}>
+          The public URL of this Helix instance, used when generating direct-playback stream URLs for federation.
+          Set this so remote browsers can reach your media files.
+        </p>
+
+        <div
+          className="surface"
+          style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 13, color: 'var(--ink-2)', fontWeight: 500, minWidth: 120 }}>
+              BASE_URL
+            </span>
+            {serverConfig ? (
+              serverConfig.baseUrlConfigured ? (
+                <span style={{ fontSize: 13, color: 'var(--ok)', fontFamily: 'var(--font-mono)' }}>
+                  {serverConfig.baseUrl}
+                </span>
+              ) : (
+                <span style={{ fontSize: 13, color: 'var(--ink-4)', fontFamily: 'var(--font-mono)' }}>
+                  Not configured — defaulting to localhost
+                </span>
+              )
+            ) : (
+              <span style={{ fontSize: 13, color: 'var(--ink-4)' }}>Loading…</span>
+            )}
+          </div>
+
+          {serverConfig?.baseUrlIsLoopback && (
+            <div
+              style={{
+                fontSize: 12,
+                color: '#e6a817',
+                background: 'oklch(0.78 0.14 65 / 0.07)',
+                border: '1px solid oklch(0.78 0.14 65 / 0.25)',
+                borderRadius: 'var(--r-1)',
+                padding: '6px 10px',
+              }}
+            >
+              BASE_URL is a loopback address. Remote browsers outside this machine will not be able
+              to use direct playback from this node.
+            </div>
+          )}
+        </div>
+
+        <div
+          className="surface"
+          style={{
+            marginTop: 12,
+            padding: '12px 16px',
+            background: 'var(--bg-3)',
+            fontSize: 12,
+            color: 'var(--ink-3)',
+            lineHeight: 1.6,
+          }}
+        >
+          <strong style={{ color: 'var(--ink-1)' }}>Setup:</strong> set{' '}
+          <code
+            className="mono"
+            style={{ background: 'var(--bg-0)', padding: '1px 5px', borderRadius: 3, fontSize: 11 }}
+          >
+            BASE_URL=http://your-server:3001
+          </code>{' '}
+          in your backend environment. Use the URL your browser uses to reach this server.
+          For LAN: <code className="mono" style={{ fontSize: 11 }}>http://media-box.local:3001</code>.
+          For internet access you need a reverse proxy.
+        </div>
+      </section>
 
       {/* Metadata providers */}
       <section>
