@@ -8,6 +8,7 @@ import { ok, err } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
 import { makeRequireAdmin } from '../middleware/auth'
 import type { FederationCatalogData } from '../services/federation/catalogSync'
+import { makeLocalCapabilities } from '../services/federation/capabilities'
 
 function hashToken(raw: string): string {
   return createHash('sha256').update(raw).digest('hex')
@@ -102,6 +103,35 @@ export async function federationRoutes(
       nodeId: localNode?.id ?? localNodeId,
       nodeName: localNode?.name ?? 'Helix',
       status: 'online',
+    })
+  })
+
+  // GET /federation/capabilities — advertise what this node supports
+  app.get('/capabilities', { preHandler: requireFederationToken }, async () => {
+    const [localNode] = await db
+      .select({ id: nodes.id, name: nodes.name })
+      .from(nodes)
+      .where(eq(nodes.id, localNodeId))
+
+    const capabilities = makeLocalCapabilities(
+      localNode?.id ?? localNodeId,
+      localNode?.name ?? 'Helix'
+    )
+    return ok(capabilities)
+  })
+
+  // POST /federation/playback-intent — placeholder contract; always returns unsupported
+  app.post<{
+    Body: {
+      mediaItemId?: string
+      mediaFileId?: string
+      requestedMode?: string
+      clientInfo?: unknown
+    }
+  }>('/playback-intent', { preHandler: requireFederationToken }, async () => {
+    return ok({
+      status: 'unsupported',
+      reason: 'Remote playback is not implemented yet.',
     })
   })
 

@@ -1,13 +1,24 @@
 import type { PlaybackSession } from '@helix/shared'
 import { apiFetch } from './client'
 
-// Matches the backend PlaybackSourceResult / PlaybackSourceUnavailable shape
+export type PlaybackCode =
+  | 'local_playable'
+  | 'remote_available'
+  | 'remote_playback_unsupported'
+  | 'unavailable'
+
 export interface PlaybackSource {
+  code: 'local_playable'
   nodeId: string
   nodeBaseUrl: string | null
+  nodeKind: 'local'
+  nodeName: string
+  mediaItemId: string
+  selectedVersionId: string
+  selectedFileId: string
   fileId: string
-  filePath: string
   versionId: string
+  filePath: string
   filename: string
   container: string | null
   quality_label: string | null
@@ -27,7 +38,11 @@ export interface PlaybackSourceAvailable {
 export interface PlaybackSourceUnavailable {
   source?: never
   unavailable: true
+  code: PlaybackCode
   reason: string
+  nodeId: string | null
+  nodeName: string | null
+  nodeKind: 'local' | 'remote' | null
 }
 
 export type PlaybackSourceResult = PlaybackSourceAvailable | PlaybackSourceUnavailable

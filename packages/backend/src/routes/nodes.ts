@@ -8,15 +8,20 @@ import { encryptApiKey, decryptApiKey } from '../services/integrations/encryptio
 import { checkRemoteHealth } from '../services/federation/healthCheck'
 import { syncRemoteNode } from '../services/federation/catalogSync'
 import { canViewLibrary } from '../lib/permissions'
+import { fetchRemoteCapabilities } from '../services/federation/capabilities'
 
 type NodeRow = typeof nodes.$inferSelect
 
 function sanitizeNode(node: NodeRow) {
-  const { api_token_encrypted: _t, federation_token_hash: _h, ...rest } = node
+  const { api_token_encrypted: _t, federation_token_hash: _h, capabilities_json: _c, ...rest } = node
+  const capabilities = node.capabilities_json
+    ? (() => { try { return JSON.parse(node.capabilities_json) } catch { return null } })()
+    : null
   return {
     ...rest,
     has_federation_token:
       node.kind === 'local' ? !!node.federation_token_hash : !!node.api_token_encrypted,
+    capabilities,
   }
 }
 
@@ -154,16 +159,18 @@ export async function nodeRoutes(
       const now = Date.now()
       const result = await checkRemoteHealth(node.base_url, rawToken)
       if (result.online) {
+        const capabilities = await fetchRemoteCapabilities(node.base_url, rawToken)
         await db
           .update(nodes)
           .set({
             status: 'online',
             last_seen_at: now,
             last_error: null,
+            capabilities_json: capabilities ? JSON.stringify(capabilities) : null,
             updated_at: new Date().toISOString(),
           })
           .where(eq(nodes.id, node.id))
-        return ok({ online: true })
+        return ok({ online: true, capabilities: capabilities ?? null })
       } else {
         await db
           .update(nodes)
@@ -198,13 +205,11 @@ export async function nodeRoutes(
       }
       try {
         const nowMs = Date.now()
-        const result = await syncRemoteNode(
-          node.id,
-          node.base_url,
-          node.api_token_encrypted,
-          dataDir,
-          db
-        )
+        const rawTokenForSync = decryptApiKey(node.api_token_encrypted, dataDir)
+        const [syncResult, capabilities] = await Promise.all([
+          syncRemoteNode(node.id, node.base_url, node.api_token_encrypted, dataDir, db),
+          fetchRemoteCapabilities(node.base_url, rawTokenForSync),
+        ])
         await db
           .update(nodes)
           .set({
@@ -212,10 +217,11 @@ export async function nodeRoutes(
             last_seen_at: nowMs,
             last_sync_at: nowMs,
             last_error: null,
+            capabilities_json: capabilities ? JSON.stringify(capabilities) : null,
             updated_at: new Date().toISOString(),
           })
           .where(eq(nodes.id, node.id))
-        return ok({ ...result, synced: true })
+        return ok({ ...syncResult, synced: true, capabilities: capabilities ?? null })
       } catch (e) {
         const errMsg = e instanceof Error ? e.message : 'Sync failed'
         await db

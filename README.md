@@ -197,9 +197,32 @@ Federation lets two Helix instances share catalog data so you can browse a remot
 3. Click **Add Node**, then **Test** to verify connectivity.
 4. Click **Sync** to import the remote catalog. Items from the remote node appear in your libraries.
 
+### Capability advertisement
+
+Each node advertises what it supports via `GET /api/v1/federation/capabilities`. The consumer hub fetches and caches this during every **Test** and **Sync** operation, storing it in `capabilities_json` on the node row. The current capability set:
+
+| Field | Value | Meaning |
+|-------|-------|---------|
+| `supportsCatalogSync` | `true` | Catalog export endpoint is available |
+| `supportsArtworkProxy` | `true` | Artwork streaming endpoint is available |
+| `supportsRemotePlayback` | `false` | Cross-node playback not yet implemented |
+| `supportedPlaybackModes` | `[]` | No remote playback modes yet |
+| `supportsSignedPlaybackUrls` | `false` | No signed stream tokens yet |
+
+The playback-source endpoint (`GET /api/v1/media/:id/playback-source`) reads the cached capabilities and returns one of four codes:
+
+| Code | Meaning |
+|------|---------|
+| `local_playable` | File is local; signed stream URL included |
+| `remote_available` | Remote node supports playback (future) |
+| `remote_playback_unsupported` | File is on a remote node; playback not enabled |
+| `unavailable` | No source found on any node |
+
+When a file is remote the response includes `nodeName`, `nodeId`, and `nodeKind` so the UI can show "Available on Living Room — remote playback is not enabled yet."
+
 ### What is deferred
 
-- **Cross-node playback** — stream URLs for remote files are not yet signed; clicking play shows an informational message.
+- **Cross-node playback** — `supportsRemotePlayback` is `false` on all nodes today; a `POST /api/v1/federation/playback-intent` placeholder is in place and always returns `{ status: "unsupported" }` until the signing layer is built.
 - **Shared authentication** — users are local to each node; no SSO or shared user database.
 - **Incremental sync** — the `?since=<unix_ms>` parameter is supported by the catalog endpoint but the UI sync button always does a full import (idempotent via upsert).
 
@@ -218,7 +241,7 @@ pnpm start            # run built backend
 
 ```bash
 cd packages/backend
-pnpm test             # run all Vitest tests (518 tests)
+pnpm test             # run all Vitest tests (536 tests)
 pnpm test -- --run tests/auth.test.ts   # run a single test file
 ```
 
@@ -357,8 +380,10 @@ The DB schema is federation-aware: every `media_file` carries a `node_id`. Remot
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/v1/federation/health` | Health check (used by remote nodes to test connectivity) |
+| GET | `/api/v1/federation/capabilities` | Advertise what this node supports (catalog sync, artwork, playback) |
 | GET | `/api/v1/federation/catalog` | Export full catalog (`?since=<unix_ms>` for incremental) |
 | GET | `/api/v1/federation/media/:id/artwork/:kind` | Stream a local artwork file to a remote hub; accepts only items owned by this node |
+| POST | `/api/v1/federation/playback-intent` | Playback intent contract (placeholder; always returns `{ status: "unsupported" }`) |
 
 ### Enrichment queue (admin only)
 
@@ -407,6 +432,7 @@ The DB schema is federation-aware: every `media_file` carries a `node_id`. Remot
 - [x] Per-library access permissions with signed stream and artwork URLs
 - [x] Federation foundation — node registration, federation token auth, catalog sync, remote items in UI
 - [x] Remote artwork proxy — poster and backdrop images from remote nodes proxied through the local hub; remote token never reaches the browser
+- [x] Federation capability contract — capability advertisement endpoint, hub-side capability caching, structured playback-source codes, playback-intent placeholder
 - [ ] Remote playback signing (cross-node stream URLs)
 - [ ] Episode still image download and caching
 - [ ] MusicBrainz provider for music libraries

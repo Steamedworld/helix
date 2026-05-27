@@ -11,6 +11,7 @@ export const nodes = sqliteTable('nodes', {
   last_seen_at: integer('last_seen_at'),
   last_sync_at: integer('last_sync_at'),
   last_error: text('last_error'),
+  capabilities_json: text('capabilities_json'),
   created_at: text('created_at').notNull(),
   updated_at: text('updated_at').notNull(),
 })

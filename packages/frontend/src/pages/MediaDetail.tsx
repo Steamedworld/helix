@@ -10,7 +10,7 @@ import {
 import { searchMetadata, matchMetadata, refreshMetadata } from '../api/metadata'
 import { getNextEpisode } from '../api/tv'
 import type { MediaItemDetail } from '../api/media'
-import type { PlaybackSource } from '../api/playback'
+import type { PlaybackSource, PlaybackCode } from '../api/playback'
 import type { MetadataCandidate } from '../api/metadata'
 import type { PlayableEpisode } from '../api/tv'
 import type { WatchState } from '@helix/shared'
@@ -311,7 +311,7 @@ function DirectPlayer({
           padding: '0 4px',
         }}
       >
-        <span style={{ color: 'var(--accent)', fontWeight: 500 }}>Direct Play from Helix Local.</span>
+        <span style={{ color: 'var(--accent)', fontWeight: 500 }}>Direct Play from {source.nodeName}.</span>
         <span>{source.filename}</span>
         {source.quality_label && <span>{source.quality_label}</span>}
         {formatResolution(source.resolution_width, source.resolution_height) && (
@@ -326,7 +326,75 @@ function DirectPlayer({
 
 // ─── Unavailable state ─────────────────────────────────────────────────────────
 
-function PlayerUnavailable({ reason, isMissing }: { reason: string; isMissing?: boolean }) {
+interface PlayerUnavailableProps {
+  reason: string
+  code?: string | null
+  nodeName?: string | null
+  isMissing?: boolean
+}
+
+function PlayerUnavailable({ reason, code, nodeName, isMissing }: PlayerUnavailableProps) {
+  const isRemote =
+    code === 'remote_playback_unsupported' || code === 'remote_available'
+
+  if (isRemote) {
+    return (
+      <div
+        style={{
+          background: 'var(--bg-3)',
+          border: '1px solid var(--line-1)',
+          borderRadius: 'var(--r-3)',
+          aspectRatio: '16/9',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 12,
+          color: 'var(--ink-3)',
+          padding: 24,
+        }}
+      >
+        <span style={{ fontSize: 28, opacity: 0.5 }}>⊞</span>
+        <div style={{ textAlign: 'center' }}>
+          {nodeName && (
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '3px 10px',
+                background: 'rgba(100,120,200,0.10)',
+                border: '1px solid rgba(100,120,200,0.25)',
+                borderRadius: 12,
+                fontSize: 12,
+                color: 'var(--ink-2)',
+                fontWeight: 500,
+                marginBottom: 10,
+              }}
+            >
+              <span style={{ opacity: 0.6, fontSize: 10 }}>⬡</span>
+              {nodeName}
+            </span>
+          )}
+          <p
+            style={{
+              fontSize: 14,
+              fontWeight: 500,
+              color: 'var(--ink-2)',
+              marginBottom: 6,
+              textAlign: 'center',
+            }}
+          >
+            Available on {nodeName ?? 'a remote node'}.
+          </p>
+          <p style={{ fontSize: 12, color: 'var(--ink-3)', textAlign: 'center' }}>
+            Remote playback is not enabled yet.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div
       style={{
@@ -397,6 +465,8 @@ export function MediaDetail() {
   // Playback source
   const [playbackSource, setPlaybackSource] = useState<PlaybackSource | null>(null)
   const [sourceUnavailable, setSourceUnavailable] = useState<string | null>(null)
+  const [sourceCode, setSourceCode] = useState<PlaybackCode | null>(null)
+  const [sourceNodeName, setSourceNodeName] = useState<string | null>(null)
   const [sourceLoading, setSourceLoading] = useState(true)
   const [isMissingFile, setIsMissingFile] = useState(false)
 
@@ -429,16 +499,20 @@ export function MediaDetail() {
         const data = res.data
         if (data.unavailable) {
           setSourceUnavailable(data.reason)
-          // Detect the "went missing" case by looking for the specific reason text
+          setSourceCode(data.code)
+          setSourceNodeName(data.nodeName ?? null)
           setIsMissingFile(
+            data.code === 'unavailable' &&
             typeof data.reason === 'string' &&
             data.reason.toLowerCase().includes('missing')
           )
         } else {
           setPlaybackSource(data.source)
+          setSourceCode(data.source.code)
         }
       } else {
         setSourceUnavailable('Could not fetch playback source.')
+        setSourceCode('unavailable')
       }
       setSourceLoading(false)
     })
@@ -909,6 +983,8 @@ export function MediaDetail() {
         ) : (
           <PlayerUnavailable
             reason={sourceUnavailable ?? 'Unknown error'}
+            code={sourceCode}
+            nodeName={sourceNodeName}
             isMissing={isMissingFile}
           />
         )}
