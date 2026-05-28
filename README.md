@@ -207,17 +207,30 @@ The invite flow is the standard way to connect two Helix homes. It bundles the s
 
 1. Go to **Admin → Trusted Homes → This Home**.
 2. Click **Create invite**.
-3. Set an optional label (e.g. "For living-room Helix") and expiry.
+3. Set an optional label (e.g. "For living-room Helix") and expiry (7 / 30 / 90 days or no expiry).
 4. Click **Generate invite** — a compact invite string is displayed.
-5. Copy it and send it to the other home's admin over a private channel (message, email, etc.). Treat it like a password — do not post it publicly.
+5. Copy it and send it to the other home's admin over a private channel (message, email, etc.). **Treat it like a password — do not post it publicly. Revoke immediately if exposed.**
 
 **On the home that will connect (the "connecting home"):**
 
 1. Go to **Admin → Trusted Homes → Connect using invite**.
 2. Click **Paste invite and connect**.
 3. Paste the invite string — a preview shows the home name, server address, and expiry.
-4. Click **Connect**. Helix tests the remote health endpoint and creates the connection.
-5. After connecting, go to **Libraries** to grant users access to the newly connected home's libraries.
+4. Optionally check **Sync catalog after connecting** (default: on) to import the remote catalog immediately.
+5. Click **Connect**. Helix verifies the invite with the source home, confirms it has not expired, been revoked, or already been used, then creates the connection.
+6. After connecting, go to **Library settings** to choose which libraries users can access from this home.
+
+**Invite lifecycle enforcement:**
+
+- **Expiry:** expired invites are rejected by the source home before a node is created on the connecting side. Expiry is enforced at connection time, not just locally.
+- **One-time use:** each invite can only be accepted once. After a successful connection, the source home marks the invite as Used — further attempts with the same invite string will be rejected.
+- **Revocation:** admins can revoke any unused invite at any time from the invite history list. Revoked invites cannot be used.
+- **Audit trail:** used invites remain in the invite history with Used status, recording which home used them.
+- **On compromise:** revoke the invite immediately from the invite history list, then re-issue a new invite.
+
+**Sync on connect:**
+
+Checking "Sync catalog after connecting" (default: on) fetches the remote catalog immediately after the node is created. If sync fails, a warning is shown but the node remains connected — use the Sync button in the Trusted Homes panel to retry.
 
 **After connecting:**
 

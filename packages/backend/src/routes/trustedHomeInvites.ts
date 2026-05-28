@@ -17,6 +17,7 @@ import { makeRequireAdmin } from '../middleware/auth'
 import { encryptApiKey } from '../services/integrations/encryption'
 import { checkRemoteHealth } from '../services/federation/healthCheck'
 import { fetchRemoteCapabilities } from '../services/federation/capabilities'
+import { fetchRemoteCatalog, importCatalog } from '../services/federation/catalogSync'
 import { config, isLoopbackUrl } from '../config'
 
 const MAX_EXPIRY_DAYS = 90
@@ -77,6 +78,8 @@ export interface InviteSummary {
   expires_at: number | null
   used_at: number | null
   revoked_at: number | null
+  used_by_home_name: string | null
+  used_by_address: string | null
   created_by_user_id: string
 }
 
@@ -88,6 +91,8 @@ function sanitizeInvite(row: typeof trustedHomeInvites.$inferSelect): InviteSumm
     expires_at: row.expires_at ?? null,
     used_at: row.used_at ?? null,
     revoked_at: row.revoked_at ?? null,
+    used_by_home_name: row.used_by_home_name ?? null,
+    used_by_address: row.used_by_address ?? null,
     created_by_user_id: row.created_by_user_id,
   }
 }
@@ -230,11 +235,11 @@ export async function acceptInviteRoutes(
   const requireAdmin = makeRequireAdmin(db)
 
   // ─── POST /trusted-homes/accept-invite ───────────────────────────────────────
-  app.post<{ Body: { invite?: string } }>(
+  app.post<{ Body: { invite?: string; syncNow?: boolean } }>(
     '/accept-invite',
     { preHandler: requireAdmin },
     async (req, reply) => {
-      const { invite: inviteRaw } = req.body ?? {}
+      const { invite: inviteRaw, syncNow = false } = req.body ?? {}
 
       if (!inviteRaw || typeof inviteRaw !== 'string') {
         reply.status(400)
@@ -317,7 +322,39 @@ export async function acceptInviteRoutes(
         })
       }
 
-      // Test remote health with provided token
+      // ── NEW: Source-side invite verification ────────────────────────────────
+      // Call the source home's /federation/invites/verify before creating any node.
+      // This enforces expiry/revoked/used_at on the source side.
+      try {
+        const verifyRes = await fetch(
+          `${serverAddress}/api/v1/federation/invites/verify`,
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${rawToken}` },
+            signal: AbortSignal.timeout(10000),
+          }
+        )
+        if (!verifyRes.ok) {
+          // Parse the error message if possible
+          let errMsg = 'Invite is invalid, expired, revoked, or already used.'
+          try {
+            const body = await verifyRes.json() as { error?: string }
+            if (body.error) errMsg = body.error
+          } catch { /* ignore */ }
+          reply.status(403)
+          return err(errMsg)
+        }
+      } catch (e) {
+        const isTimeout = e instanceof Error && e.message.includes('timed out')
+        reply.status(502)
+        return err(
+          isTimeout
+            ? `Cannot reach source home at ${serverAddress} to verify invite (timeout).`
+            : `Cannot reach source home at ${serverAddress} to verify invite: ${e instanceof Error ? e.message : 'connection failed'}`
+        )
+      }
+
+      // Test remote health with provided token (confirms federation token works)
       const health = await checkRemoteHealth(serverAddress, rawToken)
       if (!health.online) {
         reply.status(502)
@@ -349,8 +386,42 @@ export async function acceptInviteRoutes(
         updated_at: nowIso,
       })
 
+      // ── NEW: Consume the invite on the source side ──────────────────────────
+      // Node is already created — consume failure is a warning, not a rollback.
+      let consumeWarning: string | undefined
+      try {
+        // Determine our own home name for the consume body
+        const [localNodeRow] = await db
+          .select({ name: nodes.name })
+          .from(nodes)
+          .where(eq(nodes.id, opts.localNodeId))
+        const connectingName = localNodeRow?.name ?? 'Helix'
+        const connectingAddress = opts.baseUrl ?? config.baseUrl ?? ''
+
+        const consumeRes = await fetch(
+          `${serverAddress}/api/v1/federation/invites/consume`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${rawToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              connecting_home_name: connectingName,
+              connecting_home_address: connectingAddress,
+            }),
+            signal: AbortSignal.timeout(10000),
+          }
+        )
+        if (!consumeRes.ok) {
+          consumeWarning = `Source home acknowledged connection but consume call returned HTTP ${consumeRes.status}. The invite may still appear as unused on the source home.`
+        }
+      } catch (e) {
+        consumeWarning = `Could not notify source home to mark invite as used: ${e instanceof Error ? e.message : 'connection error'}. The node is connected; the invite may still appear unused on the source home.`
+      }
+
       // Mark invite used on our own invite table if the invite_id matches a local invite
-      // (this home created it and re-connected using it — unusual but handle gracefully)
+      // (this home created the invite and re-connected using it — unusual but handle gracefully)
       const inviteId = String(inv.invite_id ?? '').trim()
       if (inviteId) {
         await db
@@ -360,6 +431,25 @@ export async function acceptInviteRoutes(
           .catch(() => { /* no-op: invite may belong to remote home */ })
       }
 
+      // ── NEW: Optional sync-on-connect ────────────────────────────────────────
+      let syncResult: { items_synced: number } | undefined
+      let syncWarning: string | undefined
+
+      if (syncNow) {
+        try {
+          const catalog = await fetchRemoteCatalog(serverAddress, rawToken)
+          const imported = await importCatalog(nodeId, catalog, db)
+          // Update node sync timestamp
+          await db
+            .update(nodes)
+            .set({ last_sync_at: Date.now(), updated_at: new Date().toISOString() })
+            .where(eq(nodes.id, nodeId))
+          syncResult = { items_synced: imported.itemsSynced }
+        } catch (e) {
+          syncWarning = `Initial sync failed: ${e instanceof Error ? e.message : 'sync error'}. The node is connected — use Sync in the Trusted Homes panel to retry.`
+        }
+      }
+
       return ok({
         connected: true,
         node_id: nodeId,
@@ -367,6 +457,9 @@ export async function acceptInviteRoutes(
         server_address: serverAddress,
         capabilities: capabilities ?? null,
         sync_available: true,
+        ...(consumeWarning ? { consume_warning: consumeWarning } : {}),
+        ...(syncResult ? { sync_result: syncResult } : {}),
+        ...(syncWarning ? { sync_warning: syncWarning } : {}),
         message:
           'Trusted Home connected. After connecting, choose which libraries users can access from this home in Library settings.',
       })

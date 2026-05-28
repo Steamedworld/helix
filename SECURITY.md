@@ -43,10 +43,14 @@ You should receive an acknowledgement within 72 hours and a resolution timeline 
 - Token comparison uses `timingSafeEqual` to prevent timing attacks.
 - The federation catalog export strips all local filesystem paths. Remote consumers receive `has_poster`/`has_backdrop` booleans rather than `poster_path`/`backdrop_path` strings.
 - Remote files are stored with sentinel paths (`remote://<nodeId>/<fileId>`) — no real filesystem paths from a remote node are ever written to the local database.
-- **Invite strings** bundle the server address and raw token into a single base64url blob. The raw token is included in the invite exactly once at generation time; only its SHA-256 hash is stored in the `trusted_home_invites` table. The invite string must be treated as a secret and exchanged over a private channel.
-- Invite rows are never deleted on revocation — `revoked_at` is set and the row is kept for audit. The invite secret is not recoverable after creation.
-- Accepting an invite tests the remote health endpoint before creating any database entry. The raw token is encrypted before being written to the `nodes` table; it is never stored in plaintext anywhere.
-- Invites never appear in GET list responses — only id, label, dates, and status are returned. The `token_hash` column is also excluded from list responses.
+- **Invite tokens:** shown exactly once at generation time. Only the SHA-256 hash is stored in the `trusted_home_invites` table. The raw token never appears in the database, log output, or list responses. The invite string must be treated as a secret.
+  - **One-time use:** enforced on the source home. The `POST /api/v1/federation/invites/verify` endpoint rejects invites with `used_at` set. On successful node creation, `POST /api/v1/federation/invites/consume` marks the invite as used. Used invites cannot be reused.
+  - **Expiry:** enforced at connection time by the source home. Expired invites (`expires_at` in the past) are rejected by both verify and consume.
+  - **Revocation:** admins can revoke any invite at any time. Revoked invites are permanently blocked. Invite rows are never deleted — `revoked_at` is set and the row kept for audit.
+  - **Lifecycle:** `verify` is called before node creation; `consume` is called after node creation. A consume failure produces a warning but does not roll back the node — the node is still connected and functional.
+  - **On compromise:** revoke the invite immediately from the invite history list on the source home. The raw token is not recoverable — issue a new invite.
+- Invite list responses expose only `id`, `label`, dates, and status. The `token_hash` and raw token are never returned.
+- Accepting an invite calls `verify` on the source home before creating any database entry. If the source home cannot be reached, the connection is rejected with 502. The raw token is encrypted before being written to the `nodes` table.
 - Connecting via invite does not grant normal users access to any libraries. Library access must be explicitly granted by an admin in Library settings.
 
 **No telemetry**

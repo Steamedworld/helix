@@ -198,6 +198,8 @@ export const trustedHomeInvites = sqliteTable('trusted_home_invites', {
   expires_at: integer('expires_at'),
   used_at: integer('used_at'),
   revoked_at: integer('revoked_at'),
+  used_by_home_name: text('used_by_home_name'),
+  used_by_address: text('used_by_address'),
   created_by_user_id: text('created_by_user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   created_at: integer('created_at').notNull(),
   updated_at: integer('updated_at').notNull(),

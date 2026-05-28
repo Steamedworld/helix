@@ -3,7 +3,7 @@ import { createHash, timingSafeEqual, randomBytes } from 'crypto'
 import { createReadStream, existsSync, statSync } from 'fs'
 import { extname } from 'path'
 import { eq, inArray, gt, and } from 'drizzle-orm'
-import { nodes, libraries, mediaItems, mediaVersions, mediaFiles } from '../db/schema'
+import { nodes, libraries, mediaItems, mediaVersions, mediaFiles, trustedHomeInvites } from '../db/schema'
 import { ok, err } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
 import { makeRequireAdmin } from '../middleware/auth'
@@ -106,6 +106,154 @@ export async function federationRoutes(
 
     return ok({ revoked: true })
   })
+
+  // ── Invite verification (invite token only, not federation token) ─────────────
+
+  /**
+   * POST /federation/invites/verify
+   *
+   * Authenticates with the raw invite token (Bearer <raw-token>).
+   * Returns safe source-home info if the invite is valid.
+   * Does NOT mark used_at here — only /consume does that.
+   */
+  app.post(
+    '/invites/verify',
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      // Must NOT accept session cookies for this endpoint — invite token only
+      const authHeader = req.headers['authorization']
+      if (!authHeader?.startsWith('Bearer ')) {
+        reply.status(403)
+        return err('Invite token required in Authorization: Bearer <token>')
+      }
+      const rawToken = authHeader.slice(7).trim()
+      if (!rawToken) {
+        reply.status(403)
+        return err('Invite token is empty')
+      }
+
+      const tokenHash = createHash('sha256').update(rawToken).digest('hex')
+
+      const [invite] = await db
+        .select()
+        .from(trustedHomeInvites)
+        .where(eq(trustedHomeInvites.token_hash, tokenHash))
+
+      if (!invite) {
+        reply.status(403)
+        return err('Invite not found or invalid')
+      }
+
+      const now = Date.now()
+
+      if (invite.revoked_at !== null) {
+        reply.status(403)
+        return err('This invite has been revoked.')
+      }
+      if (invite.expires_at !== null && invite.expires_at < now) {
+        reply.status(403)
+        return err('This invite has expired.')
+      }
+      if (invite.used_at !== null) {
+        reply.status(403)
+        return err('This invite has already been used.')
+      }
+
+      // Look up local node info for the response
+      const [localNode] = await db
+        .select({ name: nodes.name })
+        .from(nodes)
+        .where(eq(nodes.id, localNodeId))
+
+      const homeName = localNode?.name ?? 'Helix'
+      const serverAddress =
+        opts.baseUrl ?? config.baseUrl ?? null
+
+      return ok({
+        valid: true,
+        home_name: homeName,
+        server_address: serverAddress ?? '',
+        capabilities: {
+          federation: true,
+          catalog: true,
+          artwork: true,
+          playback: true,
+        },
+        label: invite.label,
+        expires_at: invite.expires_at ? new Date(invite.expires_at).toISOString() : null,
+        invite_id: invite.id,
+      })
+    }
+  )
+
+  /**
+   * POST /federation/invites/consume
+   *
+   * Authenticates with the raw invite token (Bearer <raw-token>).
+   * Marks the invite as used (sets used_at). One-time enforcement.
+   * Accepts optional connecting_home_name and connecting_home_address in body.
+   */
+  app.post<{
+    Body: { connecting_home_name?: string; connecting_home_address?: string }
+  }>(
+    '/invites/consume',
+    async (req: FastifyRequest<{ Body: { connecting_home_name?: string; connecting_home_address?: string } }>, reply: FastifyReply) => {
+      // Must NOT accept session cookies — invite token only
+      const authHeader = req.headers['authorization']
+      if (!authHeader?.startsWith('Bearer ')) {
+        reply.status(403)
+        return err('Invite token required in Authorization: Bearer <token>')
+      }
+      const rawToken = authHeader.slice(7).trim()
+      if (!rawToken) {
+        reply.status(403)
+        return err('Invite token is empty')
+      }
+
+      const tokenHash = createHash('sha256').update(rawToken).digest('hex')
+
+      const [invite] = await db
+        .select()
+        .from(trustedHomeInvites)
+        .where(eq(trustedHomeInvites.token_hash, tokenHash))
+
+      if (!invite) {
+        reply.status(403)
+        return err('Invite not found or invalid')
+      }
+
+      const now = Date.now()
+
+      if (invite.revoked_at !== null) {
+        reply.status(403)
+        return err('This invite has been revoked.')
+      }
+      if (invite.expires_at !== null && invite.expires_at < now) {
+        reply.status(403)
+        return err('This invite has expired.')
+      }
+      if (invite.used_at !== null) {
+        reply.status(403)
+        return err('This invite has already been used.')
+      }
+
+      const { connecting_home_name, connecting_home_address } = req.body ?? {}
+
+      await db
+        .update(trustedHomeInvites)
+        .set({
+          used_at: now,
+          updated_at: now,
+          ...(connecting_home_name ? { used_by_home_name: String(connecting_home_name) } : {}),
+          ...(connecting_home_address ? { used_by_address: String(connecting_home_address) } : {}),
+        })
+        .where(eq(trustedHomeInvites.id, invite.id))
+
+      return ok({
+        consumed: true,
+        used_at: new Date(now).toISOString(),
+      })
+    }
+  )
 
   // ── Federation API (federation token only) ────────────────────────────────────
 

@@ -128,6 +128,8 @@ export interface InviteSummary {
   expires_at: number | null
   used_at: number | null
   revoked_at: number | null
+  used_by_home_name: string | null
+  used_by_address: string | null
   created_by_user_id: string
 }
 
@@ -145,7 +147,20 @@ export interface AcceptInviteResponse {
   server_address?: string
   message?: string
   sync_available?: boolean
+  sync_result?: { items_synced: number }
+  sync_warning?: string
+  consume_warning?: string
   node_status?: string
+}
+
+export interface VerifyInviteResponse {
+  valid: boolean
+  home_name: string
+  server_address: string
+  capabilities: { federation: boolean; catalog: boolean; artwork: boolean; playback: boolean }
+  label: string | null
+  expires_at: string | null
+  invite_id: string
 }
 
 export function createInvite(body: { label?: string; expires_in_days?: number }) {
@@ -166,9 +181,9 @@ export function revokeInvite(id: string) {
   )
 }
 
-export function acceptInvite(invite: string) {
+export function acceptInvite(invite: string, syncNow = false) {
   return apiFetch<AcceptInviteResponse>('/api/v1/trusted-homes/accept-invite', {
     method: 'POST',
-    body: JSON.stringify({ invite }),
+    body: JSON.stringify({ invite, syncNow }),
   })
 }

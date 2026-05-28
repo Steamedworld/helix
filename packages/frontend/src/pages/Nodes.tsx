@@ -16,7 +16,7 @@ import {
   acceptInvite,
 } from '../api/nodes'
 import { getServerConfig } from '../api/config'
-import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic, InviteSummary } from '../api/nodes'
+import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic, InviteSummary, AcceptInviteResponse } from '../api/nodes'
 import type { ServerConfig } from '../api/config'
 
 // ─── Status chip ──────────────────────────────────────────────────────────────
@@ -343,7 +343,7 @@ function CreateInvitePanel({ onDone, serverConfig }: CreateInvitePanelProps) {
             lineHeight: 1.5,
           }}
         >
-          <strong>Security:</strong> {result.warning}
+          <strong>Security:</strong> This invite can only be used once. Share it only with the admin of a trusted Helix home. Treat it like a password — revoke it immediately if exposed.
         </div>
 
         <div style={{ fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.5 }}>
@@ -414,7 +414,26 @@ function CreateInvitePanel({ onDone, serverConfig }: CreateInvitePanelProps) {
             <option value="90">90 days</option>
             <option value="none">No expiry</option>
           </select>
+          <div style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 4 }}>
+            {expiryDays === 'none'
+              ? 'This invite has no expiry — revoke it manually when no longer needed.'
+              : `This invite expires in ${expiryDays} days.`}
+          </div>
         </div>
+      </div>
+
+      <div
+        style={{
+          fontSize: 12,
+          color: 'var(--bad)',
+          background: 'oklch(0.70 0.13 25 / 0.06)',
+          border: '1px solid oklch(0.70 0.13 25 / 0.20)',
+          borderRadius: 'var(--r-1)',
+          padding: '8px 12px',
+          lineHeight: 1.5,
+        }}
+      >
+        <strong>One-time use.</strong> This invite can only be used once. Share it only with the admin of a trusted Helix home.
       </div>
 
       {error && <div style={{ fontSize: 13, color: 'var(--bad)' }}>{error}</div>}
@@ -447,9 +466,17 @@ function AcceptInvitePanel({ onConnected, onCancel }: AcceptInvitePanelProps) {
     label: string | null
   } | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
+  const [syncNow, setSyncNow] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<{ name: string; message: string; alreadyConnected?: boolean } | null>(null)
+  const [result, setResult] = useState<{
+    name: string
+    message: string
+    alreadyConnected?: boolean
+    syncResult?: AcceptInviteResponse['sync_result']
+    syncWarning?: string
+    consumeWarning?: string
+  } | null>(null)
 
   function tryPreview(text: string) {
     const trimmed = text.trim()
@@ -497,13 +524,16 @@ function AcceptInvitePanel({ onConnected, onCancel }: AcceptInvitePanelProps) {
     if (!inviteText.trim()) return
     setBusy(true)
     setError(null)
-    const res = await acceptInvite(inviteText.trim())
+    const res = await acceptInvite(inviteText.trim(), syncNow)
     setBusy(false)
     if (res.ok) {
       setResult({
         name: res.data.node_name ?? 'Remote Home',
         message: res.data.message ?? 'Connected.',
         alreadyConnected: res.data.already_connected,
+        syncResult: res.data.sync_result,
+        syncWarning: res.data.sync_warning,
+        consumeWarning: res.data.consume_warning,
       })
       onConnected()
     } else {
@@ -531,6 +561,31 @@ function AcceptInvitePanel({ onConnected, onCancel }: AcceptInvitePanelProps) {
           <br />
           {result.message}
         </div>
+
+        {result.syncResult && (
+          <div style={{ fontSize: 12, color: 'var(--ok)' }}>
+            Synced {result.syncResult.items_synced} {result.syncResult.items_synced === 1 ? 'item' : 'items'} from the remote catalog.
+          </div>
+        )}
+
+        {result.syncWarning && (
+          <div style={{ fontSize: 12, color: '#e6a817' }}>
+            Sync warning: {result.syncWarning}
+          </div>
+        )}
+
+        {result.consumeWarning && (
+          <div style={{ fontSize: 12, color: '#e6a817' }}>
+            Note: {result.consumeWarning}
+          </div>
+        )}
+
+        {!result.alreadyConnected && (
+          <div style={{ fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+            After connecting, choose which libraries users can access in <strong>Library settings</strong>.
+          </div>
+        )}
+
         <button className="btn btn-ghost btn-sm" onClick={onCancel}>
           Close
         </button>
@@ -582,6 +637,16 @@ function AcceptInvitePanel({ onConnected, onCancel }: AcceptInvitePanelProps) {
           )}
         </div>
       )}
+
+      {/* Sync on connect checkbox */}
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer' }}>
+        <input
+          type="checkbox"
+          checked={syncNow}
+          onChange={(e) => setSyncNow(e.target.checked)}
+        />
+        Sync catalog after connecting
+      </label>
 
       {error && <div style={{ fontSize: 13, color: 'var(--bad)' }}>{error}</div>}
 
