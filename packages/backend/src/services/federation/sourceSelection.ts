@@ -7,6 +7,19 @@ import type { NodeCapabilities } from './capabilities'
 import { decryptApiKey } from '../integrations/encryption'
 import { isLoopbackUrl } from '../../config'
 
+// ─── Refresh metadata helpers ─────────────────────────────────────────────────
+
+const MEDIA_TOKEN_TTL_SECONDS = Number(process.env.MEDIA_TOKEN_TTL_SECONDS ?? 14400)
+
+/**
+ * Compute refreshAfter: 75% of TTL consumed (conservative).
+ * For very short TTLs (< 120s), use 50% instead.
+ */
+function computeRefreshAfter(issuedAt: Date, ttlSeconds: number): string {
+  const fraction = ttlSeconds < 120 ? 0.5 : 0.75
+  return new Date(issuedAt.getTime() + ttlSeconds * fraction * 1000).toISOString()
+}
+
 // ─── Discriminator codes ──────────────────────────────────────────────────────
 
 export type PlaybackCode =
@@ -39,6 +52,9 @@ export interface PlaybackSource {
   audio_codec: string | null
   streamUrl: string
   score: number
+  expiresAt: string         // ISO — when the signed stream URL expires
+  refreshAfter: string      // ISO — when client should proactively refresh (75% of TTL)
+  tokenTtlSeconds: number   // total TTL of the signed token, for client reference
 }
 
 export interface RemoteDirectPlaybackSource {
@@ -47,7 +63,9 @@ export interface RemoteDirectPlaybackSource {
   nodeId: string
   nodeName: string
   streamUrl: string
-  expiresAt: string
+  expiresAt: string         // ISO — when the signed stream URL expires (from remote node)
+  refreshAfter: string      // ISO — when client should proactively refresh (75% of TTL)
+  tokenTtlSeconds: number   // total TTL of the signed token, for client reference
   mediaFileId: string
   contentType: string | null
   container: string | null
@@ -141,6 +159,10 @@ export async function selectBestLocalSource(
     ? `${basePath}?token=${signStreamToken(best.file.id, userId)}`
     : basePath
 
+  const issuedAt = new Date()
+  const expiresAt = new Date(issuedAt.getTime() + MEDIA_TOKEN_TTL_SECONDS * 1000).toISOString()
+  const refreshAfter = computeRefreshAfter(issuedAt, MEDIA_TOKEN_TTL_SECONDS)
+
   return {
     code: 'local_playable',
     nodeId: localNodeId,
@@ -162,6 +184,9 @@ export async function selectBestLocalSource(
     audio_codec: best.version.audio_codec,
     streamUrl,
     score: best.score,
+    expiresAt,
+    refreshAfter,
+    tokenTtlSeconds: MEDIA_TOKEN_TTL_SECONDS,
   }
 }
 
@@ -307,6 +332,12 @@ export async function getPlaybackSource(
                 `if your browser is on the same machine as the remote node (${remoteNodeName}).`
             }
 
+            // Compute refresh metadata from the remote node's expiresAt
+            const remoteNow = new Date()
+            const remoteExpiry = new Date(intentResult.expiresAt)
+            const remoteTtlSeconds = Math.max(0, Math.floor((remoteExpiry.getTime() - remoteNow.getTime()) / 1000))
+            const remoteRefreshAfter = computeRefreshAfter(remoteNow, remoteTtlSeconds)
+
             return {
               source: {
                 code: 'remote_direct',
@@ -315,6 +346,8 @@ export async function getPlaybackSource(
                 nodeName: remoteNodeName,
                 streamUrl: intentResult.streamUrl,
                 expiresAt: intentResult.expiresAt,
+                refreshAfter: remoteRefreshAfter,
+                tokenTtlSeconds: remoteTtlSeconds,
                 mediaFileId: intentResult.mediaFileId,
                 contentType: intentResult.contentType ?? null,
                 container: intentResult.container ?? null,

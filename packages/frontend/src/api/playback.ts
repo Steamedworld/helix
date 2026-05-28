@@ -19,7 +19,7 @@ export interface LocalPlaybackSource {
   selectedFileId: string
   fileId: string
   versionId: string
-  filePath: string
+  filePath?: string
   filename: string
   container: string | null
   quality_label: string | null
@@ -29,6 +29,12 @@ export interface LocalPlaybackSource {
   audio_codec: string | null
   streamUrl: string
   score: number
+  /** ISO timestamp — when the signed stream URL expires. Optional for older server compat. */
+  expiresAt?: string
+  /** ISO timestamp — when the client should proactively refresh (75% of TTL). Optional for older server compat. */
+  refreshAfter?: string
+  /** Total TTL of the signed token in seconds. Optional for older server compat. */
+  tokenTtlSeconds?: number
 }
 
 export interface RemoteDirectPlaybackSource {
@@ -38,6 +44,10 @@ export interface RemoteDirectPlaybackSource {
   nodeName: string
   streamUrl: string
   expiresAt: string
+  /** ISO timestamp — when the client should proactively refresh. Optional for older server compat. */
+  refreshAfter?: string
+  /** Total TTL of the signed token in seconds. Optional for older server compat. */
+  tokenTtlSeconds?: number
   mediaFileId: string
   contentType: string | null
   container: string | null

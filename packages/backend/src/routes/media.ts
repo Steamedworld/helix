@@ -237,6 +237,14 @@ export async function mediaRoutes(
     }
 
     const result = await getPlaybackSource(req.params.id, db, localNodeId, baseUrl ?? null, user.id, dataDir)
+
+    // Strip filesystem path from local source — clients have no need for it
+    // and leaking server paths is a security hygiene issue.
+    if (result.source?.code === 'local_playable') {
+      const { filePath: _filePath, ...safeSource } = result.source
+      return ok({ source: safeSource })
+    }
+
     return ok(result)
   })
 }

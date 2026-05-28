@@ -552,7 +552,7 @@ describe('playback-source: local playback behavior unchanged', () => {
     expect(body.data.source.streamUrl).toContain(`/api/v1/media-files/${fileId}/stream`)
     expect(body.data.source.streamUrl).toContain('?token=')
     // No filesystem path or token leak
-    expect(body.data.source.filePath).toBeTruthy() // filePath is present (internal)
+    expect(body.data.source.filePath).toBeUndefined() // filePath is stripped from the HTTP response
     expect(JSON.stringify(body.data)).not.toContain('api_token')
     expect(JSON.stringify(body.data)).not.toContain('federation_token')
   })

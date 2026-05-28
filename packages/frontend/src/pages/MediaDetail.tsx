@@ -9,6 +9,7 @@ import {
 } from '../api/playback'
 import { searchMetadata, matchMetadata, refreshMetadata } from '../api/metadata'
 import { getNextEpisode } from '../api/tv'
+import { usePlaybackRefresh } from '../hooks/usePlaybackRefresh'
 import type { MediaItemDetail } from '../api/media'
 import type { PlaybackSource, PlaybackCode, LocalPlaybackSource, RemoteDirectPlaybackSource } from '../api/playback'
 import type { MetadataCandidate } from '../api/metadata'
@@ -161,6 +162,9 @@ interface PlayerProps {
   initialPosition: number
   onProgressSaved: (ws: WatchState) => void
   onEpisodeEnded?: (nextEpisode: PlayableEpisode | null, showFinished: boolean) => void
+  refreshError?: string | null
+  isRefreshing?: boolean
+  onManualRetry?: () => void
 }
 
 function isLocalSource(source: PlaybackSource): source is LocalPlaybackSource {
@@ -178,11 +182,15 @@ function DirectPlayer({
   initialPosition,
   onProgressSaved,
   onEpisodeEnded,
+  refreshError,
+  onManualRetry,
 }: PlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const sessionIdRef = useRef<string | null>(null)
   const lastSavedRef = useRef<number>(0)
   const durationRef = useRef<number | null>(null)
+  // Track the stream URL we last applied so we only swap when it actually changes
+  const appliedStreamUrlRef = useRef<string | null>(null)
 
   // For local sources, create a playback session. Remote direct sessions are hub-only
   // (watch state is tracked here on the hub; we do not sync back to the remote node).
@@ -219,6 +227,38 @@ function DirectPlayer({
     video.addEventListener('loadedmetadata', onLoadedMetadata)
     return () => video.removeEventListener('loadedmetadata', onLoadedMetadata)
   }, [initialPosition])
+
+  // Swap stream URL when a refreshed source arrives — preserves playback position.
+  // Does nothing when the URL has not changed (avoids unnecessary interruptions).
+  useEffect(() => {
+    const video = videoRef.current
+    const newUrl = source.streamUrl
+    if (!video || newUrl === appliedStreamUrlRef.current) return
+
+    // First application (mount): the <video src=...> attribute handles it; just record it.
+    if (appliedStreamUrlRef.current === null) {
+      appliedStreamUrlRef.current = newUrl
+      return
+    }
+
+    // Subsequent change: this is a refreshed URL.
+    const savedTime = video.currentTime
+    const wasPaused = video.paused
+
+    appliedStreamUrlRef.current = newUrl
+    video.src = newUrl
+
+    const onReady = () => {
+      video.currentTime = savedTime
+      if (!wasPaused) {
+        video.play().catch(() => { /* user-gesture restriction — acceptable */ })
+      }
+      video.removeEventListener('canplay', onReady)
+      video.removeEventListener('loadedmetadata', onReady)
+    }
+    video.addEventListener('canplay', onReady)
+    video.addEventListener('loadedmetadata', onReady)
+  }, [source.streamUrl])
 
   const saveProgress = useCallback(
     async (position: number, completed: boolean) => {
@@ -378,6 +418,30 @@ function DirectPlayer({
           {source.warning}
         </div>
       )}
+      {/* Refresh error — only shown when expiry metadata is present (new server) */}
+      {refreshError && source.refreshAfter && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            fontSize: 12,
+            color: 'var(--ink-3)',
+            padding: '4px 4px 0',
+          }}
+        >
+          <span>{refreshError}</span>
+          {onManualRetry && (
+            <button
+              onClick={onManualRetry}
+              className="btn btn-sm btn-ghost"
+              style={{ fontSize: 11, padding: '2px 8px' }}
+            >
+              Retry
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -522,7 +586,7 @@ export function MediaDetail() {
   const [marking, setMarking] = useState(false)
 
   // Playback source
-  const [playbackSource, setPlaybackSource] = useState<PlaybackSource | null>(null)
+  const [rawPlaybackSource, setRawPlaybackSource] = useState<PlaybackSource | null>(null)
   const [sourceUnavailable, setSourceUnavailable] = useState<string | null>(null)
   const [sourceCode, setSourceCode] = useState<PlaybackCode | null>(null)
   const [sourceNodeName, setSourceNodeName] = useState<string | null>(null)
@@ -566,7 +630,7 @@ export function MediaDetail() {
             data.reason.toLowerCase().includes('missing')
           )
         } else {
-          setPlaybackSource(data.source)
+          setRawPlaybackSource(data.source)
           setSourceCode(data.source.code)
         }
       } else {
@@ -576,6 +640,42 @@ export function MediaDetail() {
       setSourceLoading(false)
     })
   }, [id])
+
+  // Playback refresh: wraps the raw source with proactive token refresh logic.
+  // Only active for local and remote_direct sources that carry refreshAfter metadata.
+  const refreshableSource =
+    rawPlaybackSource?.code === 'local_playable' || rawPlaybackSource?.code === 'remote_direct'
+      ? rawPlaybackSource
+      : null
+
+  const {
+    source: playbackSource,
+    refreshError,
+    isRefreshing,
+  } = usePlaybackRefresh(refreshableSource, id ?? '')
+
+  // Manual retry: re-fetch the playback source from scratch
+  function handleManualRetry() {
+    if (!id) return
+    setSourceLoading(true)
+    setSourceUnavailable(null)
+    getPlaybackSource(id).then((res) => {
+      if (res.ok && !res.data.unavailable && res.data.source) {
+        setRawPlaybackSource(res.data.source)
+        setSourceCode(res.data.source.code)
+      } else if (res.ok && res.data.unavailable) {
+        setSourceUnavailable(res.data.reason)
+        setSourceCode(res.data.code)
+      } else {
+        setSourceUnavailable('Could not fetch playback source.')
+        setSourceCode('unavailable')
+      }
+      setSourceLoading(false)
+    })
+  }
+
+  // Suppress TS unused-var warning — isRefreshing is intentionally unused in render
+  void isRefreshing
 
   async function handleMarkWatched() {
     if (!id) return
@@ -1038,6 +1138,8 @@ export function MediaDetail() {
             initialPosition={savedPosition}
             onProgressSaved={setWatchState}
             onEpisodeEnded={item.kind === 'episode' ? handleEpisodeEnded : undefined}
+            refreshError={refreshError}
+            onManualRetry={handleManualRetry}
           />
         ) : (
           <PlayerUnavailable

@@ -461,6 +461,175 @@ describe('source selection', () => {
   })
 })
 
+// ─── Refresh metadata on playback-source ──────────────────────────────────────
+
+describe('playback-source refresh metadata', () => {
+  let testDir: string
+  let db: ReturnType<typeof createDb>
+  let localNodeId: string
+  let libraryId: string
+  let app: ReturnType<typeof buildServer>
+  let sessionCookie: string
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `helix-refresh-test-${crypto.randomUUID()}`)
+    mkdirSync(testDir, { recursive: true })
+    db = createTestDb(testDir)
+    localNodeId = await bootstrap(db, testDir)
+
+    const now = new Date().toISOString()
+    libraryId = crypto.randomUUID()
+    await db.insert(libraries).values({
+      id: libraryId,
+      node_id: localNodeId,
+      name: 'Movies',
+      kind: 'movies',
+      root_path: testDir,
+      scan_status: 'idle',
+      created_at: now,
+      updated_at: now,
+    })
+
+    app = buildServer(db, localNodeId, 'http://localhost:3001')
+    await app.ready()
+    sessionCookie = await setupAuth(app)
+  })
+
+  it('local source response includes expiresAt', async () => {
+    const filePath = join(testDir, 'refresh-expires.mp4')
+    const { mediaItemId } = await createMediaFixture(db, localNodeId, libraryId, filePath)
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/media/${mediaItemId}/playback-source`,
+      headers: { Cookie: sessionCookie },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.data.source.expiresAt).toBeDefined()
+    const exp = new Date(body.data.source.expiresAt)
+    expect(exp.getTime()).toBeGreaterThan(Date.now())
+  })
+
+  it('local source response includes refreshAfter that is before expiresAt', async () => {
+    const filePath = join(testDir, 'refresh-after.mp4')
+    const { mediaItemId } = await createMediaFixture(db, localNodeId, libraryId, filePath)
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/media/${mediaItemId}/playback-source`,
+      headers: { Cookie: sessionCookie },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    const src = body.data.source
+    expect(src.refreshAfter).toBeDefined()
+    const refreshAt = new Date(src.refreshAfter).getTime()
+    const expiresAt = new Date(src.expiresAt).getTime()
+    expect(refreshAt).toBeGreaterThan(Date.now())
+    expect(refreshAt).toBeLessThan(expiresAt)
+  })
+
+  it('local source response includes tokenTtlSeconds as a positive integer', async () => {
+    const filePath = join(testDir, 'refresh-ttl.mp4')
+    const { mediaItemId } = await createMediaFixture(db, localNodeId, libraryId, filePath)
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/media/${mediaItemId}/playback-source`,
+      headers: { Cookie: sessionCookie },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(typeof body.data.source.tokenTtlSeconds).toBe('number')
+    expect(body.data.source.tokenTtlSeconds).toBeGreaterThan(0)
+  })
+
+  it('unavailable response does not include refresh metadata', async () => {
+    // No files → unavailable
+    const now = new Date().toISOString()
+    const mediaItemId = crypto.randomUUID()
+    await db.insert(mediaItems).values({
+      id: mediaItemId,
+      library_id: libraryId,
+      kind: 'movie',
+      title: 'No Files',
+      sort_title: 'no files',
+      year: 2020,
+      external_tmdb_id: null,
+      external_tvdb_id: null,
+      external_musicbrainz_id: null,
+      created_at: now,
+      updated_at: now,
+    })
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/media/${mediaItemId}/playback-source`,
+      headers: { Cookie: sessionCookie },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.data.unavailable).toBe(true)
+    expect(body.data.expiresAt).toBeUndefined()
+    expect(body.data.refreshAfter).toBeUndefined()
+    expect(body.data.tokenTtlSeconds).toBeUndefined()
+  })
+
+  it('no filesystem path is exposed in the local playback-source response', async () => {
+    const filePath = join(testDir, 'no-path-leak.mp4')
+    const { mediaItemId } = await createMediaFixture(db, localNodeId, libraryId, filePath)
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/media/${mediaItemId}/playback-source`,
+      headers: { Cookie: sessionCookie },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    const src = body.data.source
+    // filePath must not be present in the HTTP response
+    expect(src.filePath).toBeUndefined()
+    // streamUrl should exist and be a URL (not a raw path)
+    expect(src.streamUrl).toMatch(/^https?:\/\//)
+  })
+
+  it('repeated calls to playback-source still enforce canPlay permission', async () => {
+    const filePath = join(testDir, 'perm-check.mp4')
+    const { mediaItemId } = await createMediaFixture(db, localNodeId, libraryId, filePath)
+
+    // First call succeeds with valid session
+    const res1 = await app.inject({
+      method: 'GET',
+      url: `/api/v1/media/${mediaItemId}/playback-source`,
+      headers: { Cookie: sessionCookie },
+    })
+    expect(res1.statusCode).toBe(200)
+    expect(JSON.parse(res1.body).data.source).toBeDefined()
+
+    // Second call with same session also succeeds
+    const res2 = await app.inject({
+      method: 'GET',
+      url: `/api/v1/media/${mediaItemId}/playback-source`,
+      headers: { Cookie: sessionCookie },
+    })
+    expect(res2.statusCode).toBe(200)
+    expect(JSON.parse(res2.body).data.source).toBeDefined()
+
+    // Unauthenticated call is rejected
+    const res3 = await app.inject({
+      method: 'GET',
+      url: `/api/v1/media/${mediaItemId}/playback-source`,
+    })
+    expect(res3.statusCode).toBe(401)
+  })
+})
+
 describe('playback sessions', () => {
   let testDir: string
   let db: ReturnType<typeof createDb>
