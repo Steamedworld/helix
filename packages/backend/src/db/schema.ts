@@ -190,3 +190,17 @@ export const externalMediaLinks = sqliteTable('external_media_links', {
   created_at: integer('created_at').notNull(),
   updated_at: integer('updated_at').notNull(),
 })
+
+export const trustedHomeInvites = sqliteTable('trusted_home_invites', {
+  id: text('id').primaryKey(),
+  token_hash: text('token_hash').notNull().unique(),
+  label: text('label'),
+  expires_at: integer('expires_at'),
+  used_at: integer('used_at'),
+  revoked_at: integer('revoked_at'),
+  created_by_user_id: text('created_by_user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  created_at: integer('created_at').notNull(),
+  updated_at: integer('updated_at').notNull(),
+}, (t) => ({
+  idx_token_hash: uniqueIndex('idx_invites_token_hash').on(t.token_hash),
+}))

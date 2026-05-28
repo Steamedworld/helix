@@ -10,9 +10,13 @@ import {
   getFederationTokenStatus,
   generateFederationToken,
   revokeFederationToken,
+  createInvite,
+  listInvites,
+  revokeInvite,
+  acceptInvite,
 } from '../api/nodes'
 import { getServerConfig } from '../api/config'
-import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic } from '../api/nodes'
+import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic, InviteSummary } from '../api/nodes'
 import type { ServerConfig } from '../api/config'
 
 // ─── Status chip ──────────────────────────────────────────────────────────────
@@ -113,7 +117,6 @@ interface DiagnosticsPanelProps {
 }
 
 function DiagnosticsPanel({ diagnostic }: DiagnosticsPanelProps) {
-  // Ready: playback available and server address configured + non-loopback
   if (diagnostic.directPlaybackAvailable && diagnostic.baseUrlConfigured) {
     return (
       <div
@@ -139,7 +142,6 @@ function DiagnosticsPanel({ diagnostic }: DiagnosticsPanelProps) {
     )
   }
 
-  // Warning: playback available but server address is unset or loopback
   if (diagnostic.directPlaybackAvailable && !diagnostic.baseUrlConfigured) {
     return (
       <div
@@ -161,7 +163,6 @@ function DiagnosticsPanel({ diagnostic }: DiagnosticsPanelProps) {
     )
   }
 
-  // Error / unsupported
   return (
     <div
       style={{
@@ -193,7 +194,6 @@ function AdminBanner({ hasRemoteNodes, serverConfig, dismissed, onDismiss }: Adm
   if (dismissed) return null
   if (!hasRemoteNodes) return null
   if (!serverConfig) return null
-  // Only show when BASE_URL is unset or loopback
   if (serverConfig.baseUrlConfigured && !serverConfig.baseUrlIsLoopback) return null
 
   return (
@@ -238,7 +238,706 @@ function AdminBanner({ hasRemoteNodes, serverConfig, dismissed, onDismiss }: Adm
   )
 }
 
-// ─── Add trusted home form ────────────────────────────────────────────────────
+// ─── Create Invite panel ──────────────────────────────────────────────────────
+
+interface CreateInvitePanelProps {
+  onDone: () => void
+  serverConfig: ServerConfig | null
+}
+
+function CreateInvitePanel({ onDone, serverConfig }: CreateInvitePanelProps) {
+  const [label, setLabel] = useState('')
+  const [expiryDays, setExpiryDays] = useState<string>('30')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [result, setResult] = useState<{ compact: string; warning: string; baseUrlWarning?: string } | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  const baseUrlOk = serverConfig?.baseUrlConfigured && !serverConfig?.baseUrlIsLoopback
+
+  async function handleGenerate() {
+    setBusy(true)
+    setError(null)
+    const body: { label?: string; expires_in_days?: number } = {}
+    if (label.trim()) body.label = label.trim()
+    if (expiryDays && expiryDays !== 'none') body.expires_in_days = Number(expiryDays)
+
+    const res = await createInvite(body)
+    setBusy(false)
+    if (res.ok) {
+      setResult({
+        compact: res.data.compact,
+        warning: res.data.invite.warning,
+        baseUrlWarning: res.data.base_url_warning,
+      })
+    } else {
+      setError(res.error ?? 'Failed to create invite.')
+    }
+  }
+
+  async function handleCopy() {
+    if (!result) return
+    try {
+      await navigator.clipboard.writeText(result.compact)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      setError('Could not copy to clipboard — select and copy manually.')
+    }
+  }
+
+  if (result) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {result.baseUrlWarning && (
+          <div
+            style={{
+              fontSize: 12,
+              color: '#e6a817',
+              background: 'oklch(0.78 0.14 65 / 0.07)',
+              border: '1px solid oklch(0.78 0.14 65 / 0.25)',
+              borderRadius: 'var(--r-1)',
+              padding: '8px 12px',
+              lineHeight: 1.5,
+            }}
+          >
+            <strong>⚠ Server address not configured.</strong> {result.baseUrlWarning}
+          </div>
+        )}
+
+        <div
+          style={{
+            background: 'var(--bg-2)',
+            borderRadius: 'var(--r-1)',
+            padding: '10px 12px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+          }}
+        >
+          <div style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 500 }}>
+            Invite string — copy this and send to the other home's admin
+          </div>
+          <code
+            style={{
+              fontSize: 11,
+              fontFamily: 'var(--font-mono)',
+              color: 'var(--accent)',
+              wordBreak: 'break-all',
+              userSelect: 'all',
+              lineHeight: 1.5,
+            }}
+          >
+            {result.compact}
+          </code>
+        </div>
+
+        <div
+          style={{
+            fontSize: 12,
+            color: 'var(--bad)',
+            background: 'oklch(0.70 0.13 25 / 0.06)',
+            border: '1px solid oklch(0.70 0.13 25 / 0.20)',
+            borderRadius: 'var(--r-1)',
+            padding: '8px 12px',
+            lineHeight: 1.5,
+          }}
+        >
+          <strong>Security:</strong> {result.warning}
+        </div>
+
+        <div style={{ fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+          After the other admin connects using this invite, go to <strong>Library settings</strong> to choose
+          which libraries users can access from that home.
+        </div>
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-primary btn-sm" onClick={handleCopy}>
+            {copied ? 'Copied!' : 'Copy invite string'}
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={onDone}>
+            Done
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {!baseUrlOk && serverConfig && (
+        <div
+          style={{
+            fontSize: 12,
+            color: '#e6a817',
+            background: 'oklch(0.78 0.14 65 / 0.07)',
+            border: '1px solid oklch(0.78 0.14 65 / 0.25)',
+            borderRadius: 'var(--r-1)',
+            padding: '8px 12px',
+            lineHeight: 1.5,
+          }}
+        >
+          <strong>⚠ Server address not configured.</strong> Set <code>BASE_URL</code> to a LAN, VPN, or HTTPS
+          reverse-proxy URL so the other home can reach this server.{' '}
+          <a href="/settings" style={{ color: 'var(--accent)', textDecoration: 'underline' }}>
+            Settings → Server address
+          </a>
+        </div>
+      )}
+
+      <div style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+        This invite grants the other home's server server-to-server access to your configured libraries.
+        Normal users do not get access automatically — you choose which libraries they can see in Library settings.
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div>
+          <label className="field-label">Label (optional)</label>
+          <input
+            type="text"
+            className="input"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="e.g. For living-room Helix"
+          />
+        </div>
+        <div>
+          <label className="field-label">Expiry</label>
+          <select
+            className="input"
+            value={expiryDays}
+            onChange={(e) => setExpiryDays(e.target.value)}
+            style={{ width: 'auto' }}
+          >
+            <option value="7">7 days</option>
+            <option value="30">30 days</option>
+            <option value="90">90 days</option>
+            <option value="none">No expiry</option>
+          </select>
+        </div>
+      </div>
+
+      {error && <div style={{ fontSize: 13, color: 'var(--bad)' }}>{error}</div>}
+
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button className="btn btn-primary btn-sm" onClick={handleGenerate} disabled={busy}>
+          {busy ? 'Generating…' : 'Generate invite'}
+        </button>
+        <button className="btn btn-ghost btn-sm" onClick={onDone}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Accept Invite panel ──────────────────────────────────────────────────────
+
+interface AcceptInvitePanelProps {
+  onConnected: () => void
+  onCancel: () => void
+}
+
+function AcceptInvitePanel({ onConnected, onCancel }: AcceptInvitePanelProps) {
+  const [inviteText, setInviteText] = useState('')
+  const [preview, setPreview] = useState<{
+    home_name: string
+    server_address: string
+    expires_at: string | null
+    label: string | null
+  } | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [result, setResult] = useState<{ name: string; message: string; alreadyConnected?: boolean } | null>(null)
+
+  function tryPreview(text: string) {
+    const trimmed = text.trim()
+    if (!trimmed) {
+      setPreview(null)
+      setPreviewError(null)
+      return
+    }
+    try {
+      let parsed: Record<string, unknown>
+      if (trimmed.startsWith('{')) {
+        parsed = JSON.parse(trimmed)
+      } else {
+        const padded =
+          trimmed.replace(/-/g, '+').replace(/_/g, '/') +
+          '='.repeat((4 - (trimmed.length % 4)) % 4)
+        parsed = JSON.parse(atob(padded))
+      }
+      if (!parsed.server_address || !parsed.token) {
+        setPreview(null)
+        setPreviewError('Invite is missing required fields.')
+        return
+      }
+      setPreview({
+        home_name: String(parsed.home_name ?? 'Unknown'),
+        server_address: String(parsed.server_address ?? ''),
+        expires_at: parsed.expires_at ? String(parsed.expires_at) : null,
+        label: parsed.label ? String(parsed.label) : null,
+      })
+      setPreviewError(null)
+    } catch {
+      setPreview(null)
+      setPreviewError('Could not parse invite — make sure you pasted the full string.')
+    }
+  }
+
+  function handleChange(text: string) {
+    setInviteText(text)
+    setError(null)
+    setResult(null)
+    tryPreview(text)
+  }
+
+  async function handleConnect() {
+    if (!inviteText.trim()) return
+    setBusy(true)
+    setError(null)
+    const res = await acceptInvite(inviteText.trim())
+    setBusy(false)
+    if (res.ok) {
+      setResult({
+        name: res.data.node_name ?? 'Remote Home',
+        message: res.data.message ?? 'Connected.',
+        alreadyConnected: res.data.already_connected,
+      })
+      onConnected()
+    } else {
+      setError(res.error ?? 'Failed to connect.')
+    }
+  }
+
+  if (result) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div
+          style={{
+            fontSize: 13,
+            color: result.alreadyConnected ? '#e6a817' : 'var(--ok)',
+            background: result.alreadyConnected
+              ? 'oklch(0.78 0.14 65 / 0.07)'
+              : 'oklch(0.78 0.10 152 / 0.07)',
+            border: `1px solid ${result.alreadyConnected ? 'oklch(0.78 0.14 65 / 0.25)' : 'oklch(0.78 0.10 152 / 0.25)'}`,
+            borderRadius: 'var(--r-1)',
+            padding: '10px 12px',
+            lineHeight: 1.5,
+          }}
+        >
+          <strong>{result.alreadyConnected ? 'Already connected.' : `Connected: ${result.name}`}</strong>
+          <br />
+          {result.message}
+        </div>
+        <button className="btn btn-ghost btn-sm" onClick={onCancel}>
+          Close
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+        Paste the invite string you received from the other home's admin.
+      </div>
+
+      <textarea
+        className="input"
+        rows={4}
+        style={{ fontFamily: 'var(--font-mono)', fontSize: 12, resize: 'vertical' }}
+        value={inviteText}
+        onChange={(e) => handleChange(e.target.value)}
+        placeholder="Paste invite string here…"
+      />
+
+      {previewError && (
+        <div style={{ fontSize: 12, color: 'var(--bad)' }}>{previewError}</div>
+      )}
+
+      {preview && (
+        <div
+          style={{
+            fontSize: 12,
+            background: 'var(--bg-2)',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--r-1)',
+            padding: '8px 12px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 4,
+          }}
+        >
+          <div style={{ fontWeight: 600, color: 'var(--ink-1)' }}>Preview</div>
+          <div><span style={{ color: 'var(--ink-4)' }}>Home name:</span> {preview.home_name}</div>
+          <div><span style={{ color: 'var(--ink-4)' }}>Server address:</span> {preview.server_address}</div>
+          {preview.label && <div><span style={{ color: 'var(--ink-4)' }}>Label:</span> {preview.label}</div>}
+          {preview.expires_at && (
+            <div>
+              <span style={{ color: 'var(--ink-4)' }}>Expires:</span>{' '}
+              {new Date(preview.expires_at).toLocaleString()}
+            </div>
+          )}
+        </div>
+      )}
+
+      {error && <div style={{ fontSize: 13, color: 'var(--bad)' }}>{error}</div>}
+
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button
+          className="btn btn-primary btn-sm"
+          onClick={handleConnect}
+          disabled={busy || !inviteText.trim() || !!previewError}
+        >
+          {busy ? 'Connecting…' : 'Connect'}
+        </button>
+        <button className="btn btn-ghost btn-sm" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Invite list ──────────────────────────────────────────────────────────────
+
+interface InviteListProps {
+  refreshKey: number
+}
+
+function InviteList({ refreshKey }: InviteListProps) {
+  const [invites, setInvites] = useState<InviteSummary[]>([])
+  const [loading, setLoading] = useState(true)
+  const [revoking, setRevoking] = useState<string | null>(null)
+
+  useEffect(() => {
+    setLoading(true)
+    listInvites().then((res) => {
+      if (res.ok) setInvites(res.data)
+      setLoading(false)
+    })
+  }, [refreshKey])
+
+  async function handleRevoke(id: string, label: string | null) {
+    if (!confirm(`Revoke invite "${label ?? id}"? The invite string will stop working.`)) return
+    setRevoking(id)
+    const res = await revokeInvite(id)
+    setRevoking(null)
+    if (res.ok) {
+      setInvites((prev) =>
+        prev.map((inv) =>
+          inv.id === id ? { ...inv, revoked_at: Date.now() } : inv
+        )
+      )
+    }
+  }
+
+  if (loading) return <div style={{ fontSize: 13, color: 'var(--ink-4)' }}>Loading…</div>
+  if (invites.length === 0) {
+    return (
+      <div style={{ fontSize: 12, color: 'var(--ink-4)', padding: '8px 0' }}>
+        No invites created yet.
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {invites.map((inv) => {
+        const expired = inv.expires_at !== null && Date.now() > inv.expires_at
+        const active = !inv.revoked_at && !expired && !inv.used_at
+        return (
+          <div
+            key={inv.id}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              padding: '8px 10px',
+              background: 'var(--bg-2)',
+              borderRadius: 'var(--r-1)',
+              fontSize: 12,
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 500, color: 'var(--ink-1)', marginBottom: 2 }}>
+                {inv.label ?? <span style={{ color: 'var(--ink-4)' }}>(no label)</span>}
+              </div>
+              <div style={{ color: 'var(--ink-4)', display: 'flex', flexWrap: 'wrap', gap: '0 12px' }}>
+                <span>Created: {new Date(inv.created_at).toLocaleDateString()}</span>
+                {inv.expires_at && (
+                  <span>Expires: {new Date(inv.expires_at).toLocaleDateString()}</span>
+                )}
+                {inv.used_at && (
+                  <span style={{ color: 'var(--ok)' }}>Used: {new Date(inv.used_at).toLocaleDateString()}</span>
+                )}
+              </div>
+            </div>
+            <div style={{ flexShrink: 0 }}>
+              {inv.revoked_at ? (
+                <span className="chip" style={{ color: 'var(--bad)', borderColor: 'var(--bad)' }}>Revoked</span>
+              ) : expired ? (
+                <span className="chip chip-ghost">Expired</span>
+              ) : inv.used_at ? (
+                <span className="chip chip-accent">Used</span>
+              ) : active ? (
+                <span className="chip chip-accent">Active</span>
+              ) : null}
+            </div>
+            {!inv.revoked_at && (
+              <button
+                className="btn btn-ghost btn-sm"
+                style={{ color: 'var(--bad)', flexShrink: 0 }}
+                onClick={() => handleRevoke(inv.id, inv.label)}
+                disabled={revoking === inv.id}
+              >
+                {revoking === inv.id ? '…' : 'Revoke'}
+              </button>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ─── This home section ────────────────────────────────────────────────────────
+
+interface ThisHomeSectionProps {
+  serverConfig: ServerConfig | null
+  inviteRefreshKey: number
+  onInviteCreated: () => void
+}
+
+function ThisHomeSection({ serverConfig, inviteRefreshKey, onInviteCreated }: ThisHomeSectionProps) {
+  const [hasToken, setHasToken] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [generatedToken, setGeneratedToken] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [showCreateInvite, setShowCreateInvite] = useState(false)
+  const [showInviteList, setShowInviteList] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+
+  useEffect(() => {
+    getFederationTokenStatus().then((res) => {
+      if (res.ok) setHasToken(res.data.hasToken)
+      setLoading(false)
+    })
+  }, [])
+
+  async function handleGenerate() {
+    setBusy(true)
+    setError(null)
+    const res = await generateFederationToken()
+    setBusy(false)
+    if (res.ok) {
+      setHasToken(true)
+      setGeneratedToken(res.data.token)
+    } else {
+      setError(res.error ?? 'Failed to generate token.')
+    }
+  }
+
+  async function handleRevoke() {
+    if (!confirm('Revoke the access token? Trusted homes using it will lose access.')) return
+    setBusy(true)
+    setError(null)
+    const res = await revokeFederationToken()
+    setBusy(false)
+    if (res.ok) {
+      setHasToken(false)
+      setGeneratedToken(null)
+    } else {
+      setError(res.error ?? 'Failed to revoke token.')
+    }
+  }
+
+  function handleInviteDone() {
+    setShowCreateInvite(false)
+    onInviteCreated()
+    setShowInviteList(true)
+  }
+
+  return (
+    <div className="surface" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div>
+        <h3 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 4px', color: 'var(--ink-1)' }}>
+          This Home
+        </h3>
+        <p style={{ fontSize: 13, color: 'var(--ink-3)', margin: 0 }}>
+          Create an invite so another Helix home's admin can connect to this home.
+          The invite grants server-to-server access to your configured libraries.
+        </p>
+      </div>
+
+      {loading ? (
+        <span style={{ fontSize: 13, color: 'var(--ink-4)' }}>Loading…</span>
+      ) : showCreateInvite ? (
+        <CreateInvitePanel serverConfig={serverConfig} onDone={handleInviteDone} />
+      ) : (
+        <>
+          {/* Primary invite action */}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={() => setShowCreateInvite(true)}
+              disabled={busy}
+            >
+              Create invite
+            </button>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => setShowInviteList((v) => !v)}
+            >
+              {showInviteList ? 'Hide invite history' : 'Show invite history'}
+            </button>
+          </div>
+
+          {/* Invite list */}
+          {showInviteList && (
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink-2)', marginBottom: 8 }}>
+                Invite history
+              </div>
+              <InviteList refreshKey={inviteRefreshKey} />
+            </div>
+          )}
+
+          {error && <div style={{ fontSize: 13, color: 'var(--bad)' }}>{error}</div>}
+
+          {/* Advanced manual setup (collapsed) */}
+          <div>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => setShowAdvanced((v) => !v)}
+              style={{ fontSize: 12, color: 'var(--ink-4)' }}
+            >
+              {showAdvanced ? '▲ Hide advanced setup' : '▼ Advanced manual setup'}
+            </button>
+
+            {showAdvanced && (
+              <div
+                style={{
+                  marginTop: 10,
+                  padding: '14px',
+                  background: 'var(--bg-2)',
+                  borderRadius: 'var(--r-1)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10,
+                }}
+              >
+                <div style={{ fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+                  Generate a raw access token to manually configure a connection without using the invite flow.
+                  The other admin must paste this token directly into their home's "Add Trusted Home" form.
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontSize: 12, color: 'var(--ink-2)' }}>Access token:</span>
+                  {hasToken ? (
+                    <span className="chip chip-accent">Active</span>
+                  ) : (
+                    <span className="chip chip-ghost">Not set</span>
+                  )}
+                </div>
+
+                {generatedToken && (
+                  <div
+                    style={{
+                      padding: '10px 12px',
+                      background: 'var(--bg-3)',
+                      borderRadius: 'var(--r-1)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 6,
+                    }}
+                  >
+                    <span style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 500 }}>
+                      Copy this token now — it will not be shown again.
+                    </span>
+                    <code
+                      style={{
+                        fontSize: 12,
+                        fontFamily: 'var(--font-mono)',
+                        color: 'var(--accent)',
+                        wordBreak: 'break-all',
+                        userSelect: 'all',
+                      }}
+                    >
+                      {generatedToken}
+                    </code>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={handleGenerate}
+                    disabled={busy}
+                  >
+                    {hasToken ? 'Regenerate token' : 'Generate token'}
+                  </button>
+                  {hasToken && (
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={handleRevoke}
+                      disabled={busy}
+                      style={{ color: 'var(--bad)' }}
+                    >
+                      Revoke
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ─── Connect using invite section ─────────────────────────────────────────────
+
+interface ConnectWithInviteSectionProps {
+  onConnected: () => void
+}
+
+function ConnectWithInviteSection({ onConnected }: ConnectWithInviteSectionProps) {
+  const [showPanel, setShowPanel] = useState(false)
+
+  function handleConnected() {
+    onConnected()
+  }
+
+  return (
+    <div className="surface" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div>
+        <h3 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 4px', color: 'var(--ink-1)' }}>
+          Connect using invite
+        </h3>
+        <p style={{ fontSize: 13, color: 'var(--ink-3)', margin: 0 }}>
+          Paste an invite string from another Helix home's admin to establish a connection.
+        </p>
+      </div>
+
+      {showPanel ? (
+        <AcceptInvitePanel
+          onConnected={handleConnected}
+          onCancel={() => setShowPanel(false)}
+        />
+      ) : (
+        <button className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => setShowPanel(true)}>
+          Paste invite and connect
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ─── Add trusted home form (manual, advanced) ─────────────────────────────────
 
 interface AddNodeFormProps {
   onCreated: (node: NodeRecord) => void
@@ -280,7 +979,7 @@ function AddNodeForm({ onCreated, onCancel }: AddNodeFormProps) {
       style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: 14 }}
     >
       <h3 style={{ fontSize: 15, fontWeight: 600, margin: 0, color: 'var(--ink-1)' }}>
-        Add Trusted Home
+        Add Trusted Home (manual)
       </h3>
 
       <div>
@@ -306,12 +1005,12 @@ function AddNodeForm({ onCreated, onCancel }: AddNodeFormProps) {
       </div>
 
       <div>
-        <label className="field-label">Sharing token</label>
+        <label className="field-label">Access token</label>
         <input
           type="password"
           value={apiToken}
           onChange={(e) => setApiToken(e.target.value)}
-          placeholder="Paste token from the trusted home"
+          placeholder="Paste access token from the trusted home"
           className="input"
         />
       </div>
@@ -329,131 +1028,6 @@ function AddNodeForm({ onCreated, onCancel }: AddNodeFormProps) {
         </button>
       </div>
     </form>
-  )
-}
-
-// ─── This home section ────────────────────────────────────────────────────────
-
-function ThisHomeSection() {
-  const [hasToken, setHasToken] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [generatedToken, setGeneratedToken] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    getFederationTokenStatus().then((res) => {
-      if (res.ok) setHasToken(res.data.hasToken)
-      setLoading(false)
-    })
-  }, [])
-
-  async function handleGenerate() {
-    setBusy(true)
-    setError(null)
-    const res = await generateFederationToken()
-    setBusy(false)
-    if (res.ok) {
-      setHasToken(true)
-      setGeneratedToken(res.data.token)
-    } else {
-      setError(res.error ?? 'Failed to generate token.')
-    }
-  }
-
-  async function handleRevoke() {
-    if (!confirm('Revoke the sharing token? Trusted homes using it will lose access.')) return
-    setBusy(true)
-    setError(null)
-    const res = await revokeFederationToken()
-    setBusy(false)
-    if (res.ok) {
-      setHasToken(false)
-      setGeneratedToken(null)
-    } else {
-      setError(res.error ?? 'Failed to revoke token.')
-    }
-  }
-
-  return (
-    <div className="surface" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div>
-        <h3 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 4px', color: 'var(--ink-1)' }}>
-          This Home
-        </h3>
-        <p style={{ fontSize: 13, color: 'var(--ink-3)', margin: 0 }}>
-          Generate a sharing token so other Helix homes can read this home's catalog.
-        </p>
-      </div>
-
-      {loading ? (
-        <span style={{ fontSize: 13, color: 'var(--ink-4)' }}>Loading…</span>
-      ) : (
-        <>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 13, color: 'var(--ink-2)' }}>
-              Sharing token:
-            </span>
-            {hasToken ? (
-              <span className="chip chip-accent">Active</span>
-            ) : (
-              <span className="chip chip-ghost">Not set</span>
-            )}
-          </div>
-
-          {generatedToken && (
-            <div
-              className="surface"
-              style={{
-                padding: '12px 14px',
-                background: 'var(--bg-2)',
-                borderRadius: 'var(--r-2)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 6,
-              }}
-            >
-              <span style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 500 }}>
-                Copy this token now — it will not be shown again.
-              </span>
-              <code
-                style={{
-                  fontSize: 12,
-                  fontFamily: 'var(--font-mono)',
-                  color: 'var(--accent)',
-                  wordBreak: 'break-all',
-                  userSelect: 'all',
-                }}
-              >
-                {generatedToken}
-              </code>
-            </div>
-          )}
-
-          {error && <div style={{ fontSize: 13, color: 'var(--bad)' }}>{error}</div>}
-
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              className="btn btn-primary btn-sm"
-              onClick={handleGenerate}
-              disabled={busy}
-            >
-              {hasToken ? 'Regenerate Token' : 'Generate Token'}
-            </button>
-            {hasToken && (
-              <button
-                className="btn btn-ghost btn-sm"
-                onClick={handleRevoke}
-                disabled={busy}
-                style={{ color: 'var(--bad)' }}
-              >
-                Revoke
-              </button>
-            )}
-          </div>
-        </>
-      )}
-    </div>
   )
 }
 
@@ -484,7 +1058,6 @@ function TrustedHomeRow({ node, onDeleted, onUpdated }: NodeRowProps) {
       if (!res.data.online) {
         setError(res.data.error ?? 'Connection failed')
       }
-      // Refresh node data by refetching list — caller handles via onUpdated
     } else {
       setError(res.error ?? 'Test failed')
     }
@@ -526,7 +1099,6 @@ function TrustedHomeRow({ node, onDeleted, onUpdated }: NodeRowProps) {
     }
   }
 
-  // Suppress unused warning
   void onUpdated
 
   return (
@@ -593,7 +1165,6 @@ function TrustedHomeRow({ node, onDeleted, onUpdated }: NodeRowProps) {
         </span>
       </div>
 
-      {/* Inline diagnostics result (shown after Check connection) */}
       {diagnostic && <DiagnosticsPanel diagnostic={diagnostic} />}
 
       {node.last_error && (
@@ -620,9 +1191,10 @@ export function Nodes() {
   const { user } = useAuth()
   const [nodes, setNodes] = useState<NodeRecord[]>([])
   const [loading, setLoading] = useState(true)
-  const [showAddForm, setShowAddForm] = useState(false)
+  const [showManualAddForm, setShowManualAddForm] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [serverConfig, setServerConfig] = useState<ServerConfig | null>(null)
+  const [inviteRefreshKey, setInviteRefreshKey] = useState(0)
   const [bannerDismissed, setBannerDismissed] = useState(() => {
     try {
       return sessionStorage.getItem(BANNER_DISMISSED_KEY) === 'true'
@@ -651,7 +1223,7 @@ export function Nodes() {
 
   function handleCreated(node: NodeRecord) {
     setNodes((prev) => [...prev, node])
-    setShowAddForm(false)
+    setShowManualAddForm(false)
   }
 
   function handleDeleted(id: string) {
@@ -667,8 +1239,13 @@ export function Nodes() {
     try {
       sessionStorage.setItem(BANNER_DISMISSED_KEY, 'true')
     } catch {
-      // sessionStorage unavailable — dismissed only for this render
+      // sessionStorage unavailable
     }
+  }
+
+  function handleConnected() {
+    // Reload node list after invite-based connection
+    loadNodes()
   }
 
   if (user?.role !== 'admin') {
@@ -696,7 +1273,7 @@ export function Nodes() {
           Trusted Homes
         </h1>
         <p style={{ fontSize: 13, color: 'var(--ink-3)', margin: 0 }}>
-          Register other Helix homes to browse their shared libraries alongside your own.
+          Connect other Helix homes to access their private libraries alongside your own.
         </p>
       </div>
 
@@ -708,8 +1285,17 @@ export function Nodes() {
         onDismiss={handleDismissBanner}
       />
 
-      <ThisHomeSection />
+      {/* This Home: create invites and manage access token */}
+      <ThisHomeSection
+        serverConfig={serverConfig}
+        inviteRefreshKey={inviteRefreshKey}
+        onInviteCreated={() => setInviteRefreshKey((k) => k + 1)}
+      />
 
+      {/* Connect using invite from another home */}
+      <ConnectWithInviteSection onConnected={handleConnected} />
+
+      {/* Connected trusted homes list */}
       <div>
         <div
           style={{
@@ -720,23 +1306,24 @@ export function Nodes() {
           }}
         >
           <h2 style={{ fontSize: 15, fontWeight: 600, margin: 0, color: 'var(--ink-1)' }}>
-            Trusted Homes
+            Connected Trusted Homes
           </h2>
-          {!showAddForm && (
+          {!showManualAddForm && (
             <button
-              className="btn btn-primary btn-sm"
-              onClick={() => setShowAddForm(true)}
+              className="btn btn-ghost btn-sm"
+              style={{ fontSize: 12 }}
+              onClick={() => setShowManualAddForm(true)}
             >
-              Add Trusted Home
+              + Manual setup
             </button>
           )}
         </div>
 
-        {showAddForm && (
+        {showManualAddForm && (
           <div style={{ marginBottom: 16 }}>
             <AddNodeForm
               onCreated={handleCreated}
-              onCancel={() => setShowAddForm(false)}
+              onCancel={() => setShowManualAddForm(false)}
             />
           </div>
         )}
@@ -750,7 +1337,7 @@ export function Nodes() {
             className="surface"
             style={{ padding: '20px', fontSize: 13, color: 'var(--ink-4)', textAlign: 'center' }}
           >
-            No trusted homes registered yet.
+            No trusted homes connected yet. Use "Connect using invite" above to add one.
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

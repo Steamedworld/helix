@@ -106,3 +106,69 @@ export function revokeFederationToken() {
     method: 'DELETE',
   })
 }
+
+// ─── Trusted Home invite API ───────────────────────────────────────────────────
+
+export interface InvitePayload {
+  helix_invite: '1'
+  home_name: string
+  server_address: string
+  token: string
+  invite_id: string
+  label: string | null
+  expires_at: string | null
+  generated_at: string
+  warning: string
+}
+
+export interface InviteSummary {
+  id: string
+  label: string | null
+  created_at: number
+  expires_at: number | null
+  used_at: number | null
+  revoked_at: number | null
+  created_by_user_id: string
+}
+
+export interface CreateInviteResponse {
+  invite: InvitePayload
+  compact: string
+  base_url_warning?: string
+}
+
+export interface AcceptInviteResponse {
+  connected?: boolean
+  already_connected?: boolean
+  node_id: string
+  node_name?: string
+  server_address?: string
+  message?: string
+  sync_available?: boolean
+  node_status?: string
+}
+
+export function createInvite(body: { label?: string; expires_in_days?: number }) {
+  return apiFetch<CreateInviteResponse>('/api/v1/trusted-home-invites', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export function listInvites() {
+  return apiFetch<InviteSummary[]>('/api/v1/trusted-home-invites')
+}
+
+export function revokeInvite(id: string) {
+  return apiFetch<{ revoked: boolean; id: string }>(
+    `/api/v1/trusted-home-invites/${id}`,
+    { method: 'DELETE' }
+  )
+}
+
+export function acceptInvite(invite: string) {
+  return apiFetch<AcceptInviteResponse>('/api/v1/trusted-homes/accept-invite', {
+    method: 'POST',
+    body: JSON.stringify({ invite }),
+  })
+}

@@ -19,6 +19,7 @@ import { userRoutes } from './routes/users'
 import { integrationRoutes } from './routes/integrations'
 import { webhookRoutes } from './routes/webhooks'
 import { enrichmentQueueRoutes } from './routes/enrichmentQueue'
+import { trustedHomeInviteRoutes, acceptInviteRoutes } from './routes/trustedHomeInvites'
 import { enrichmentQueue } from './services/enrichmentQueue'
 import { err } from './lib/response'
 import type { DrizzleDB } from './db/client'
@@ -148,6 +149,24 @@ export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string
     db,
     dataDir: resolvedDataDir,
   } as Parameters<typeof webhookRoutes>[1] & { prefix: string })
+
+  // Trusted Home invite routes (admin only)
+  app.register(trustedHomeInviteRoutes, {
+    prefix: '/api/v1/trusted-home-invites',
+    db,
+    localNodeId,
+    dataDir: resolvedDataDir,
+    baseUrl: baseUrl ?? null,
+  } as Parameters<typeof trustedHomeInviteRoutes>[1] & { prefix: string })
+
+  // Accept invite route (admin only)
+  app.register(acceptInviteRoutes, {
+    prefix: '/api/v1/trusted-homes',
+    db,
+    localNodeId,
+    dataDir: resolvedDataDir,
+    baseUrl: baseUrl ?? null,
+  } as Parameters<typeof acceptInviteRoutes>[1] & { prefix: string })
 
   // Enrichment queue routes + background runner
   app.register(enrichmentQueueRoutes, {

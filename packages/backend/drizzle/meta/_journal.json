@@ -79,5 +79,13 @@
       "tag": "0009_node_capabilities",
       "breakpoints": true
     }
+    ,
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1748995300000,
+      "tag": "0010_trusted_home_invites",
+      "breakpoints": true
+    }
   ]
 }
