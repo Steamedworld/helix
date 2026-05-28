@@ -48,7 +48,7 @@ export function Dashboard() {
     return (
       <EmptyState
         title="No libraries available"
-        description="You haven't been granted access to any libraries yet. Ask your Helix administrator to grant you access."
+        description="No libraries have been shared with your account yet. Contact your Helix admin to get access."
       />
     )
   }

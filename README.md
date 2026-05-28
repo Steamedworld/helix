@@ -234,7 +234,24 @@ Checking "Sync catalog after connecting" (default: on) fetches the remote catalo
 
 **After connecting:**
 
-Connecting via invite does not automatically grant normal users access to any libraries. An admin must explicitly grant per-user access in **Library settings** → Permissions.
+Connecting via invite does not automatically grant normal users access to any libraries. An admin must explicitly grant per-user access. See the Post-connection workflow section below.
+
+### Post-connection workflow
+
+After connecting a Trusted Home, remote libraries appear in the Trusted Homes panel but normal users cannot access them until an admin explicitly grants permissions.
+
+1. After connecting a Trusted Home and syncing its catalog, click **Set up access** (shown in the connection success panel) or open the home's **Manage Access** section in the Connected Trusted Homes list.
+2. For each remote library, grant `can_view` and/or `can_play` to specific users using the checkboxes.
+3. Click **Save access settings** to apply.
+4. Users without explicit grants cannot see or play remote libraries.
+5. Admins always have access regardless of grants.
+6. Grant access only for media and users you are authorized to manage.
+
+**Access model:**
+- `can_view`: user can see the library and browse its contents
+- `can_play`: user can play media from the library (requires `can_view`)
+- No automatic access is granted by connecting a Trusted Home
+- Revoking `can_view` also revokes `can_play`
 
 ### Advanced manual setup
 
@@ -461,6 +478,8 @@ The DB schema is federation-aware: every `media_file` carries a `node_id`. Remot
 | GET | `/api/v1/trusted-home-invites` | List invites (no raw token in response) |
 | DELETE | `/api/v1/trusted-home-invites/:id` | Revoke invite (sets `revoked_at`, row kept) |
 | POST | `/api/v1/trusted-homes/accept-invite` | Accept invite string, test remote health, create node entry |
+| GET | `/api/v1/nodes/:id/access-summary` | Per-library grant summary for a remote node; includes grants and ungranted users |
+| PUT | `/api/v1/nodes/:id/access` | Bulk upsert library permissions for a remote node (`grants: [{libraryId, userId, canView, canPlay}]`) |
 
 ### Remote artwork proxy (session auth)
 
@@ -529,6 +548,7 @@ The DB schema is federation-aware: every `media_file` carries a `node_id`. Remot
 - [x] Trusted Home capability contract — capability advertisement endpoint, hub-side capability caching, structured playback-source codes, playback-intent placeholder
 - [x] Direct playback signing — source home generates HMAC-signed stream URLs; browser streams directly without hub proxy; sharing token never exposed
 - [x] Trusted Home invite flow — create and exchange invite strings to connect homes; no manual token/address copy-paste required; invite history with revocation
+- [x] Trusted Home access workflow — per-library, per-user access grants for remote libraries; Manage Access panel in Trusted Homes UI; post-connect "Set up access" flow
 - [ ] Episode still image download and caching
 - [ ] MusicBrainz provider for music libraries
 - [ ] TVDB provider for alternate TV metadata

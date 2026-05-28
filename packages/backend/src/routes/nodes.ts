@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
-import { eq } from 'drizzle-orm'
-import { nodes, mediaItems } from '../db/schema'
+import { eq, and, inArray } from 'drizzle-orm'
+import { nodes, mediaItems, libraries, libraryPermissions, users } from '../db/schema'
 import { ok, err } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
 import { makeRequireAdmin, makeRequireAuth } from '../middleware/auth'
@@ -412,6 +412,247 @@ export async function nodeRoutes(
       reply.header('Content-Length', String(buffer.length))
       reply.header('Cache-Control', 'public, max-age=86400')
       return reply.send(buffer)
+    }
+  )
+
+  // ─── Trusted Home access management ──────────────────────────────────────────
+
+  /**
+   * GET /:id/access-summary — per-library grant summary for a remote node (admin only).
+   *
+   * Returns:
+   *   { node: { id, name, address }, libraries: [ { id, name, kind, grants, ungrantedUsers } ] }
+   *
+   * - Only returns libraries belonging to this node.
+   * - Never exposes password_hash, token_hash, or credential fields.
+   * - ungrantedUsers = non-admin users with no grant row for that library.
+   */
+  app.get<{ Params: { id: string } }>(
+    '/:id/access-summary',
+    { preHandler: requireAdmin },
+    async (req, reply) => {
+      const { id: nodeId } = req.params
+
+      const [node] = await db.select().from(nodes).where(eq(nodes.id, nodeId))
+      if (!node) {
+        reply.status(404)
+        return err('Node not found')
+      }
+
+      // Get libraries for this node
+      const nodeLibraries = await db
+        .select()
+        .from(libraries)
+        .where(eq(libraries.node_id, nodeId))
+
+      // Get all non-admin users
+      const allUsers = await db
+        .select({
+          id: users.id,
+          display_name: users.display_name,
+          username: users.username,
+          role: users.role,
+        })
+        .from(users)
+        .where(eq(users.disabled, 0))
+
+      const nonAdminUsers = allUsers.filter((u) => u.role !== 'admin')
+
+      // Build library summaries
+      const librarySummaries = await Promise.all(
+        nodeLibraries.map(async (lib) => {
+          const perms = await db
+            .select({
+              user_id: libraryPermissions.user_id,
+              can_view: libraryPermissions.can_view,
+              can_play: libraryPermissions.can_play,
+              display_name: users.display_name,
+              username: users.username,
+            })
+            .from(libraryPermissions)
+            .innerJoin(users, eq(libraryPermissions.user_id, users.id))
+            .where(eq(libraryPermissions.library_id, lib.id))
+
+          const grantedUserIds = new Set(perms.map((p) => p.user_id))
+
+          const grants = perms.map((p) => ({
+            userId: p.user_id,
+            userName: p.display_name ?? p.username ?? p.user_id,
+            canView: p.can_view,
+            canPlay: p.can_play,
+          }))
+
+          const ungrantedUsers = nonAdminUsers
+            .filter((u) => !grantedUserIds.has(u.id))
+            .map((u) => ({
+              userId: u.id,
+              userName: u.display_name ?? u.username ?? u.id,
+            }))
+
+          return {
+            id: lib.id,
+            name: lib.name,
+            kind: lib.kind,
+            grants,
+            ungrantedUsers,
+          }
+        })
+      )
+
+      return ok({
+        node: {
+          id: node.id,
+          name: node.name,
+          address: node.base_url ?? null,
+        },
+        libraries: librarySummaries,
+      })
+    }
+  )
+
+  /**
+   * PUT /:id/access — bulk upsert library permissions for a remote node (admin only).
+   *
+   * Body: { grants: [ { libraryId, userId, canView, canPlay } ] }
+   *
+   * - Validates each libraryId belongs to this node (403 if not).
+   * - Upserts into library_permissions.
+   * - canView: false + canPlay: false effectively revokes.
+   * - Idempotent.
+   * - Returns updated access summary for affected libraries.
+   */
+  app.put<{
+    Params: { id: string }
+    Body: { grants: Array<{ libraryId: string; userId: string; canView: boolean; canPlay: boolean }> }
+  }>(
+    '/:id/access',
+    { preHandler: requireAdmin },
+    async (req, reply) => {
+      const { id: nodeId } = req.params
+      const { grants } = req.body ?? {}
+
+      const [node] = await db.select().from(nodes).where(eq(nodes.id, nodeId))
+      if (!node) {
+        reply.status(404)
+        return err('Node not found')
+      }
+
+      if (!Array.isArray(grants) || grants.length === 0) {
+        reply.status(400)
+        return err('grants array is required and must not be empty')
+      }
+
+      // Get libraries for this node
+      const nodeLibraries = await db
+        .select({ id: libraries.id })
+        .from(libraries)
+        .where(eq(libraries.node_id, nodeId))
+      const nodeLibraryIdSet = new Set(nodeLibraries.map((l) => l.id))
+
+      // Validate all libraryIds belong to this node
+      for (const grant of grants) {
+        if (!nodeLibraryIdSet.has(grant.libraryId)) {
+          reply.status(403)
+          return err(`Library ${grant.libraryId} does not belong to node ${nodeId}`)
+        }
+      }
+
+      const now = new Date().toISOString()
+      const affectedLibraryIds = new Set<string>()
+
+      // Upsert each grant
+      for (const grant of grants) {
+        affectedLibraryIds.add(grant.libraryId)
+
+        // Check for admin users — skip silently (admins always have access)
+        const [targetUser] = await db
+          .select({ role: users.role })
+          .from(users)
+          .where(eq(users.id, grant.userId))
+          .limit(1)
+        if (targetUser?.role === 'admin') continue
+
+        const [existing] = await db
+          .select()
+          .from(libraryPermissions)
+          .where(
+            and(
+              eq(libraryPermissions.library_id, grant.libraryId),
+              eq(libraryPermissions.user_id, grant.userId)
+            )
+          )
+          .limit(1)
+
+        if (existing) {
+          await db
+            .update(libraryPermissions)
+            .set({ can_view: grant.canView, can_play: grant.canPlay, updated_at: now })
+            .where(eq(libraryPermissions.id, existing.id))
+        } else {
+          await db.insert(libraryPermissions).values({
+            id: crypto.randomUUID(),
+            library_id: grant.libraryId,
+            user_id: grant.userId,
+            can_view: grant.canView,
+            can_play: grant.canPlay,
+            created_at: now,
+            updated_at: now,
+          })
+        }
+      }
+
+      // Return updated summary for affected libraries
+      const affectedIds = Array.from(affectedLibraryIds)
+      const updatedLibraries = await db
+        .select()
+        .from(libraries)
+        .where(inArray(libraries.id, affectedIds))
+
+      const allNonAdminUsers = await db
+        .select({
+          id: users.id,
+          display_name: users.display_name,
+          username: users.username,
+          role: users.role,
+        })
+        .from(users)
+        .where(eq(users.disabled, 0))
+      const nonAdminUsers = allNonAdminUsers.filter((u) => u.role !== 'admin')
+
+      const updatedSummaries = await Promise.all(
+        updatedLibraries.map(async (lib) => {
+          const perms = await db
+            .select({
+              user_id: libraryPermissions.user_id,
+              can_view: libraryPermissions.can_view,
+              can_play: libraryPermissions.can_play,
+              display_name: users.display_name,
+              username: users.username,
+            })
+            .from(libraryPermissions)
+            .innerJoin(users, eq(libraryPermissions.user_id, users.id))
+            .where(eq(libraryPermissions.library_id, lib.id))
+
+          const grantedUserIds = new Set(perms.map((p) => p.user_id))
+
+          return {
+            id: lib.id,
+            name: lib.name,
+            kind: lib.kind,
+            grants: perms.map((p) => ({
+              userId: p.user_id,
+              userName: p.display_name ?? p.username ?? p.user_id,
+              canView: p.can_view,
+              canPlay: p.can_play,
+            })),
+            ungrantedUsers: nonAdminUsers
+              .filter((u) => !grantedUserIds.has(u.id))
+              .map((u) => ({ userId: u.id, userName: u.display_name ?? u.username ?? u.id })),
+          }
+        })
+      )
+
+      return ok({ updated: true, libraries: updatedSummaries })
     }
   )
 }

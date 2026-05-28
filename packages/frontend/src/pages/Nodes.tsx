@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useAuth } from '../context/AuthContext'
 import {
   listNodes,
@@ -14,9 +14,11 @@ import {
   listInvites,
   revokeInvite,
   acceptInvite,
+  getNodeAccessSummary,
+  updateNodeAccess,
 } from '../api/nodes'
 import { getServerConfig } from '../api/config'
-import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic, InviteSummary, AcceptInviteResponse } from '../api/nodes'
+import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic, InviteSummary, AcceptInviteResponse, AccessLibrarySummary, AccessUpdateGrant } from '../api/nodes'
 import type { ServerConfig } from '../api/config'
 
 // ─── Status chip ──────────────────────────────────────────────────────────────
@@ -455,9 +457,10 @@ function CreateInvitePanel({ onDone, serverConfig }: CreateInvitePanelProps) {
 interface AcceptInvitePanelProps {
   onConnected: () => void
   onCancel: () => void
+  onSetupAccess?: (nodeId: string) => void
 }
 
-function AcceptInvitePanel({ onConnected, onCancel }: AcceptInvitePanelProps) {
+function AcceptInvitePanel({ onConnected, onCancel, onSetupAccess }: AcceptInvitePanelProps) {
   const [inviteText, setInviteText] = useState('')
   const [preview, setPreview] = useState<{
     home_name: string
@@ -471,6 +474,7 @@ function AcceptInvitePanel({ onConnected, onCancel }: AcceptInvitePanelProps) {
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<{
     name: string
+    nodeId: string
     message: string
     alreadyConnected?: boolean
     syncResult?: AcceptInviteResponse['sync_result']
@@ -529,6 +533,7 @@ function AcceptInvitePanel({ onConnected, onCancel }: AcceptInvitePanelProps) {
     if (res.ok) {
       setResult({
         name: res.data.node_name ?? 'Remote Home',
+        nodeId: res.data.node_id,
         message: res.data.message ?? 'Connected.',
         alreadyConnected: res.data.already_connected,
         syncResult: res.data.sync_result,
@@ -542,6 +547,7 @@ function AcceptInvitePanel({ onConnected, onCancel }: AcceptInvitePanelProps) {
   }
 
   if (result) {
+    const hasSyncedItems = result.syncResult && result.syncResult.items_synced > 0
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <div
@@ -557,16 +563,16 @@ function AcceptInvitePanel({ onConnected, onCancel }: AcceptInvitePanelProps) {
             lineHeight: 1.5,
           }}
         >
-          <strong>{result.alreadyConnected ? 'Already connected.' : `Connected: ${result.name}`}</strong>
-          <br />
-          {result.message}
+          <strong>{result.alreadyConnected ? 'Already connected.' : `Connected to ${result.name}.`}</strong>
+          {result.syncResult && !result.alreadyConnected && (
+            <>
+              <br />
+              {hasSyncedItems
+                ? `Synced ${result.syncResult.items_synced} ${result.syncResult.items_synced === 1 ? 'item' : 'items'} from remote catalog.`
+                : 'No items synced from remote catalog.'}
+            </>
+          )}
         </div>
-
-        {result.syncResult && (
-          <div style={{ fontSize: 12, color: 'var(--ok)' }}>
-            Synced {result.syncResult.items_synced} {result.syncResult.items_synced === 1 ? 'item' : 'items'} from the remote catalog.
-          </div>
-        )}
 
         {result.syncWarning && (
           <div style={{ fontSize: 12, color: '#e6a817' }}>
@@ -581,9 +587,22 @@ function AcceptInvitePanel({ onConnected, onCancel }: AcceptInvitePanelProps) {
         )}
 
         {!result.alreadyConnected && (
-          <div style={{ fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.5 }}>
-            After connecting, choose which libraries users can access in <strong>Library settings</strong>.
-          </div>
+          <>
+            {(!syncNow || !hasSyncedItems) && (
+              <div style={{ fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+                Sync this home's catalog before assigning library access.
+              </div>
+            )}
+            {onSetupAccess && (
+              <button
+                className="btn btn-primary btn-sm"
+                style={{ alignSelf: 'flex-start' }}
+                onClick={() => onSetupAccess(result.nodeId)}
+              >
+                Set up access
+              </button>
+            )}
+          </>
         )}
 
         <button className="btn btn-ghost btn-sm" onClick={onCancel}>
@@ -968,9 +987,10 @@ function ThisHomeSection({ serverConfig, inviteRefreshKey, onInviteCreated }: Th
 
 interface ConnectWithInviteSectionProps {
   onConnected: () => void
+  onSetupAccess: (nodeId: string) => void
 }
 
-function ConnectWithInviteSection({ onConnected }: ConnectWithInviteSectionProps) {
+function ConnectWithInviteSection({ onConnected, onSetupAccess }: ConnectWithInviteSectionProps) {
   const [showPanel, setShowPanel] = useState(false)
 
   function handleConnected() {
@@ -992,6 +1012,7 @@ function ConnectWithInviteSection({ onConnected }: ConnectWithInviteSectionProps
         <AcceptInvitePanel
           onConnected={handleConnected}
           onCancel={() => setShowPanel(false)}
+          onSetupAccess={onSetupAccess}
         />
       ) : (
         <button className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => setShowPanel(true)}>
@@ -1096,21 +1117,218 @@ function AddNodeForm({ onCreated, onCancel }: AddNodeFormProps) {
   )
 }
 
+// ─── Manage Access panel ─────────────────────────────────────────────────────
+
+interface ManageAccessPanelProps {
+  nodeId: string
+}
+
+function ManageAccessPanel({ nodeId }: ManageAccessPanelProps) {
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [saveSuccess, setSaveSuccess] = useState(false)
+  const [libraries, setLibraries] = useState<AccessLibrarySummary[]>([])
+  // Local grant state: Map<`${libraryId}:${userId}`, { canView, canPlay }>
+  const [grantState, setGrantState] = useState<Map<string, { canView: boolean; canPlay: boolean }>>(new Map())
+
+  useEffect(() => {
+    setLoading(true)
+    setError(null)
+    getNodeAccessSummary(nodeId).then((res) => {
+      setLoading(false)
+      if (res.ok) {
+        setLibraries(res.data.libraries)
+        // Initialise local grant state from existing grants
+        const map = new Map<string, { canView: boolean; canPlay: boolean }>()
+        for (const lib of res.data.libraries) {
+          for (const g of lib.grants) {
+            map.set(`${lib.id}:${g.userId}`, { canView: g.canView, canPlay: g.canPlay })
+          }
+          for (const u of lib.ungrantedUsers) {
+            map.set(`${lib.id}:${u.userId}`, { canView: false, canPlay: false })
+          }
+        }
+        setGrantState(map)
+      } else {
+        setError(res.error ?? 'Failed to load access summary.')
+      }
+    })
+  }, [nodeId])
+
+  function handleToggle(libraryId: string, userId: string, field: 'canView' | 'canPlay') {
+    setGrantState((prev) => {
+      const key = `${libraryId}:${userId}`
+      const cur = prev.get(key) ?? { canView: false, canPlay: false }
+      const next = { ...cur }
+      if (field === 'canView') {
+        next.canView = !cur.canView
+        // Revoking view also revokes play
+        if (!next.canView) next.canPlay = false
+      } else {
+        next.canPlay = !cur.canPlay
+        // Granting play requires view
+        if (next.canPlay) next.canView = true
+      }
+      const updated = new Map(prev)
+      updated.set(key, next)
+      return updated
+    })
+    setSaveSuccess(false)
+  }
+
+  async function handleSave() {
+    setSaving(true)
+    setSaveError(null)
+    setSaveSuccess(false)
+
+    const grants: AccessUpdateGrant[] = []
+    for (const [key, val] of grantState) {
+      const [libraryId, userId] = key.split(':')
+      grants.push({ libraryId, userId, canView: val.canView, canPlay: val.canPlay })
+    }
+
+    if (grants.length === 0) {
+      setSaving(false)
+      setSaveSuccess(true)
+      return
+    }
+
+    const res = await updateNodeAccess(nodeId, grants)
+    setSaving(false)
+    if (res.ok) {
+      // Update local library state with server response
+      setLibraries(res.data.libraries)
+      setSaveSuccess(true)
+    } else {
+      setSaveError(res.error ?? 'Failed to save access settings.')
+    }
+  }
+
+  if (loading) {
+    return <div style={{ fontSize: 12, color: 'var(--ink-4)', padding: '8px 0' }}>Loading access settings…</div>
+  }
+  if (error) {
+    return <div style={{ fontSize: 12, color: 'var(--bad)' }}>{error}</div>
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+        Admins always have access. Regular users only see libraries you grant.
+        Grant access only for media and users you are authorized to manage.
+      </div>
+
+      {libraries.length === 0 ? (
+        <div
+          style={{
+            fontSize: 12,
+            color: 'var(--ink-4)',
+            background: 'var(--bg-2)',
+            borderRadius: 'var(--r-1)',
+            padding: '10px 12px',
+          }}
+        >
+          No libraries found. Sync this home's catalog first.
+        </div>
+      ) : (
+        libraries.map((lib) => {
+          // Gather all users for this library (granted + ungranted)
+          const grantedUsers = lib.grants.map((g) => ({ userId: g.userId, userName: g.userName }))
+          const ungrantedUsers = lib.ungrantedUsers
+          const allUsers = [...grantedUsers, ...ungrantedUsers]
+
+          return (
+            <div
+              key={lib.id}
+              style={{
+                background: 'var(--bg-2)',
+                borderRadius: 'var(--r-1)',
+                padding: '10px 12px',
+              }}
+            >
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-1)', marginBottom: 8 }}>
+                {lib.name} <span style={{ fontSize: 11, color: 'var(--ink-4)', fontWeight: 400 }}>({lib.kind})</span>
+              </div>
+              {allUsers.length === 0 ? (
+                <div style={{ fontSize: 12, color: 'var(--ink-4)' }}>No users to manage.</div>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ color: 'var(--ink-4)', textAlign: 'left' }}>
+                      <th style={{ paddingBottom: 4, fontWeight: 500 }}>User</th>
+                      <th style={{ paddingBottom: 4, fontWeight: 500, textAlign: 'center', width: 80 }}>Can view</th>
+                      <th style={{ paddingBottom: 4, fontWeight: 500, textAlign: 'center', width: 80 }}>Can play</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {allUsers.map((u) => {
+                      const key = `${lib.id}:${u.userId}`
+                      const cur = grantState.get(key) ?? { canView: false, canPlay: false }
+                      return (
+                        <tr key={u.userId} style={{ borderTop: '1px solid var(--border)' }}>
+                          <td style={{ padding: '5px 0', color: 'var(--ink-2)' }}>{u.userName}</td>
+                          <td style={{ textAlign: 'center' }}>
+                            <input
+                              type="checkbox"
+                              checked={cur.canView}
+                              onChange={() => handleToggle(lib.id, u.userId, 'canView')}
+                            />
+                          </td>
+                          <td style={{ textAlign: 'center' }}>
+                            <input
+                              type="checkbox"
+                              checked={cur.canPlay}
+                              onChange={() => handleToggle(lib.id, u.userId, 'canPlay')}
+                            />
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )
+        })
+      )}
+
+      {saveError && <div style={{ fontSize: 12, color: 'var(--bad)' }}>{saveError}</div>}
+      {saveSuccess && <div style={{ fontSize: 12, color: 'var(--ok)' }}>Access settings saved.</div>}
+
+      {libraries.length > 0 && (
+        <button
+          className="btn btn-primary btn-sm"
+          style={{ alignSelf: 'flex-start' }}
+          onClick={handleSave}
+          disabled={saving}
+        >
+          {saving ? 'Saving…' : 'Save access settings'}
+        </button>
+      )}
+    </div>
+  )
+}
+
 // ─── Trusted home row ─────────────────────────────────────────────────────────
 
 interface NodeRowProps {
   node: NodeRecord
   onDeleted: (id: string) => void
   onUpdated: (node: NodeRecord) => void
+  defaultOpenAccess?: boolean
 }
 
-function TrustedHomeRow({ node, onDeleted, onUpdated }: NodeRowProps) {
+function TrustedHomeRow({ node, onDeleted, onUpdated, defaultOpenAccess = false }: NodeRowProps) {
   const [testing, setTesting] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [checking, setChecking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [syncResult, setSyncResult] = useState<{ librariesSynced: number; itemsSynced: number } | null>(null)
   const [diagnostic, setDiagnostic] = useState<DirectPlaybackDiagnostic | null>(null)
+  const [showAccess, setShowAccess] = useState(defaultOpenAccess)
+  const accessRef = useRef<HTMLDivElement>(null)
 
   async function handleTest() {
     setTesting(true)
@@ -1163,6 +1381,12 @@ function TrustedHomeRow({ node, onDeleted, onUpdated }: NodeRowProps) {
       onDeleted(node.id)
     }
   }
+
+  useEffect(() => {
+    if (defaultOpenAccess && accessRef.current) {
+      accessRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [defaultOpenAccess])
 
   void onUpdated
 
@@ -1244,6 +1468,30 @@ function TrustedHomeRow({ node, onDeleted, onUpdated }: NodeRowProps) {
           {syncResult.itemsSynced} {syncResult.itemsSynced === 1 ? 'item' : 'items'}
         </div>
       )}
+
+      {/* Manage Access collapsible */}
+      <div
+        ref={accessRef}
+        style={{
+          borderTop: '1px solid var(--border)',
+          paddingTop: 10,
+          marginTop: 2,
+        }}
+      >
+        <button
+          className="btn btn-ghost btn-sm"
+          style={{ fontSize: 12, color: 'var(--ink-3)' }}
+          onClick={() => setShowAccess((v) => !v)}
+        >
+          {showAccess ? '▲ Hide access settings' : '▼ Manage Access'}
+        </button>
+
+        {showAccess && (
+          <div style={{ marginTop: 10 }}>
+            <ManageAccessPanel nodeId={node.id} />
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -1260,6 +1508,7 @@ export function Nodes() {
   const [error, setError] = useState<string | null>(null)
   const [serverConfig, setServerConfig] = useState<ServerConfig | null>(null)
   const [inviteRefreshKey, setInviteRefreshKey] = useState(0)
+  const [accessOpenNodeId, setAccessOpenNodeId] = useState<string | null>(null)
   const [bannerDismissed, setBannerDismissed] = useState(() => {
     try {
       return sessionStorage.getItem(BANNER_DISMISSED_KEY) === 'true'
@@ -1313,6 +1562,15 @@ export function Nodes() {
     loadNodes()
   }
 
+  function handleSetupAccess(nodeId: string) {
+    setAccessOpenNodeId(nodeId)
+    // Scroll after a brief delay to allow re-render
+    setTimeout(() => {
+      const el = document.getElementById(`node-row-${nodeId}`)
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 100)
+  }
+
   if (user?.role !== 'admin') {
     return (
       <div style={{ padding: 32, color: 'var(--ink-3)', fontSize: 14 }}>
@@ -1358,7 +1616,7 @@ export function Nodes() {
       />
 
       {/* Connect using invite from another home */}
-      <ConnectWithInviteSection onConnected={handleConnected} />
+      <ConnectWithInviteSection onConnected={handleConnected} onSetupAccess={handleSetupAccess} />
 
       {/* Connected trusted homes list */}
       <div>
@@ -1407,12 +1665,14 @@ export function Nodes() {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {remoteNodes.map((node) => (
-              <TrustedHomeRow
-                key={node.id}
-                node={node}
-                onDeleted={handleDeleted}
-                onUpdated={handleUpdated}
-              />
+              <div key={node.id} id={`node-row-${node.id}`}>
+                <TrustedHomeRow
+                  node={node}
+                  onDeleted={handleDeleted}
+                  onUpdated={handleUpdated}
+                  defaultOpenAccess={accessOpenNodeId === node.id}
+                />
+              </div>
             ))}
           </div>
         )}

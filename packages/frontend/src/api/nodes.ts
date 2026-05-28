@@ -187,3 +187,53 @@ export function acceptInvite(invite: string, syncNow = false) {
     body: JSON.stringify({ invite, syncNow }),
   })
 }
+
+// ─── Trusted Home access management API ───────────────────────────────────────
+
+export interface AccessGrant {
+  userId: string
+  userName: string
+  canView: boolean
+  canPlay: boolean
+}
+
+export interface UngrantedUser {
+  userId: string
+  userName: string
+}
+
+export interface AccessLibrarySummary {
+  id: string
+  name: string
+  kind: string
+  grants: AccessGrant[]
+  ungrantedUsers: UngrantedUser[]
+}
+
+export interface AccessSummary {
+  node: { id: string; name: string; address: string | null }
+  libraries: AccessLibrarySummary[]
+}
+
+export interface AccessUpdateGrant {
+  libraryId: string
+  userId: string
+  canView: boolean
+  canPlay: boolean
+}
+
+export interface AccessUpdateResponse {
+  updated: boolean
+  libraries: AccessLibrarySummary[]
+}
+
+export function getNodeAccessSummary(nodeId: string) {
+  return apiFetch<AccessSummary>(`/api/v1/nodes/${nodeId}/access-summary`)
+}
+
+export function updateNodeAccess(nodeId: string, grants: AccessUpdateGrant[]) {
+  return apiFetch<AccessUpdateResponse>(`/api/v1/nodes/${nodeId}/access`, {
+    method: 'PUT',
+    body: JSON.stringify({ grants }),
+  })
+}
