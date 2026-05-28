@@ -30,7 +30,7 @@ const NAV_ITEMS: NavItemDef[] = [
 
 const ADMIN_NAV_ITEMS: NavItemDef[] = [
   { label: 'Integrations', href: '/integrations', icon: IconKey },
-  { label: 'Nodes', href: '/nodes', icon: IconGlobe },
+  { label: 'Trusted Homes', href: '/nodes', icon: IconGlobe },
 ]
 
 export function Sidebar() {

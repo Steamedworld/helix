@@ -443,10 +443,11 @@ function PlayerUnavailable({ reason, code, nodeName, isMissing }: PlayerUnavaila
               textAlign: 'center',
             }}
           >
-            Available on {nodeName ?? 'a remote node'}.
+            Available on {nodeName ?? 'a trusted home'}.
           </p>
           <p style={{ fontSize: 12, color: 'var(--ink-3)', textAlign: 'center' }}>
-            Remote playback is not supported by this node.
+            This title is available from {nodeName ?? 'a trusted home'}, but direct playback is not
+            enabled yet.
           </p>
         </div>
       </div>

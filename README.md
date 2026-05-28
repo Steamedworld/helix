@@ -2,7 +2,21 @@
 
 A self-hosted media hub. Simpler than Plex, prettier than Jellyfin. Scans your local library, enriches it from TMDB, plays directly in the browser, and tracks your watch progress — all on your own hardware, with no cloud required.
 
-> **Status:** pre-1.0, actively developed. Core playback, metadata enrichment, and Radarr/Sonarr read-only integrations are fully functional.
+**Helix is a private media mesh for households and trusted circles — stream your own library, and securely share shelves with people you trust.**
+
+> **Status:** pre-1.0, actively developed. Core playback, metadata enrichment, Radarr/Sonarr read-only integrations, and trusted-home catalog sharing are fully functional.
+
+---
+
+## Non-goals
+
+Helix is intentionally scoped. It does not and will not:
+
+- Provide public server discovery or a global federation network
+- Have a social feed, activity streams, or public profiles
+- Require a cloud account or phone-home
+- Replace Radarr/Sonarr — integrations are strictly read-only (no download management)
+- Provide hub-proxy or NAT traversal for remote playback — your browser connects directly to the source home
 
 ---
 
@@ -21,7 +35,7 @@ A self-hosted media hub. Simpler than Plex, prettier than Jellyfin. Scans your l
 - **Webhook auto-sync** — Radarr/Sonarr push events (MovieAdded, Download, Rename, etc.) trigger instant catalog sync; Helix never sends write commands
 - **Background enrichment queue** — new items from library scans and Arr syncs are automatically queued for TMDB enrichment; visible in the admin UI with retry logic and failure reporting
 - **API key encryption** — AES-256-GCM at rest; the browser never receives a plaintext key
-- **Federation** — register remote Helix nodes, sync their read-only catalogs locally, and browse remote items alongside local ones; remote playback signing is deferred to a future release
+- **Trusted Homes** — register other Helix homes, sync their read-only shared libraries, and browse remote items alongside your own; direct playback streams from the source home to your browser without passing through a hub; shared libraries are read-only with no write access between homes
 
 ---
 
@@ -171,9 +185,9 @@ API keys are encrypted at rest with AES-256-GCM. The browser only ever sees a ma
 
 ---
 
-## Federation (multi-node)
+## Trusted Homes (multi-node)
 
-Federation lets two Helix instances share catalog data so you can browse a remote node's library alongside your own. Remote items appear in search and browse views with posters and backdrops proxied transparently through the local hub. Remote files are not yet playable (the playback-source endpoint returns a clear "remote node" message).
+Trusted Homes let two Helix instances share catalog data so you can browse another home's shared library alongside your own. Remote items appear in search and browse views with posters and backdrops proxied transparently through the local hub. Direct playback streams the file from the source home to your browser without passing through the hub — the browser must be able to reach the source home directly.
 
 ### Security model
 
@@ -184,18 +198,18 @@ Federation lets two Helix instances share catalog data so you can browse a remot
 
 ### Setup
 
-**On the node you want to share (the "provider"):**
+**On the home you want to share (the "source home"):**
 
-1. Go to **Admin → Nodes**.
-2. Under **This Node**, click **Generate Token**.
+1. Go to **Admin → Trusted Homes**.
+2. Under **This Home**, click **Generate Token**.
 3. Copy the token — it is shown only once.
 
-**On the node doing the browsing (the "consumer"):**
+**On the home doing the browsing (the "browsing home"):**
 
-1. Go to **Admin → Nodes → Add Node**.
-2. Enter the remote node's name, its base URL (e.g. `http://helix-living-room:3001`), and paste the federation token.
-3. Click **Add Node**, then **Test** to verify connectivity.
-4. Click **Sync** to import the remote catalog. Items from the remote node appear in your libraries.
+1. Go to **Admin → Trusted Homes → Add Trusted Home**.
+2. Enter the home's name, its server address (e.g. `http://helix-living-room:3001`), and paste the sharing token.
+3. Click **Add Trusted Home**, then **Test** to verify connectivity.
+4. Click **Sync** to import the shared catalog. Items from the trusted home appear in your libraries.
 
 ### Capability advertisement
 
@@ -274,7 +288,7 @@ pnpm start            # run built backend
 
 ```bash
 cd packages/backend
-pnpm test             # run all Vitest tests (536 tests)
+pnpm test             # run all Vitest tests
 pnpm test -- --run tests/auth.test.ts   # run a single test file
 ```
 
@@ -387,7 +401,7 @@ The DB schema is federation-aware: every `media_file` carries a `node_id`. Remot
 | POST | `/api/v1/integrations/:id/sync` | Run sync |
 | POST | `/api/v1/integrations/:id/webhook-secret` | Generate (or regenerate) webhook secret — returns token once |
 
-### Nodes / federation (admin only)
+### Trusted Homes / federation (admin only)
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -464,10 +478,10 @@ The DB schema is federation-aware: every `media_file` carries a `node_id`. Remot
 - [x] Background metadata enrichment (event-driven queue after scan and Arr sync)
 - [x] Webhook-driven auto-sync from Arr events
 - [x] Per-library access permissions with signed stream and artwork URLs
-- [x] Federation foundation — node registration, federation token auth, catalog sync, remote items in UI
-- [x] Remote artwork proxy — poster and backdrop images from remote nodes proxied through the local hub; remote token never reaches the browser
-- [x] Federation capability contract — capability advertisement endpoint, hub-side capability caching, structured playback-source codes, playback-intent placeholder
-- [x] Federated direct playback signing — remote node generates HMAC-signed stream URLs; browser streams directly without hub proxy; federation token never exposed
+- [x] Trusted Homes foundation — home registration, sharing token auth, catalog sync, remote items in UI
+- [x] Remote artwork proxy — poster and backdrop images from trusted homes proxied through the local hub; sharing token never reaches the browser
+- [x] Trusted Home capability contract — capability advertisement endpoint, hub-side capability caching, structured playback-source codes, playback-intent placeholder
+- [x] Direct playback signing — source home generates HMAC-signed stream URLs; browser streams directly without hub proxy; sharing token never exposed
 - [ ] Episode still image download and caching
 - [ ] MusicBrainz provider for music libraries
 - [ ] TVDB provider for alternate TV metadata

@@ -6,11 +6,14 @@ import {
   deleteNode,
   testNode,
   syncNode,
+  checkNodePlayback,
   getFederationTokenStatus,
   generateFederationToken,
   revokeFederationToken,
 } from '../api/nodes'
-import type { NodeRecord, NodeCapabilities } from '../api/nodes'
+import { getServerConfig } from '../api/config'
+import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic } from '../api/nodes'
+import type { ServerConfig } from '../api/config'
 
 // ─── Status chip ──────────────────────────────────────────────────────────────
 
@@ -66,7 +69,7 @@ function RelativeTime({ ts }: { ts: number | null }) {
 function DirectPlaybackStatus({ capabilities }: { capabilities: NodeCapabilities | null }) {
   if (!capabilities) {
     return (
-      <span className="chip chip-ghost" title="Run Test or Sync to fetch capabilities">
+      <span className="chip chip-ghost" title="Run Check connection or Sync to fetch capabilities">
         Unknown
       </span>
     )
@@ -94,16 +97,148 @@ function DirectPlaybackStatus({ capabilities }: { capabilities: NodeCapabilities
           borderColor: 'oklch(0.78 0.14 65 / 0.35)',
           color: '#e6a817',
         }}
-        title="Remote node BASE_URL is not set or is localhost — direct playback may fail for remote browsers"
+        title="Home server address is not set or is localhost — direct playback may fail for remote browsers"
       >
-        ⚠ Needs BASE_URL
+        ⚠ Needs address
       </span>
     )
   }
   return <span className="chip chip-accent">Ready</span>
 }
 
-// ─── Add node form ────────────────────────────────────────────────────────────
+// ─── Inline diagnostics panel ─────────────────────────────────────────────────
+
+interface DiagnosticsPanelProps {
+  diagnostic: DirectPlaybackDiagnostic
+}
+
+function DiagnosticsPanel({ diagnostic }: DiagnosticsPanelProps) {
+  // Ready: playback available and server address configured + non-loopback
+  if (diagnostic.directPlaybackAvailable && diagnostic.baseUrlConfigured) {
+    return (
+      <div
+        style={{
+          fontSize: 12,
+          color: 'var(--ok)',
+          background: 'oklch(0.78 0.10 152 / 0.07)',
+          border: '1px solid oklch(0.78 0.10 152 / 0.25)',
+          borderRadius: 'var(--r-1)',
+          padding: '6px 10px',
+          lineHeight: 1.5,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+        }}
+      >
+        <span>✓</span>
+        <span>
+          <strong>Ready.</strong> Direct playback is available and the home server address is
+          reachable.
+        </span>
+      </div>
+    )
+  }
+
+  // Warning: playback available but server address is unset or loopback
+  if (diagnostic.directPlaybackAvailable && !diagnostic.baseUrlConfigured) {
+    return (
+      <div
+        style={{
+          fontSize: 12,
+          color: '#e6a817',
+          background: 'oklch(0.78 0.14 65 / 0.07)',
+          border: '1px solid oklch(0.78 0.14 65 / 0.25)',
+          borderRadius: 'var(--r-1)',
+          padding: '6px 10px',
+          lineHeight: 1.5,
+        }}
+      >
+        <strong>⚠ Warning.</strong>{' '}
+        {diagnostic.warning ??
+          'Browser reachability cannot be verified by the server. Make sure this home\'s server address is reachable from your browser.'}{' '}
+        Set <code>BASE_URL</code> on this home to a LAN, VPN, or HTTPS reverse-proxy URL.
+      </div>
+    )
+  }
+
+  // Error / unsupported
+  return (
+    <div
+      style={{
+        fontSize: 12,
+        color: 'var(--bad)',
+        background: 'oklch(0.70 0.13 25 / 0.07)',
+        border: '1px solid oklch(0.70 0.13 25 / 0.25)',
+        borderRadius: 'var(--r-1)',
+        padding: '6px 10px',
+        lineHeight: 1.5,
+      }}
+    >
+      <strong>Direct playback not available.</strong>{' '}
+      {diagnostic.warning ?? 'This home does not support direct playback.'}
+    </div>
+  )
+}
+
+// ─── Admin banner ─────────────────────────────────────────────────────────────
+
+interface AdminBannerProps {
+  hasRemoteNodes: boolean
+  serverConfig: ServerConfig | null
+  dismissed: boolean
+  onDismiss: () => void
+}
+
+function AdminBanner({ hasRemoteNodes, serverConfig, dismissed, onDismiss }: AdminBannerProps) {
+  if (dismissed) return null
+  if (!hasRemoteNodes) return null
+  if (!serverConfig) return null
+  // Only show when BASE_URL is unset or loopback
+  if (serverConfig.baseUrlConfigured && !serverConfig.baseUrlIsLoopback) return null
+
+  return (
+    <div
+      role="alert"
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 12,
+        padding: '12px 16px',
+        background: 'oklch(0.78 0.14 65 / 0.09)',
+        border: '1px solid oklch(0.78 0.14 65 / 0.30)',
+        borderRadius: 'var(--r-2)',
+        fontSize: 13,
+        color: '#e6a817',
+        lineHeight: 1.55,
+      }}
+    >
+      <span style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>⚠</span>
+      <div style={{ flex: 1 }}>
+        <strong style={{ color: '#f0b429' }}>
+          Trusted-home playback may fail because this home's server address is not set to a
+          browser-reachable URL.
+        </strong>{' '}
+        Set <code>BASE_URL</code> to a LAN, VPN, or HTTPS reverse-proxy URL.{' '}
+        <a
+          href="/settings"
+          style={{ color: 'var(--accent)', textDecoration: 'underline', cursor: 'pointer' }}
+        >
+          Go to Settings → Server address
+        </a>
+      </div>
+      <button
+        onClick={onDismiss}
+        className="btn btn-icon btn-sm btn-ghost"
+        title="Dismiss"
+        style={{ color: '#e6a817', flexShrink: 0 }}
+      >
+        ×
+      </button>
+    </div>
+  )
+}
+
+// ─── Add trusted home form ────────────────────────────────────────────────────
 
 interface AddNodeFormProps {
   onCreated: (node: NodeRecord) => void
@@ -134,7 +269,7 @@ function AddNodeForm({ onCreated, onCancel }: AddNodeFormProps) {
     if (res.ok) {
       onCreated(res.data)
     } else {
-      setError(res.error ?? 'Failed to add node.')
+      setError(res.error ?? 'Failed to add trusted home.')
     }
   }
 
@@ -145,7 +280,7 @@ function AddNodeForm({ onCreated, onCancel }: AddNodeFormProps) {
       style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: 14 }}
     >
       <h3 style={{ fontSize: 15, fontWeight: 600, margin: 0, color: 'var(--ink-1)' }}>
-        Add Remote Node
+        Add Trusted Home
       </h3>
 
       <div>
@@ -154,29 +289,29 @@ function AddNodeForm({ onCreated, onCancel }: AddNodeFormProps) {
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="My Remote Helix"
+          placeholder="Living Room Helix"
           className="input"
         />
       </div>
 
       <div>
-        <label className="field-label">Base URL</label>
+        <label className="field-label">Home server address</label>
         <input
           type="url"
           value={baseUrl}
           onChange={(e) => setBaseUrl(e.target.value)}
-          placeholder="http://remote.helix.local:3001"
+          placeholder="http://media-box.local:3001"
           className="input"
         />
       </div>
 
       <div>
-        <label className="field-label">Federation Token</label>
+        <label className="field-label">Sharing token</label>
         <input
           type="password"
           value={apiToken}
           onChange={(e) => setApiToken(e.target.value)}
-          placeholder="Paste token from the remote node"
+          placeholder="Paste token from the trusted home"
           className="input"
         />
       </div>
@@ -187,7 +322,7 @@ function AddNodeForm({ onCreated, onCancel }: AddNodeFormProps) {
 
       <div style={{ display: 'flex', gap: 8 }}>
         <button type="submit" className="btn btn-primary btn-sm" disabled={saving}>
-          {saving ? 'Adding…' : 'Add Node'}
+          {saving ? 'Adding…' : 'Add Trusted Home'}
         </button>
         <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel}>
           Cancel
@@ -197,9 +332,9 @@ function AddNodeForm({ onCreated, onCancel }: AddNodeFormProps) {
   )
 }
 
-// ─── This node section ────────────────────────────────────────────────────────
+// ─── This home section ────────────────────────────────────────────────────────
 
-function ThisNodeSection() {
+function ThisHomeSection() {
   const [hasToken, setHasToken] = useState(false)
   const [loading, setLoading] = useState(true)
   const [generatedToken, setGeneratedToken] = useState<string | null>(null)
@@ -227,7 +362,7 @@ function ThisNodeSection() {
   }
 
   async function handleRevoke() {
-    if (!confirm('Revoke the federation token? Remote nodes using it will lose access.')) return
+    if (!confirm('Revoke the sharing token? Trusted homes using it will lose access.')) return
     setBusy(true)
     setError(null)
     const res = await revokeFederationToken()
@@ -244,10 +379,10 @@ function ThisNodeSection() {
     <div className="surface" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div>
         <h3 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 4px', color: 'var(--ink-1)' }}>
-          This Node
+          This Home
         </h3>
         <p style={{ fontSize: 13, color: 'var(--ink-3)', margin: 0 }}>
-          Generate a federation token so other Helix instances can read this node's catalog.
+          Generate a sharing token so other Helix homes can read this home's catalog.
         </p>
       </div>
 
@@ -257,7 +392,7 @@ function ThisNodeSection() {
         <>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span style={{ fontSize: 13, color: 'var(--ink-2)' }}>
-              Federation token:
+              Sharing token:
             </span>
             {hasToken ? (
               <span className="chip chip-accent">Active</span>
@@ -322,7 +457,7 @@ function ThisNodeSection() {
   )
 }
 
-// ─── Remote node row ──────────────────────────────────────────────────────────
+// ─── Trusted home row ─────────────────────────────────────────────────────────
 
 interface NodeRowProps {
   node: NodeRecord
@@ -330,16 +465,19 @@ interface NodeRowProps {
   onUpdated: (node: NodeRecord) => void
 }
 
-function RemoteNodeRow({ node, onDeleted, onUpdated }: NodeRowProps) {
+function TrustedHomeRow({ node, onDeleted, onUpdated }: NodeRowProps) {
   const [testing, setTesting] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const [checking, setChecking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [syncResult, setSyncResult] = useState<{ librariesSynced: number; itemsSynced: number } | null>(null)
+  const [diagnostic, setDiagnostic] = useState<DirectPlaybackDiagnostic | null>(null)
 
   async function handleTest() {
     setTesting(true)
     setError(null)
     setSyncResult(null)
+    setDiagnostic(null)
     const res = await testNode(node.id)
     setTesting(false)
     if (res.ok) {
@@ -352,10 +490,25 @@ function RemoteNodeRow({ node, onDeleted, onUpdated }: NodeRowProps) {
     }
   }
 
+  async function handleCheck() {
+    setChecking(true)
+    setError(null)
+    setSyncResult(null)
+    setDiagnostic(null)
+    const res = await checkNodePlayback(node.id)
+    setChecking(false)
+    if (res.ok) {
+      setDiagnostic(res.data)
+    } else {
+      setError(res.error ?? 'Check failed')
+    }
+  }
+
   async function handleSync() {
     setSyncing(true)
     setError(null)
     setSyncResult(null)
+    setDiagnostic(null)
     const res = await syncNode(node.id)
     setSyncing(false)
     if (res.ok) {
@@ -366,7 +519,7 @@ function RemoteNodeRow({ node, onDeleted, onUpdated }: NodeRowProps) {
   }
 
   async function handleDelete() {
-    if (!confirm(`Remove node "${node.name}"? Imported catalog data will be deleted.`)) return
+    if (!confirm(`Remove trusted home "${node.name}"? Imported catalog data will be deleted.`)) return
     const res = await deleteNode(node.id)
     if (res.ok) {
       onDeleted(node.id)
@@ -403,14 +556,22 @@ function RemoteNodeRow({ node, onDeleted, onUpdated }: NodeRowProps) {
           <button
             className="btn btn-ghost btn-sm"
             onClick={handleTest}
-            disabled={testing || syncing}
+            disabled={testing || syncing || checking}
           >
             {testing ? 'Testing…' : 'Test'}
           </button>
           <button
             className="btn btn-ghost btn-sm"
+            onClick={handleCheck}
+            disabled={testing || syncing || checking}
+            title="Check direct-playback readiness"
+          >
+            {checking ? 'Checking…' : 'Check connection'}
+          </button>
+          <button
+            className="btn btn-ghost btn-sm"
             onClick={handleSync}
-            disabled={testing || syncing}
+            disabled={testing || syncing || checking}
           >
             {syncing ? 'Syncing…' : 'Sync'}
           </button>
@@ -432,24 +593,8 @@ function RemoteNodeRow({ node, onDeleted, onUpdated }: NodeRowProps) {
         </span>
       </div>
 
-      {/* BASE_URL warning for direct playback */}
-      {node.capabilities?.supportsRemotePlayback && !node.capabilities.baseUrlConfigured && (
-        <div
-          style={{
-            fontSize: 12,
-            color: '#e6a817',
-            background: 'oklch(0.78 0.14 65 / 0.07)',
-            border: '1px solid oklch(0.78 0.14 65 / 0.25)',
-            borderRadius: 'var(--r-1)',
-            padding: '6px 10px',
-            lineHeight: 1.5,
-          }}
-        >
-          <strong>Direct playback:</strong> this node has not configured <code>BASE_URL</code>.
-          Stream URLs will default to <code>localhost</code> and may not be reachable from your browser.
-          Set <code>BASE_URL=http://&lt;host&gt;:&lt;port&gt;</code> on the remote node.
-        </div>
-      )}
+      {/* Inline diagnostics result (shown after Check connection) */}
+      {diagnostic && <DiagnosticsPanel diagnostic={diagnostic} />}
 
       {node.last_error && (
         <div style={{ fontSize: 12, color: 'var(--bad)' }}>{node.last_error}</div>
@@ -469,15 +614,28 @@ function RemoteNodeRow({ node, onDeleted, onUpdated }: NodeRowProps) {
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
+const BANNER_DISMISSED_KEY = 'helix.trustedHomesBannerDismissed'
+
 export function Nodes() {
   const { user } = useAuth()
   const [nodes, setNodes] = useState<NodeRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [showAddForm, setShowAddForm] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [serverConfig, setServerConfig] = useState<ServerConfig | null>(null)
+  const [bannerDismissed, setBannerDismissed] = useState(() => {
+    try {
+      return sessionStorage.getItem(BANNER_DISMISSED_KEY) === 'true'
+    } catch {
+      return false
+    }
+  })
 
   useEffect(() => {
     loadNodes()
+    getServerConfig().then((res) => {
+      if (res.ok) setServerConfig(res.data)
+    })
   }, [])
 
   async function loadNodes() {
@@ -487,7 +645,7 @@ export function Nodes() {
     if (res.ok) {
       setNodes(res.data)
     } else {
-      setError(res.error ?? 'Failed to load nodes.')
+      setError(res.error ?? 'Failed to load trusted homes.')
     }
   }
 
@@ -502,6 +660,15 @@ export function Nodes() {
 
   function handleUpdated(updated: NodeRecord) {
     setNodes((prev) => prev.map((n) => (n.id === updated.id ? updated : n)))
+  }
+
+  function handleDismissBanner() {
+    setBannerDismissed(true)
+    try {
+      sessionStorage.setItem(BANNER_DISMISSED_KEY, 'true')
+    } catch {
+      // sessionStorage unavailable — dismissed only for this render
+    }
   }
 
   if (user?.role !== 'admin') {
@@ -526,14 +693,22 @@ export function Nodes() {
     >
       <div>
         <h1 style={{ fontSize: 22, fontWeight: 600, margin: '0 0 4px', color: 'var(--ink-1)' }}>
-          Nodes
+          Trusted Homes
         </h1>
         <p style={{ fontSize: 13, color: 'var(--ink-3)', margin: 0 }}>
-          Manage federation with remote Helix instances.
+          Register other Helix homes to browse their shared libraries alongside your own.
         </p>
       </div>
 
-      <ThisNodeSection />
+      {/* Admin banner: shown when remote nodes exist and local BASE_URL is unset/loopback */}
+      <AdminBanner
+        hasRemoteNodes={remoteNodes.length > 0}
+        serverConfig={serverConfig}
+        dismissed={bannerDismissed}
+        onDismiss={handleDismissBanner}
+      />
+
+      <ThisHomeSection />
 
       <div>
         <div
@@ -545,14 +720,14 @@ export function Nodes() {
           }}
         >
           <h2 style={{ fontSize: 15, fontWeight: 600, margin: 0, color: 'var(--ink-1)' }}>
-            Remote Nodes
+            Trusted Homes
           </h2>
           {!showAddForm && (
             <button
               className="btn btn-primary btn-sm"
               onClick={() => setShowAddForm(true)}
             >
-              Add Node
+              Add Trusted Home
             </button>
           )}
         </div>
@@ -575,12 +750,12 @@ export function Nodes() {
             className="surface"
             style={{ padding: '20px', fontSize: 13, color: 'var(--ink-4)', textAlign: 'center' }}
           >
-            No remote nodes registered yet.
+            No trusted homes registered yet.
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {remoteNodes.map((node) => (
-              <RemoteNodeRow
+              <TrustedHomeRow
                 key={node.id}
                 node={node}
                 onDeleted={handleDeleted}
@@ -603,8 +778,8 @@ export function Nodes() {
           }}
         >
           <strong style={{ color: 'var(--ink-2)' }}>Direct playback</strong> streams media from the
-          remote node directly to your browser — Helix does not relay or transcode.{' '}
-          Set <code>BASE_URL=http://&lt;host&gt;:&lt;port&gt;</code> on each node to a URL your
+          source home directly to your browser — Helix does not relay or transcode.{' '}
+          Set <code>BASE_URL=http://&lt;host&gt;:&lt;port&gt;</code> on each home to a URL your
           browser can reach. For LAN use: <code>http://media-box.local:3001</code>. For remote
           access you need a reverse proxy or VPN — Helix does not provide relay or NAT traversal.
         </div>

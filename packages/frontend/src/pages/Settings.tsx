@@ -34,14 +34,14 @@ export function Settings() {
         </p>
       </div>
 
-      {/* Node base URL */}
-      <section>
+      {/* Home server address */}
+      <section id="server-address">
         <h2 className="display" style={{ fontSize: 28, lineHeight: 1.1, marginBottom: 4 }}>
-          Node Base URL
+          Home server address
         </h2>
         <p style={{ fontSize: 13, color: 'var(--ink-3)', marginBottom: 16, lineHeight: 1.6 }}>
-          The public URL of this Helix instance, used when generating direct-playback stream URLs for federation.
-          Set this so remote browsers can reach your media files.
+          The public URL of this Helix home, used when generating direct-playback stream URLs for
+          trusted homes. Set this so remote browsers can reach your media files directly.
         </p>
 
         <div
@@ -54,13 +54,39 @@ export function Settings() {
             </span>
             {serverConfig ? (
               serverConfig.baseUrlConfigured ? (
-                <span style={{ fontSize: 13, color: 'var(--ok)', fontFamily: 'var(--font-mono)' }}>
-                  {serverConfig.baseUrl}
-                </span>
+                <>
+                  <span style={{ fontSize: 13, color: 'var(--ok)', fontFamily: 'var(--font-mono)' }}>
+                    {serverConfig.baseUrl}
+                  </span>
+                  <span
+                    className="chip"
+                    style={{
+                      background: 'oklch(0.78 0.10 152 / 0.12)',
+                      borderColor: 'oklch(0.78 0.10 152 / 0.35)',
+                      color: 'var(--ok)',
+                    }}
+                  >
+                    Ready
+                  </span>
+                </>
               ) : (
-                <span style={{ fontSize: 13, color: 'var(--ink-4)', fontFamily: 'var(--font-mono)' }}>
-                  Not configured — defaulting to localhost
-                </span>
+                <>
+                  <span style={{ fontSize: 13, color: 'var(--ink-4)', fontFamily: 'var(--font-mono)' }}>
+                    {serverConfig.baseUrlIsLoopback
+                      ? serverConfig.baseUrl
+                      : 'Not set — using localhost fallback'}
+                  </span>
+                  <span
+                    className="chip"
+                    style={{
+                      background: 'oklch(0.78 0.14 65 / 0.12)',
+                      borderColor: 'oklch(0.78 0.14 65 / 0.35)',
+                      color: '#e6a817',
+                    }}
+                  >
+                    Local only
+                  </span>
+                </>
               )
             ) : (
               <span style={{ fontSize: 13, color: 'var(--ink-4)' }}>Loading…</span>
@@ -78,8 +104,8 @@ export function Settings() {
                 padding: '6px 10px',
               }}
             >
-              BASE_URL is a loopback address. Remote browsers outside this machine will not be able
-              to use direct playback from this node.
+              <code>BASE_URL</code> is a loopback address. Trusted homes outside this machine will
+              not be able to use direct playback from this home.
             </div>
           )}
         </div>
@@ -100,11 +126,26 @@ export function Settings() {
             className="mono"
             style={{ background: 'var(--bg-0)', padding: '1px 5px', borderRadius: 3, fontSize: 11 }}
           >
-            BASE_URL=http://your-server:3001
+            BASE_URL
           </code>{' '}
-          in your backend environment. Use the URL your browser uses to reach this server.
-          For LAN: <code className="mono" style={{ fontSize: 11 }}>http://media-box.local:3001</code>.
-          For internet access you need a reverse proxy.
+          in your backend environment to the URL your browser uses to reach this home.
+          <br />
+          <span style={{ color: 'var(--ink-4)', display: 'block', marginTop: 6 }}>
+            LAN:
+            {'        '}
+            <code className="mono" style={{ fontSize: 11 }}>http://media-box.local:3000</code>
+            <br />
+            Docker / LAN IP:
+            {'  '}
+            <code className="mono" style={{ fontSize: 11 }}>http://192.168.1.50:3000</code>
+            <br />
+            HTTPS proxy:
+            {'    '}
+            <code className="mono" style={{ fontSize: 11 }}>https://helix.example.com</code>
+          </span>
+          <br />
+          Direct playback streams from the source home directly to your browser. Helix does not
+          provide relay or NAT traversal. Local-only mode works without <code>BASE_URL</code> set.
         </div>
       </section>
 
