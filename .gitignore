@@ -24,3 +24,4 @@ packages/backend/node_modules/.vite/
 .vscode/settings.json
 *.swp
 *.swo
+.gitnexus
