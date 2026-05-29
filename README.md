@@ -357,6 +357,29 @@ Use **Revoke all access** in the Trusted Home row to remove all user access gran
 
 After revoking, users will no longer see or play from that home's libraries. You can re-grant access at any time using the Manage Access panel or the bulk grant endpoint.
 
+### Incremental sync
+
+After the initial full sync, subsequent **Sync** operations are incremental — only items whose `updated_at` is newer than `last_sync_at` are fetched from the remote. The response envelope includes `"incremental": true` and the `"since"` timestamp used.
+
+**Sync decision logic:**
+- `last_sync_at` is null (first sync or never synced) → full sync, no `?since`
+- `last_sync_at` is set → incremental sync with `?since=<last_sync_at as ISO8601>`
+- Remote returns 400 for `?since` (older server) → automatic fallback to full sync; `fallbackUsed: true` is included in the response
+- Any other remote error → sync fails, `last_sync_at` is NOT updated
+
+**`last_sync_at` is updated only on success.** Failed syncs leave the timestamp unchanged so the next attempt retries from the same baseline.
+
+**Force a full re-sync:** use the **Full re-sync** button next to the Sync button. This ignores `last_sync_at` and fetches the complete catalog. Use this to reconcile stale records after remote items have been deleted.
+
+**Incremental sync and deletions:**
+- Incremental sync upserts only the returned items — it does NOT remove remote items that are absent from the partial response.
+- Remote deletions are only reconciled by a full sync (first sync, `force=true`, or **Full re-sync** button).
+- If the remote catalog seems stale or items that were deleted on the remote home are still appearing, use **Full re-sync** to reconcile.
+
+**Troubleshooting stale remote catalog:**
+- Use **Full re-sync** on the Trusted Home to fetch and re-import the complete catalog.
+- If the remote home's URL changed, disconnect and re-invite.
+
 ### What is deferred
 
 - **Hub video proxy** — the browser streams directly from the remote node. No hub-side buffering or re-streaming.
@@ -364,7 +387,6 @@ After revoking, users will no longer see or play from that home's libraries. You
 - **NAT traversal** — direct playback requires the browser to reach the remote node. Nodes behind NAT that cannot be reached directly will show an unavailable message.
 - **Cross-node watch-state sync** — watch progress is hub-local only.
 - **Shared authentication** — users are local to each node; no SSO or shared user database.
-- **Incremental sync** — the `?since=<unix_ms>` parameter is supported by the catalog endpoint but the UI sync button always does a full import (idempotent via upsert).
 
 ---
 

@@ -366,7 +366,17 @@ export async function nodeRoutes(
   )
 
   // POST /:id/sync — sync remote catalog
-  app.post<{ Params: { id: string } }>(
+  // Query params:
+  //   ?force=true  — ignore last_sync_at and do a full sync regardless
+  //
+  // Default behaviour:
+  //   - If node.last_sync_at is null → full sync
+  //   - If node.last_sync_at is set  → incremental sync (?since=<last_sync_at>)
+  //     - Remote returns 400 for ?since → fall back to full sync, sets fallbackUsed=true
+  //     - Any other remote error → 500, does NOT update last_sync_at
+  //
+  // last_sync_at is updated ONLY on success.
+  app.post<{ Params: { id: string }; Querystring: { force?: string } }>(
     '/:id/sync',
     { preHandler: requireAdmin },
     async (req, reply) => {
@@ -383,11 +393,15 @@ export async function nodeRoutes(
         reply.status(400)
         return err('Node is missing base_url or api_token')
       }
+      const force = req.query.force === 'true' || req.query.force === '1'
       try {
         const nowMs = Date.now()
         const rawTokenForSync = decryptApiKey(node.api_token_encrypted, dataDir)
         const [syncResult, capabilities] = await Promise.all([
-          syncRemoteNode(node.id, node.base_url, node.api_token_encrypted, dataDir, db),
+          syncRemoteNode(node.id, node.base_url, node.api_token_encrypted, dataDir, db, {
+            lastSyncAt: node.last_sync_at,
+            force,
+          }),
           fetchRemoteCapabilities(node.base_url, rawTokenForSync),
         ])
         await db

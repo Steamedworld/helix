@@ -98,11 +98,23 @@ export function checkNodePlayback(id: string) {
   return apiFetch<DirectPlaybackDiagnostic>(`/api/v1/nodes/${id}/check`)
 }
 
-export function syncNode(id: string) {
-  return apiFetch<{ synced: boolean; librariesSynced: number; itemsSynced: number }>(
-    `/api/v1/nodes/${id}/sync`,
-    { method: 'POST' }
-  )
+export interface SyncResponse {
+  synced: boolean
+  fullSync: boolean
+  incremental: boolean
+  sinceUsed: string | null
+  itemsSynced: number
+  librariesSynced: number
+  fallbackUsed: boolean
+}
+
+export function syncNode(id: string, force = false) {
+  const url = force ? `/api/v1/nodes/${id}/sync?force=true` : `/api/v1/nodes/${id}/sync`
+  return apiFetch<SyncResponse>(url, { method: 'POST' })
+}
+
+export function forceFullSync(id: string) {
+  return apiFetch<SyncResponse>(`/api/v1/nodes/${id}/sync?force=true`, { method: 'POST' })
 }
 
 export interface FederationTokenStatus {

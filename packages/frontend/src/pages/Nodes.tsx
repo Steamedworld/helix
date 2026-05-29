@@ -7,6 +7,7 @@ import {
   revokeNodeAccess,
   testNode,
   syncNode,
+  forceFullSync,
   checkNodePlayback,
   getFederationTokenStatus,
   generateFederationToken,
@@ -19,7 +20,7 @@ import {
   updateNodeAccess,
 } from '../api/nodes'
 import { getServerConfig } from '../api/config'
-import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic, InviteSummary, AcceptInviteResponse, AccessLibrarySummary, AccessUpdateGrant } from '../api/nodes'
+import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic, InviteSummary, AcceptInviteResponse, AccessLibrarySummary, AccessUpdateGrant, SyncResponse } from '../api/nodes'
 import type { ServerConfig } from '../api/config'
 
 // ─── Status chip ──────────────────────────────────────────────────────────────
@@ -61,12 +62,24 @@ function StatusChip({ status }: { status: NodeRecord['status'] }) {
 
 // ─── Timestamp ────────────────────────────────────────────────────────────────
 
+function formatRelativeTime(ts: number): string {
+  const diffMs = Date.now() - ts
+  const diffSecs = Math.floor(diffMs / 1000)
+  if (diffSecs < 60) return 'just now'
+  const diffMins = Math.floor(diffSecs / 60)
+  if (diffMins < 60) return `${diffMins} ${diffMins === 1 ? 'minute' : 'minutes'} ago`
+  const diffHours = Math.floor(diffMins / 60)
+  if (diffHours < 24) return `${diffHours} ${diffHours === 1 ? 'hour' : 'hours'} ago`
+  const diffDays = Math.floor(diffHours / 24)
+  return `${diffDays} ${diffDays === 1 ? 'day' : 'days'} ago`
+}
+
 function RelativeTime({ ts }: { ts: number | null }) {
   if (!ts) return <span style={{ color: 'var(--ink-4)' }}>Never</span>
   const d = new Date(ts)
   return (
-    <span style={{ color: 'var(--ink-3)' }} title={d.toISOString()}>
-      {d.toLocaleString()}
+    <span style={{ color: 'var(--ink-3)' }} title={d.toLocaleString()}>
+      {formatRelativeTime(ts)}
     </span>
   )
 }
@@ -1324,11 +1337,12 @@ interface NodeRowProps {
 function TrustedHomeRow({ node, onDeleted, onUpdated, defaultOpenAccess = false }: NodeRowProps) {
   const [testing, setTesting] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const [forceSyncing, setForceSyncing] = useState(false)
   const [checking, setChecking] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
   const [revoking, setRevoking] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [syncResult, setSyncResult] = useState<{ librariesSynced: number; itemsSynced: number } | null>(null)
+  const [syncResult, setSyncResult] = useState<SyncResponse | null>(null)
   const [disconnectSummary, setDisconnectSummary] = useState<string | null>(null)
   const [revokeResult, setRevokeResult] = useState<string | null>(null)
   const [diagnostic, setDiagnostic] = useState<DirectPlaybackDiagnostic | null>(null)
@@ -1373,9 +1387,23 @@ function TrustedHomeRow({ node, onDeleted, onUpdated, defaultOpenAccess = false 
     const res = await syncNode(node.id)
     setSyncing(false)
     if (res.ok) {
-      setSyncResult({ librariesSynced: res.data.librariesSynced, itemsSynced: res.data.itemsSynced })
+      setSyncResult(res.data)
     } else {
       setError(res.error ?? 'Sync failed')
+    }
+  }
+
+  async function handleForceSync() {
+    setForceSyncing(true)
+    setError(null)
+    setSyncResult(null)
+    setDiagnostic(null)
+    const res = await forceFullSync(node.id)
+    setForceSyncing(false)
+    if (res.ok) {
+      setSyncResult(res.data)
+    } else {
+      setError(res.error ?? 'Full re-sync failed')
     }
   }
 
@@ -1439,7 +1467,7 @@ function TrustedHomeRow({ node, onDeleted, onUpdated, defaultOpenAccess = false 
 
   void onUpdated
 
-  const busy = testing || syncing || checking || disconnecting || revoking
+  const busy = testing || syncing || forceSyncing || checking || disconnecting || revoking
 
   return (
     <div
@@ -1489,6 +1517,14 @@ function TrustedHomeRow({ node, onDeleted, onUpdated, defaultOpenAccess = false 
           </button>
           <button
             className="btn btn-ghost btn-sm"
+            onClick={handleForceSync}
+            disabled={busy}
+            title="Force a full catalog re-sync (reconciles stale or deleted remote items)"
+          >
+            {forceSyncing ? 'Re-syncing…' : 'Full re-sync'}
+          </button>
+          <button
+            className="btn btn-ghost btn-sm"
             onClick={handleRevokeAccess}
             disabled={busy}
             style={{ color: 'var(--ink-3)' }}
@@ -1526,8 +1562,9 @@ function TrustedHomeRow({ node, onDeleted, onUpdated, defaultOpenAccess = false 
       )}
       {syncResult && (
         <div style={{ fontSize: 12, color: 'var(--accent)' }}>
-          Synced {syncResult.librariesSynced} {syncResult.librariesSynced === 1 ? 'library' : 'libraries'},{' '}
-          {syncResult.itemsSynced} {syncResult.itemsSynced === 1 ? 'item' : 'items'}
+          {syncResult.incremental ? 'Incremental sync' : 'Full sync'} —{' '}
+          {syncResult.itemsSynced} {syncResult.itemsSynced === 1 ? 'item' : 'items'} updated
+          {syncResult.fallbackUsed ? ' (fell back to full sync — remote does not support incremental)' : ''}
         </div>
       )}
       {disconnectSummary && (

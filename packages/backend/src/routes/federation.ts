@@ -394,12 +394,32 @@ export async function federationRoutes(
   })
 
   // GET /federation/catalog — export catalog
+  // Supports optional ?since=<ISO8601> for incremental sync.
+  // Without ?since: returns full catalog.
+  // With ?since: returns only items updated at or after that timestamp, plus all
+  // parent library records for context. Returns 400 for an unparseable timestamp.
   app.get<{ Querystring: { since?: string } }>(
     '/catalog',
     { preHandler: requireFederationToken },
-    async (req) => {
-      const sinceMs = req.query.since ? parseInt(req.query.since, 10) : null
-      const sinceIso = sinceMs ? new Date(sinceMs).toISOString() : null
+    async (req, reply) => {
+      const sinceRaw = req.query.since
+
+      // Parse the since timestamp — accept ISO8601 or millisecond epoch strings.
+      let sinceIso: string | null = null
+      let incremental = false
+
+      if (sinceRaw !== undefined && sinceRaw !== '') {
+        // Try ISO8601 first (contains letters or hyphens after first char)
+        const asDate = new Date(sinceRaw)
+        if (!isNaN(asDate.getTime())) {
+          sinceIso = asDate.toISOString()
+          incremental = true
+        } else {
+          // Unparseable timestamp
+          reply.status(400)
+          return err('Invalid since parameter: must be an ISO 8601 timestamp (e.g. 2026-05-01T00:00:00Z)')
+        }
+      }
 
       // Get local node details
       const [localNode] = await db
@@ -420,6 +440,8 @@ export async function federationRoutes(
           nodeId: localNodeId,
           nodeName: localNode?.name ?? 'Helix',
           exportedAt: Date.now(),
+          incremental,
+          since: sinceIso ?? undefined,
           libraries: [],
           items: [],
           versions: [],
@@ -428,7 +450,7 @@ export async function federationRoutes(
         return ok(catalogData)
       }
 
-      // Get items (with optional since filter)
+      // Get items — filtered by updated_at when since is provided
       const localItems = await db
         .select()
         .from(mediaItems)
@@ -441,6 +463,11 @@ export async function federationRoutes(
             : inArray(mediaItems.library_id, localLibraryIds)
         )
       const localItemIds = localItems.map((i) => i.id)
+
+      // For incremental responses, always include all library records (so the
+      // importer has context even if the library itself didn't change).
+      // For full responses this is the same set.
+      const librariesToExport = localLibraries
 
       // Get versions and files for those items
       const localVersions =
@@ -467,7 +494,9 @@ export async function federationRoutes(
         nodeId: localNodeId,
         nodeName: localNode?.name ?? 'Helix',
         exportedAt: Date.now(),
-        libraries: localLibraries.map((lib) => ({
+        incremental,
+        since: sinceIso ?? undefined,
+        libraries: librariesToExport.map((lib) => ({
           id: lib.id,
           name: lib.name,
           kind: lib.kind,

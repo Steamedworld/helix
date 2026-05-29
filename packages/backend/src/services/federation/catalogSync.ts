@@ -62,6 +62,10 @@ export interface FederationCatalogData {
   nodeId: string
   nodeName: string
   exportedAt: number
+  /** Present when the response was produced with a ?since filter */
+  incremental?: boolean
+  /** The ISO8601 since timestamp used to produce this incremental response */
+  since?: string
   libraries: FederationCatalogLibrary[]
   items: FederationCatalogItem[]
   versions: FederationCatalogVersion[]
@@ -73,10 +77,10 @@ export interface FederationCatalogData {
 export async function fetchRemoteCatalog(
   baseUrl: string,
   rawToken: string,
-  since?: number
+  sinceIso?: string
 ): Promise<FederationCatalogData> {
-  const url = since
-    ? `${baseUrl}/api/v1/federation/catalog?since=${since}`
+  const url = sinceIso
+    ? `${baseUrl}/api/v1/federation/catalog?since=${encodeURIComponent(sinceIso)}`
     : `${baseUrl}/api/v1/federation/catalog`
 
   const res = await fetch(url, {
@@ -240,17 +244,89 @@ export async function importCatalog(
 
 // ─── Sync entry point ─────────────────────────────────────────────────────────
 
+export interface SyncRemoteNodeResult {
+  fullSync: boolean
+  incremental: boolean
+  sinceUsed: string | null
+  itemsSynced: number
+  librariesSynced: number
+  fallbackUsed: boolean
+}
+
+/**
+ * Sync a remote node's catalog.
+ *
+ * Decision logic:
+ *   - If lastSyncAt is null or force=true → full sync (no ?since)
+ *   - If lastSyncAt is set → incremental sync with ?since=<lastSyncAt as ISO>
+ *       - If remote returns 400 (does not support ?since) → fall back to full sync, warn
+ *       - Any other error → propagate (do NOT silently fall back)
+ *
+ * Incremental sync upserts only returned items — does NOT delete absent items.
+ * A full sync (force=true or first sync) reconciles stale/deleted records.
+ */
 export async function syncRemoteNode(
   nodeId: string,
   baseUrl: string,
   apiTokenEncrypted: string,
   dataDir: string,
   db: DrizzleDB,
-  since?: number
-): Promise<{ librariesSynced: number; itemsSynced: number }> {
+  opts?: { lastSyncAt?: number | null; force?: boolean }
+): Promise<SyncRemoteNodeResult> {
   const rawToken = decryptApiKey(apiTokenEncrypted, dataDir)
-  const catalog = await fetchRemoteCatalog(baseUrl, rawToken, since)
-  return importCatalog(nodeId, catalog, db)
+  const { lastSyncAt, force } = opts ?? {}
+
+  // Determine whether to attempt incremental sync
+  const attemptIncremental = !force && lastSyncAt != null
+  const sinceIso = attemptIncremental ? new Date(lastSyncAt!).toISOString() : undefined
+
+  let catalog: FederationCatalogData
+  let fallbackUsed = false
+
+  if (attemptIncremental) {
+    // Try incremental first
+    let incRes: Response | null = null
+    try {
+      const url = `${baseUrl}/api/v1/federation/catalog?since=${encodeURIComponent(sinceIso!)}`
+      incRes = await fetch(url, {
+        headers: { Authorization: `Bearer ${rawToken}` },
+        signal: AbortSignal.timeout(30000),
+      })
+    } catch (e) {
+      // Network-level failure — propagate
+      throw e
+    }
+
+    if (incRes.status === 400) {
+      // Remote does not support ?since — fall back to full sync
+      console.warn(`[catalogSync] Remote node ${nodeId} returned 400 for ?since — falling back to full sync`)
+      fallbackUsed = true
+      catalog = await fetchRemoteCatalog(baseUrl, rawToken)
+    } else if (!incRes.ok) {
+      const text = await incRes.text().catch(() => '')
+      throw new Error(`Remote catalog fetch failed: HTTP ${incRes.status} ${text}`)
+    } else {
+      const json = (await incRes.json()) as { ok: boolean; data: FederationCatalogData; error?: string }
+      if (!json.ok) throw new Error(json.error ?? 'Remote catalog error')
+      catalog = json.data
+    }
+  } else {
+    // Full sync
+    catalog = await fetchRemoteCatalog(baseUrl, rawToken)
+  }
+
+  const importResult = await importCatalog(nodeId, catalog, db)
+
+  const isIncremental = (attemptIncremental && !fallbackUsed)
+
+  return {
+    fullSync: !isIncremental,
+    incremental: isIncremental,
+    sinceUsed: isIncremental ? (sinceIso ?? null) : null,
+    itemsSynced: importResult.itemsSynced,
+    librariesSynced: importResult.librariesSynced,
+    fallbackUsed,
+  }
 }
 
 // ─── Backward-compat stubs ────────────────────────────────────────────────────
