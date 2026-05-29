@@ -104,6 +104,10 @@ Copy `.env.example` to `packages/backend/.env` and fill in the values you need. 
 | `ENRICHMENT_PERIODIC_INTERVAL_MS` | `21600000` (6 h) | How often the periodic enqueue runs. |
 | `MEDIA_TOKEN_SECRET` | (random per-process) | HMAC-SHA256 secret for signed stream and artwork tokens. Set a stable value in production so tokens survive server restarts. |
 | `MEDIA_TOKEN_TTL_SECONDS` | `14400` (4 h) | Lifetime of signed media stream and artwork tokens. |
+| `TRUSTED_HOME_SYNC_ENABLED` | `true` | Enable background auto-sync for Trusted Homes. |
+| `TRUSTED_HOME_SYNC_INTERVAL_MS` | `21600000` (6 h) | How often to sync all remote Trusted Home catalogs. |
+| `TRUSTED_HOME_SYNC_STAGGER_MS` | `30000` (30 s) | Delay between each node's background sync start (avoids thundering herd). |
+| `TRUSTED_HOME_SYNC_ON_STARTUP` | `false` | If true, syncs all remote nodes immediately on server startup. |
 
 ---
 
@@ -340,6 +344,31 @@ Disconnecting a Trusted Home removes its synced catalog and all access grants fr
 - User accounts
 
 Use the **Disconnect Trusted Home** button in the Connected Trusted Homes panel. A confirmation dialog explains what will be removed. On success, a summary is shown ("Removed 3 libraries, 142 items, 12 access grants.").
+
+### Background sync
+
+Helix automatically syncs connected Trusted Homes in the background so catalogs stay up to date without manual intervention.
+
+- Runs every 6 hours by default (configurable via `TRUSTED_HOME_SYNC_INTERVAL_MS`)
+- Uses incremental sync (`?since=<last_sync_at>`) when `last_sync_at` is available; falls back to a full sync if the remote does not support the `?since` parameter
+- Nodes are staggered by 30 seconds apart to avoid thundering herd on restarts
+- Manual **Sync** and **Full re-sync** buttons remain available for immediate updates
+- Per-node locking prevents a background sync and a manual sync from running concurrently for the same node; if a sync is already in progress the manual sync returns `409 Conflict`
+- The current sync interval is shown at the top of the Trusted Homes page
+
+**Configuration:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TRUSTED_HOME_SYNC_ENABLED` | `true` | Enable background auto-sync |
+| `TRUSTED_HOME_SYNC_INTERVAL_MS` | `21600000` | Sync interval in ms (default 6 hours) |
+| `TRUSTED_HOME_SYNC_STAGGER_MS` | `30000` | Delay between each node's sync start (ms) |
+| `TRUSTED_HOME_SYNC_ON_STARTUP` | `false` | Sync immediately on server startup |
+
+**Known limitations:**
+
+- Incremental sync (`?since`) filters only `media_items.updated_at`. Changes to `mediaVersions` or `mediaFiles` that are independent of their parent item will not surface until the parent item is touched or a full sync runs.
+- Remote deletions are not propagated incrementally — use **Full re-sync** to reconcile items that were deleted on the remote home.
 
 To reconnect after disconnecting, create a new invite on the other home and use Accept invite again.
 

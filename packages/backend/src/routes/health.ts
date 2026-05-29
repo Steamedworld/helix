@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { ok } from '../lib/response'
+import { config } from '../config'
 
 export async function healthRoutes(app: FastifyInstance) {
   app.get('/health', async () => {
@@ -7,6 +8,10 @@ export async function healthRoutes(app: FastifyInstance) {
       status: 'ok',
       version: '0.1.0',
       node: 'Helix Local',
+      autoSync: {
+        enabled: config.trustedHomeSyncEnabled,
+        intervalMs: config.trustedHomeSyncIntervalMs,
+      },
     })
   })
 }

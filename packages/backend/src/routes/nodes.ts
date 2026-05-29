@@ -7,6 +7,7 @@ import { makeRequireAdmin, makeRequireAuth } from '../middleware/auth'
 import { encryptApiKey, decryptApiKey } from '../services/integrations/encryption'
 import { checkRemoteHealth } from '../services/federation/healthCheck'
 import { syncRemoteNode } from '../services/federation/catalogSync'
+import { syncInProgress } from '../services/federation/trustedHomeSyncScheduler'
 import { canViewLibrary } from '../lib/permissions'
 import { fetchRemoteCapabilities, type NodeCapabilities } from '../services/federation/capabilities'
 import { isLoopbackUrl } from '../config'
@@ -394,6 +395,14 @@ export async function nodeRoutes(
         return err('Node is missing base_url or api_token')
       }
       const force = req.query.force === 'true' || req.query.force === '1'
+
+      // Reject if a background or concurrent sync is already in progress for this node
+      if (syncInProgress.has(node.id)) {
+        reply.status(409)
+        return err('Sync already in progress for this node')
+      }
+
+      syncInProgress.add(node.id)
       try {
         const nowMs = Date.now()
         const rawTokenForSync = decryptApiKey(node.api_token_encrypted, dataDir)
@@ -428,6 +437,8 @@ export async function nodeRoutes(
           .where(eq(nodes.id, node.id))
         reply.status(500)
         return err(errMsg)
+      } finally {
+        syncInProgress.delete(node.id)
       }
     }
   )

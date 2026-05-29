@@ -71,6 +71,12 @@ export const config = {
   enrichmentPeriodicEnabled: (process.env.ENRICHMENT_PERIODIC_ENABLED ?? 'true') !== 'false',
   enrichmentPeriodicIntervalMs: Number(process.env.ENRICHMENT_PERIODIC_INTERVAL_MS ?? 21600000),
 
+  // Trusted Home background auto-sync
+  trustedHomeSyncEnabled: (process.env.TRUSTED_HOME_SYNC_ENABLED ?? 'true') !== 'false',
+  trustedHomeSyncIntervalMs: Number(process.env.TRUSTED_HOME_SYNC_INTERVAL_MS ?? 21600000),
+  trustedHomeSyncStaggerMs: Number(process.env.TRUSTED_HOME_SYNC_STAGGER_MS ?? 30000),
+  trustedHomeSyncOnStartup: (process.env.TRUSTED_HOME_SYNC_ON_STARTUP ?? 'false') === 'true',
+
   // Public base URL — validated and normalized; null if not set
   baseUrl: configuredBaseUrl,
 }

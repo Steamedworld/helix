@@ -21,6 +21,8 @@ import { webhookRoutes } from './routes/webhooks'
 import { enrichmentQueueRoutes } from './routes/enrichmentQueue'
 import { trustedHomeInviteRoutes, acceptInviteRoutes } from './routes/trustedHomeInvites'
 import { enrichmentQueue } from './services/enrichmentQueue'
+import { createTrustedHomeSyncScheduler } from './services/federation/trustedHomeSyncScheduler'
+import { syncRemoteNode } from './services/federation/catalogSync'
 import { err } from './lib/response'
 import type { DrizzleDB } from './db/client'
 import { metadataRegistry } from './services/metadata/registry'
@@ -174,12 +176,27 @@ export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string
     db,
   } as Parameters<typeof enrichmentQueueRoutes>[1] & { prefix: string })
 
+  // Trusted Home background sync scheduler
+  const trustedHomeSyncScheduler = createTrustedHomeSyncScheduler(
+    db,
+    resolvedDataDir,
+    {
+      enabled: config.trustedHomeSyncEnabled,
+      intervalMs: config.trustedHomeSyncIntervalMs,
+      staggerMs: config.trustedHomeSyncStaggerMs,
+      onStartup: config.trustedHomeSyncOnStartup,
+    },
+    syncRemoteNode
+  )
+
   app.addHook('onReady', async () => {
     enrichmentQueue.start(db)
+    trustedHomeSyncScheduler.start()
   })
 
   app.addHook('onClose', async () => {
     enrichmentQueue.stop()
+    await trustedHomeSyncScheduler.stop()
   })
 
   // TV hierarchy routes

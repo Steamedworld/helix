@@ -20,8 +20,10 @@ import {
   updateNodeAccess,
 } from '../api/nodes'
 import { getServerConfig } from '../api/config'
+import { getHealth } from '../api/health'
 import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic, InviteSummary, AcceptInviteResponse, AccessLibrarySummary, AccessUpdateGrant, SyncResponse } from '../api/nodes'
 import type { ServerConfig } from '../api/config'
+import type { HealthResponse } from '../api/health'
 
 // ─── Status chip ──────────────────────────────────────────────────────────────
 
@@ -1561,10 +1563,26 @@ function TrustedHomeRow({ node, onDeleted, onUpdated, defaultOpenAccess = false 
         <div style={{ fontSize: 12, color: 'var(--bad)' }}>{error}</div>
       )}
       {syncResult && (
-        <div style={{ fontSize: 12, color: 'var(--accent)' }}>
-          {syncResult.incremental ? 'Incremental sync' : 'Full sync'} —{' '}
-          {syncResult.itemsSynced} {syncResult.itemsSynced === 1 ? 'item' : 'items'} updated
-          {syncResult.fallbackUsed ? ' (fell back to full sync — remote does not support incremental)' : ''}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ fontSize: 12, color: 'var(--accent)' }}>
+            {syncResult.incremental ? 'Incremental sync' : 'Full sync'} —{' '}
+            {syncResult.itemsSynced} {syncResult.itemsSynced === 1 ? 'item' : 'items'} updated
+          </div>
+          {syncResult.fallbackUsed && (
+            <div
+              style={{
+                fontSize: 12,
+                color: '#e6a817',
+                background: 'oklch(0.78 0.14 65 / 0.07)',
+                border: '1px solid oklch(0.78 0.14 65 / 0.25)',
+                borderRadius: 'var(--r-1)',
+                padding: '5px 9px',
+                lineHeight: 1.5,
+              }}
+            >
+              This Trusted Home does not support incremental sync; a full sync was used instead.
+            </div>
+          )}
         </div>
       )}
       {disconnectSummary && (
@@ -1612,6 +1630,7 @@ export function Nodes() {
   const [showManualAddForm, setShowManualAddForm] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [serverConfig, setServerConfig] = useState<ServerConfig | null>(null)
+  const [healthData, setHealthData] = useState<HealthResponse | null>(null)
   const [inviteRefreshKey, setInviteRefreshKey] = useState(0)
   const [accessOpenNodeId, setAccessOpenNodeId] = useState<string | null>(null)
   const [bannerDismissed, setBannerDismissed] = useState(() => {
@@ -1626,6 +1645,9 @@ export function Nodes() {
     loadNodes()
     getServerConfig().then((res) => {
       if (res.ok) setServerConfig(res.data)
+    })
+    getHealth().then((res) => {
+      if (res.ok) setHealthData(res.data)
     })
   }, [])
 
@@ -1703,6 +1725,13 @@ export function Nodes() {
         <p style={{ fontSize: 13, color: 'var(--ink-3)', margin: 0 }}>
           Connect other Helix homes to access their private libraries alongside your own.
         </p>
+        {healthData && (
+          <p style={{ fontSize: 12, color: 'var(--ink-4)', margin: '6px 0 0' }}>
+            {healthData.autoSync.enabled
+              ? `Background sync: every ${Math.round(healthData.autoSync.intervalMs / 3600000)} hours`
+              : 'Background sync: disabled'}
+          </p>
+        )}
       </div>
 
       {/* Admin banner: shown when remote nodes exist and local BASE_URL is unset/loopback */}
