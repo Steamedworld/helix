@@ -434,7 +434,7 @@ describe('Node management', () => {
     })
     expect(delRes.statusCode).toBe(200)
     const delBody = JSON.parse(delRes.body)
-    expect(delBody.data.deleted).toBe(true)
+    expect(delBody.data.nodeRemoved).toBe(true)
 
     // Node should be gone
     const getRes = await app.inject({

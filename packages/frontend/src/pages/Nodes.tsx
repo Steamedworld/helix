@@ -4,6 +4,7 @@ import {
   listNodes,
   createNode,
   deleteNode,
+  revokeNodeAccess,
   testNode,
   syncNode,
   checkNodePlayback,
@@ -1324,8 +1325,12 @@ function TrustedHomeRow({ node, onDeleted, onUpdated, defaultOpenAccess = false 
   const [testing, setTesting] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [checking, setChecking] = useState(false)
+  const [disconnecting, setDisconnecting] = useState(false)
+  const [revoking, setRevoking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [syncResult, setSyncResult] = useState<{ librariesSynced: number; itemsSynced: number } | null>(null)
+  const [disconnectSummary, setDisconnectSummary] = useState<string | null>(null)
+  const [revokeResult, setRevokeResult] = useState<string | null>(null)
   const [diagnostic, setDiagnostic] = useState<DirectPlaybackDiagnostic | null>(null)
   const [showAccess, setShowAccess] = useState(defaultOpenAccess)
   const accessRef = useRef<HTMLDivElement>(null)
@@ -1374,11 +1379,55 @@ function TrustedHomeRow({ node, onDeleted, onUpdated, defaultOpenAccess = false 
     }
   }
 
-  async function handleDelete() {
-    if (!confirm(`Remove trusted home "${node.name}"? Imported catalog data will be deleted.`)) return
+  async function handleDisconnect() {
+    const confirmed = confirm(
+      `Disconnect Trusted Home "${node.name}"?\n\n` +
+      `This removes its synced catalog and any access grants for its libraries. ` +
+      `It does not affect media on the other home.`
+    )
+    if (!confirmed) return
+    setDisconnecting(true)
+    setError(null)
     const res = await deleteNode(node.id)
+    setDisconnecting(false)
     if (res.ok) {
-      onDeleted(node.id)
+      const { librariesRemoved, mediaItemsRemoved, grantsRemoved } = res.data
+      const parts: string[] = []
+      if (librariesRemoved > 0) parts.push(`${librariesRemoved} ${librariesRemoved === 1 ? 'library' : 'libraries'}`)
+      if (mediaItemsRemoved > 0) parts.push(`${mediaItemsRemoved} ${mediaItemsRemoved === 1 ? 'item' : 'items'}`)
+      if (grantsRemoved > 0) parts.push(`${grantsRemoved} access ${grantsRemoved === 1 ? 'grant' : 'grants'}`)
+      setDisconnectSummary(
+        parts.length > 0
+          ? `Removed ${parts.join(', ')}.`
+          : 'Disconnected.'
+      )
+      // Brief delay so summary is visible before row disappears
+      setTimeout(() => onDeleted(node.id), 1800)
+    } else {
+      setError(res.error ?? 'Disconnect failed')
+    }
+  }
+
+  async function handleRevokeAccess() {
+    const confirmed = confirm(
+      `Revoke all user access to libraries from "${node.name}"?\n\n` +
+      `The home will remain connected. Users can be re-granted access at any time.`
+    )
+    if (!confirmed) return
+    setRevoking(true)
+    setError(null)
+    setRevokeResult(null)
+    const res = await revokeNodeAccess(node.id)
+    setRevoking(false)
+    if (res.ok) {
+      const n = res.data.grantsRemoved
+      setRevokeResult(
+        n === 0
+          ? 'No access grants were found to remove.'
+          : `Removed ${n} access ${n === 1 ? 'grant' : 'grants'}.`
+      )
+    } else {
+      setError(res.error ?? 'Revoke failed')
     }
   }
 
@@ -1389,6 +1438,8 @@ function TrustedHomeRow({ node, onDeleted, onUpdated, defaultOpenAccess = false 
   }, [defaultOpenAccess])
 
   void onUpdated
+
+  const busy = testing || syncing || checking || disconnecting || revoking
 
   return (
     <div
@@ -1413,18 +1464,18 @@ function TrustedHomeRow({ node, onDeleted, onUpdated, defaultOpenAccess = false 
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <button
             className="btn btn-ghost btn-sm"
             onClick={handleTest}
-            disabled={testing || syncing || checking}
+            disabled={busy}
           >
             {testing ? 'Testing…' : 'Test'}
           </button>
           <button
             className="btn btn-ghost btn-sm"
             onClick={handleCheck}
-            disabled={testing || syncing || checking}
+            disabled={busy}
             title="Check direct-playback readiness"
           >
             {checking ? 'Checking…' : 'Check connection'}
@@ -1432,16 +1483,27 @@ function TrustedHomeRow({ node, onDeleted, onUpdated, defaultOpenAccess = false 
           <button
             className="btn btn-ghost btn-sm"
             onClick={handleSync}
-            disabled={testing || syncing || checking}
+            disabled={busy}
           >
             {syncing ? 'Syncing…' : 'Sync'}
           </button>
           <button
             className="btn btn-ghost btn-sm"
-            onClick={handleDelete}
-            style={{ color: 'var(--bad)' }}
+            onClick={handleRevokeAccess}
+            disabled={busy}
+            style={{ color: 'var(--ink-3)' }}
+            title="Remove all user access grants for this home's libraries without disconnecting"
           >
-            Remove
+            {revoking ? 'Revoking…' : 'Revoke all access'}
+          </button>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={handleDisconnect}
+            disabled={busy}
+            style={{ color: 'var(--bad)' }}
+            title="Disconnect this Trusted Home and remove its synced catalog"
+          >
+            {disconnecting ? 'Disconnecting…' : 'Disconnect Trusted Home'}
           </button>
         </div>
       </div>
@@ -1467,6 +1529,12 @@ function TrustedHomeRow({ node, onDeleted, onUpdated, defaultOpenAccess = false 
           Synced {syncResult.librariesSynced} {syncResult.librariesSynced === 1 ? 'library' : 'libraries'},{' '}
           {syncResult.itemsSynced} {syncResult.itemsSynced === 1 ? 'item' : 'items'}
         </div>
+      )}
+      {disconnectSummary && (
+        <div style={{ fontSize: 12, color: 'var(--ok)' }}>{disconnectSummary}</div>
+      )}
+      {revokeResult && (
+        <div style={{ fontSize: 12, color: 'var(--ok)' }}>{revokeResult}</div>
       )}
 
       {/* Manage Access collapsible */}

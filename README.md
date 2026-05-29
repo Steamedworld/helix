@@ -323,6 +323,40 @@ When a remote node supports playback (i.e. `supportsRemotePlayback: true`, `supp
 
 **Watch-state:** Progress is tracked on the hub only. The hub's `PUT /api/v1/watchstate/:mediaItemId` is called as the video plays. Watch state is never synced back to the remote node. "Continue Watching" reflects remote playback position.
 
+### Disconnecting a Trusted Home
+
+Disconnecting a Trusted Home removes its synced catalog and all access grants from the local database. It does not affect media or data on the other home.
+
+**What gets removed:**
+- All libraries synced from that home
+- All media items in those libraries
+- All media files linked to those items and that node
+- All user access grants (`library_permissions`) for those libraries
+- The node record itself
+
+**What is preserved:**
+- All local libraries and media items (only the remote home's catalog is removed)
+- The other home's invite record (it remains marked as used)
+- User accounts
+
+Use the **Disconnect Trusted Home** button in the Connected Trusted Homes panel. A confirmation dialog explains what will be removed. On success, a summary is shown ("Removed 3 libraries, 142 items, 12 access grants.").
+
+To reconnect after disconnecting, create a new invite on the other home and use Accept invite again.
+
+### Revoking access without disconnecting
+
+Use **Revoke all access** in the Trusted Home row to remove all user access grants for a home's libraries without removing the synced catalog or disconnecting.
+
+**What gets removed:**
+- All `library_permissions` rows for that home's libraries
+
+**What is preserved:**
+- The connection (node record)
+- The synced catalog (libraries, media items)
+- User accounts
+
+After revoking, users will no longer see or play from that home's libraries. You can re-grant access at any time using the Manage Access panel or the bulk grant endpoint.
+
 ### What is deferred
 
 - **Hub video proxy** — the browser streams directly from the remote node. No hub-side buffering or re-streaming.
@@ -468,7 +502,7 @@ The DB schema is federation-aware: every `media_file` carries a `node_id`. Remot
 | POST | `/api/v1/nodes` | Add a remote node (`name`, `base_url`, `api_token`) |
 | GET | `/api/v1/nodes/:id` | Node detail |
 | PATCH | `/api/v1/nodes/:id` | Update name, base_url, or api_token |
-| DELETE | `/api/v1/nodes/:id` | Remove remote node (cascades to imported catalog) |
+| DELETE | `/api/v1/nodes/:id` | Disconnect remote node — atomically removes its synced libraries, media items, files, and access grants; returns cleanup summary |
 | POST | `/api/v1/nodes/:id/test` | Test connection health |
 | POST | `/api/v1/nodes/:id/sync` | Sync remote catalog |
 | GET | `/api/v1/federation/token` | Check if access token is set |
@@ -480,6 +514,7 @@ The DB schema is federation-aware: every `media_file` carries a `node_id`. Remot
 | POST | `/api/v1/trusted-homes/accept-invite` | Accept invite string, test remote health, create node entry |
 | GET | `/api/v1/nodes/:id/access-summary` | Per-library grant summary for a remote node; includes grants and ungranted users |
 | PUT | `/api/v1/nodes/:id/access` | Bulk upsert library permissions for a remote node (`grants: [{libraryId, userId, canView, canPlay}]`) |
+| DELETE | `/api/v1/nodes/:id/access` | Bulk revoke all library_permissions for a remote node's libraries; catalog and node record are kept |
 
 ### Remote artwork proxy (session auth)
 
@@ -549,6 +584,7 @@ The DB schema is federation-aware: every `media_file` carries a `node_id`. Remot
 - [x] Direct playback signing — source home generates HMAC-signed stream URLs; browser streams directly without hub proxy; sharing token never exposed
 - [x] Trusted Home invite flow — create and exchange invite strings to connect homes; no manual token/address copy-paste required; invite history with revocation
 - [x] Trusted Home access workflow — per-library, per-user access grants for remote libraries; Manage Access panel in Trusted Homes UI; post-connect "Set up access" flow
+- [x] Trusted Home disconnect — safe atomic cleanup of synced catalog and access grants; bulk-revoke endpoint; Disconnect and Revoke all access UI actions with cleanup summary
 - [ ] Episode still image download and caching
 - [ ] MusicBrainz provider for music libraries
 - [ ] TVDB provider for alternate TV metadata

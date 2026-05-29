@@ -64,8 +64,26 @@ export function updateNode(
   })
 }
 
+export interface DisconnectSummary {
+  nodeRemoved: boolean
+  librariesRemoved: number
+  mediaItemsRemoved: number
+  mediaFilesRemoved: number
+  grantsRemoved: number
+}
+
 export function deleteNode(id: string) {
-  return apiFetch<{ deleted: boolean }>(`/api/v1/nodes/${id}`, {
+  return apiFetch<DisconnectSummary>(`/api/v1/nodes/${id}`, {
+    method: 'DELETE',
+  })
+}
+
+export interface BulkRevokeResponse {
+  grantsRemoved: number
+}
+
+export function revokeNodeAccess(nodeId: string) {
+  return apiFetch<BulkRevokeResponse>(`/api/v1/nodes/${nodeId}/access`, {
     method: 'DELETE',
   })
 }

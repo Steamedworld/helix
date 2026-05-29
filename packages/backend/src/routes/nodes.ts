@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { eq, and, inArray } from 'drizzle-orm'
-import { nodes, mediaItems, libraries, libraryPermissions, users } from '../db/schema'
+import { nodes, mediaItems, mediaFiles, libraries, libraryPermissions, users } from '../db/schema'
 import { ok, err } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
 import { makeRequireAdmin, makeRequireAuth } from '../middleware/auth'
@@ -180,22 +180,140 @@ export async function nodeRoutes(
     return ok(sanitizeNode(updated))
   })
 
-  // DELETE /:id — delete remote node
+  // DELETE /:id — disconnect a Trusted Home node with explicit catalog cleanup
+  //
+  // Removes in order (inside a transaction):
+  //   1. library_permissions rows for all libraries belonging to this node
+  //   2. media_files rows scoped to this node and its libraries
+  //   3. media_items rows in those libraries
+  //   4. libraries rows belonging to this node
+  //   5. the node row itself
+  //
+  // NEVER touches local library or media rows. All deletions are scoped to the
+  // target node's library IDs. Foreign-key cascades would handle most of this
+  // when foreign_keys=ON, but we do it explicitly to: (a) return a cleanup
+  // summary, and (b) make the safety invariant auditable in code.
   app.delete<{ Params: { id: string } }>(
     '/:id',
     { preHandler: requireAdmin },
     async (req, reply) => {
-      const [node] = await db.select().from(nodes).where(eq(nodes.id, req.params.id))
+      const { id: targetId } = req.params
+      const [node] = await db.select().from(nodes).where(eq(nodes.id, targetId))
       if (!node) {
         reply.status(404)
         return err('Node not found')
       }
       if (node.kind === 'local') {
         reply.status(400)
-        return err('Cannot delete the local node')
+        return err('Cannot disconnect the local home')
       }
-      await db.delete(nodes).where(eq(nodes.id, req.params.id))
-      return ok({ deleted: true })
+
+      // Collect library IDs belonging only to this node (pre-transaction read is safe)
+      const nodeLibraries = await db
+        .select({ id: libraries.id })
+        .from(libraries)
+        .where(eq(libraries.node_id, targetId))
+      const libraryIds = nodeLibraries.map((l) => l.id)
+
+      // Run all cleanup inside a single transaction — atomic or nothing.
+      // db.transaction() is synchronous for better-sqlite3 and returns the
+      // callback's return value directly.
+      const result = db.transaction((tx) => {
+        let librariesRemoved = 0
+        let mediaItemsRemoved = 0
+        let mediaFilesRemoved = 0
+        let grantsRemoved = 0
+
+        if (libraryIds.length > 0) {
+          // 1. Remove all library_permissions for this node's libraries
+          const grantRows = tx
+            .delete(libraryPermissions)
+            .where(inArray(libraryPermissions.library_id, libraryIds))
+            .returning({ id: libraryPermissions.id })
+            .all()
+          grantsRemoved = grantRows.length
+
+          // 2. Delete media_files scoped to this node and its libraries
+          const fileRows = tx
+            .delete(mediaFiles)
+            .where(
+              and(
+                eq(mediaFiles.node_id, targetId),
+                inArray(mediaFiles.library_id, libraryIds)
+              )
+            )
+            .returning({ id: mediaFiles.id })
+            .all()
+          mediaFilesRemoved = fileRows.length
+
+          // 3. Delete media_items in this node's libraries
+          const itemRows = tx
+            .delete(mediaItems)
+            .where(inArray(mediaItems.library_id, libraryIds))
+            .returning({ id: mediaItems.id })
+            .all()
+          mediaItemsRemoved = itemRows.length
+
+          // 4. Delete the libraries themselves
+          const libRows = tx
+            .delete(libraries)
+            .where(eq(libraries.node_id, targetId))
+            .returning({ id: libraries.id })
+            .all()
+          librariesRemoved = libRows.length
+        }
+
+        // 5. Delete the node itself
+        tx.delete(nodes).where(eq(nodes.id, targetId)).run()
+
+        return { librariesRemoved, mediaItemsRemoved, mediaFilesRemoved, grantsRemoved }
+      })
+
+      return ok({
+        nodeRemoved: true,
+        ...result,
+      })
+    }
+  )
+
+  // DELETE /:id/access — bulk revoke all library_permissions for a node's libraries
+  //
+  // Does NOT remove libraries or media items — only removes the grant rows so
+  // users lose access. The connection and catalog remain intact.
+  app.delete<{ Params: { id: string } }>(
+    '/:id/access',
+    { preHandler: requireAdmin },
+    async (req, reply) => {
+      const { id: nodeId } = req.params
+      const [node] = await db.select().from(nodes).where(eq(nodes.id, nodeId))
+      if (!node) {
+        reply.status(404)
+        return err('Node not found')
+      }
+
+      if (node.kind === 'local') {
+        reply.status(400)
+        return err('Cannot bulk-revoke access on the local home')
+      }
+
+      // Find all libraries belonging to this node
+      const nodeLibraries = await db
+        .select({ id: libraries.id })
+        .from(libraries)
+        .where(eq(libraries.node_id, nodeId))
+      const libraryIds = nodeLibraries.map((l) => l.id)
+
+      if (libraryIds.length === 0) {
+        return ok({ grantsRemoved: 0 })
+      }
+
+      // Delete all library_permissions rows for those libraries
+      const deleted = await db
+        .delete(libraryPermissions)
+        .where(inArray(libraryPermissions.library_id, libraryIds))
+        .returning({ id: libraryPermissions.id })
+
+      return ok({ grantsRemoved: deleted.length })
     }
   )
 
