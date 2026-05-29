@@ -1567,6 +1567,13 @@ function TrustedHomeRow({ node, onDeleted, onUpdated, defaultOpenAccess = false 
           <div style={{ fontSize: 12, color: 'var(--accent)' }}>
             {syncResult.incremental ? 'Incremental sync' : 'Full sync'} —{' '}
             {syncResult.itemsSynced} {syncResult.itemsSynced === 1 ? 'item' : 'items'} updated
+            {(syncResult.versionsSynced > 0 || syncResult.filesSynced > 0) && (
+              <>
+                {syncResult.versionsSynced > 0 && `, ${syncResult.versionsSynced} ${syncResult.versionsSynced === 1 ? 'version' : 'versions'}`}
+                {syncResult.filesSynced > 0 && `, ${syncResult.filesSynced} ${syncResult.filesSynced === 1 ? 'file' : 'files'}`}
+              </>
+            )}
+            .
           </div>
           {syncResult.fallbackUsed && (
             <div

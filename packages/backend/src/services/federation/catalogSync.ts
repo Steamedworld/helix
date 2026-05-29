@@ -70,6 +70,10 @@ export interface FederationCatalogData {
   items: FederationCatalogItem[]
   versions: FederationCatalogVersion[]
   files: FederationCatalogFile[]
+  /** Count of distinct version rows included (informational) */
+  versionsSynced?: number
+  /** Count of distinct file rows included (informational) */
+  filesSynced?: number
 }
 
 // ─── Fetch ────────────────────────────────────────────────────────────────────
@@ -102,7 +106,7 @@ export async function importCatalog(
   nodeId: string,
   catalog: FederationCatalogData,
   db: DrizzleDB
-): Promise<{ librariesSynced: number; itemsSynced: number }> {
+): Promise<{ librariesSynced: number; itemsSynced: number; versionsSynced: number; filesSynced: number }> {
   const now = new Date().toISOString()
   const remoteRootPath = `remote://${nodeId}`
 
@@ -199,6 +203,10 @@ export async function importCatalog(
           quality_label: version.quality_label,
           resolution_width: version.resolution_width,
           resolution_height: version.resolution_height,
+          video_codec: version.video_codec,
+          audio_codec: version.audio_codec,
+          container: version.container,
+          duration_seconds: version.duration_seconds,
           updated_at: now,
         },
       })
@@ -239,6 +247,8 @@ export async function importCatalog(
   return {
     librariesSynced: catalog.libraries.length,
     itemsSynced: catalog.items.length,
+    versionsSynced: catalog.versions.length,
+    filesSynced: catalog.files.length,
   }
 }
 
@@ -249,6 +259,8 @@ export interface SyncRemoteNodeResult {
   incremental: boolean
   sinceUsed: string | null
   itemsSynced: number
+  versionsSynced: number
+  filesSynced: number
   librariesSynced: number
   fallbackUsed: boolean
 }
@@ -324,6 +336,8 @@ export async function syncRemoteNode(
     incremental: isIncremental,
     sinceUsed: isIncremental ? (sinceIso ?? null) : null,
     itemsSynced: importResult.itemsSynced,
+    versionsSynced: importResult.versionsSynced,
+    filesSynced: importResult.filesSynced,
     librariesSynced: importResult.librariesSynced,
     fallbackUsed,
   }

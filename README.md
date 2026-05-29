@@ -367,7 +367,6 @@ Helix automatically syncs connected Trusted Homes in the background so catalogs 
 
 **Known limitations:**
 
-- Incremental sync (`?since`) filters only `media_items.updated_at`. Changes to `mediaVersions` or `mediaFiles` that are independent of their parent item will not surface until the parent item is touched or a full sync runs.
 - Remote deletions are not propagated incrementally — use **Full re-sync** to reconcile items that were deleted on the remote home.
 
 To reconnect after disconnecting, create a new invite on the other home and use Accept invite again.
@@ -389,6 +388,8 @@ After revoking, users will no longer see or play from that home's libraries. You
 ### Incremental sync
 
 After the initial full sync, subsequent **Sync** operations are incremental — only items whose `updated_at` is newer than `last_sync_at` are fetched from the remote. The response envelope includes `"incremental": true` and the `"since"` timestamp used.
+
+Incremental sync (`?since`) detects changes across `media_items`, `media_versions`, and `media_files`. If a version or file record changes (e.g. quality upgrade, file replaced), its parent item is included in the incremental response with full version and file data. Remote deletions still require a Full re-sync to reconcile.
 
 **Sync decision logic:**
 - `last_sync_at` is null (first sync or never synced) → full sync, no `?since`

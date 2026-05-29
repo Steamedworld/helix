@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { createHash, timingSafeEqual, randomBytes } from 'crypto'
 import { createReadStream, existsSync, statSync } from 'fs'
 import { extname } from 'path'
-import { eq, inArray, gt, and } from 'drizzle-orm'
+import { eq, inArray, gt, and, or, sql } from 'drizzle-orm'
 import { nodes, libraries, mediaItems, mediaVersions, mediaFiles, trustedHomeInvites } from '../db/schema'
 import { ok, err } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
@@ -450,18 +450,71 @@ export async function federationRoutes(
         return ok(catalogData)
       }
 
-      // Get items — filtered by updated_at when since is provided
-      const localItems = await db
-        .select()
-        .from(mediaItems)
-        .where(
-          sinceIso
-            ? and(
-                inArray(mediaItems.library_id, localLibraryIds),
-                gt(mediaItems.updated_at, sinceIso)
-              )
-            : inArray(mediaItems.library_id, localLibraryIds)
-        )
+      // Get items — when ?since is provided, include any item where:
+      //   - media_items.updated_at >= since, OR
+      //   - any of its media_versions has updated_at >= since, OR
+      //   - any of its media_files has updated_at >= since
+      // We use a subquery to find item IDs touched via version/file changes,
+      // then union with the direct item filter for correctness on all SQLite versions.
+      let localItems: (typeof mediaItems.$inferSelect)[]
+      if (sinceIso) {
+        // IDs of items whose own updated_at qualifies
+        const directItems = await db
+          .select({ id: mediaItems.id })
+          .from(mediaItems)
+          .where(
+            and(
+              inArray(mediaItems.library_id, localLibraryIds),
+              gt(mediaItems.updated_at, sinceIso)
+            )
+          )
+
+        // IDs of items that have a version updated since sinceIso
+        const versionTouchedItems = await db
+          .selectDistinct({ id: mediaVersions.media_item_id })
+          .from(mediaVersions)
+          .innerJoin(mediaItems, eq(mediaVersions.media_item_id, mediaItems.id))
+          .where(
+            and(
+              inArray(mediaItems.library_id, localLibraryIds),
+              gt(mediaVersions.updated_at, sinceIso)
+            )
+          )
+
+        // IDs of items that have a file updated since sinceIso
+        const fileTouchedItems = await db
+          .selectDistinct({ id: mediaFiles.media_item_id })
+          .from(mediaFiles)
+          .innerJoin(mediaItems, eq(mediaFiles.media_item_id, mediaItems.id))
+          .where(
+            and(
+              inArray(mediaItems.library_id, localLibraryIds),
+              eq(mediaFiles.node_id, localNodeId),
+              gt(mediaFiles.updated_at, sinceIso)
+            )
+          )
+
+        // Union all touched item IDs
+        const touchedIds = new Set<string>([
+          ...directItems.map((r) => r.id),
+          ...versionTouchedItems.map((r) => r.id),
+          ...fileTouchedItems.map((r) => r.id),
+        ])
+
+        if (touchedIds.size === 0) {
+          localItems = []
+        } else {
+          localItems = await db
+            .select()
+            .from(mediaItems)
+            .where(inArray(mediaItems.id, [...touchedIds]))
+        }
+      } else {
+        localItems = await db
+          .select()
+          .from(mediaItems)
+          .where(inArray(mediaItems.library_id, localLibraryIds))
+      }
       const localItemIds = localItems.map((i) => i.id)
 
       // For incremental responses, always include all library records (so the
@@ -496,6 +549,8 @@ export async function federationRoutes(
         exportedAt: Date.now(),
         incremental,
         since: sinceIso ?? undefined,
+        versionsSynced: localVersions.length,
+        filesSynced: localFiles.length,
         libraries: librariesToExport.map((lib) => ({
           id: lib.id,
           name: lib.name,

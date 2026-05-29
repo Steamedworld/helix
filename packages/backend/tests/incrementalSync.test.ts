@@ -308,6 +308,474 @@ describe('Federation catalog ?since support', () => {
   })
 })
 
+// ─── Federation catalog ?since — version/file timestamp coverage ──────────────
+
+describe('Federation catalog ?since — version and file timestamp coverage', () => {
+  let testDir: string
+  let db: TestDb
+  let app: ReturnType<typeof buildServer>
+  let localNodeId: string
+  let adminCookie: string
+  let rawToken: string
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `helix-inc-vf-${crypto.randomUUID()}`)
+    mkdirSync(testDir, { recursive: true })
+    db = createTestDb(testDir)
+    localNodeId = await bootstrap(db, testDir)
+    app = buildServer(db, localNodeId, undefined, testDir)
+    await app.ready()
+    adminCookie = await setupAuth(app)
+
+    const tokenRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/federation/token',
+      headers: { Cookie: adminCookie },
+    })
+    rawToken = JSON.parse(tokenRes.body).data.token
+  })
+
+  afterEach(async () => {
+    vi.unstubAllGlobals()
+    await app.close()
+    rmSync(testDir, { recursive: true, force: true })
+  })
+
+  // Test 1: ?since includes item whose media_version.updated_at >= since even if media_item.updated_at did not change
+  it('?since includes item whose media_version.updated_at >= since (item itself not updated)', async () => {
+    const oldTs = '2020-01-01T00:00:00.000Z'
+    const newTs = '2026-01-01T00:00:00.000Z'
+    const sinceTs = '2025-01-01T00:00:00.000Z'
+
+    // Seed item with old timestamps
+    const { itemId, versionId } = await seedLocalCatalog(db, localNodeId, oldTs)
+
+    // Update the version's updated_at to be newer than sinceTs — item itself stays old
+    await db.update(mediaVersions).set({ updated_at: newTs, quality_label: '4K' }).where(eq(mediaVersions.id, versionId))
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/federation/catalog?since=${encodeURIComponent(sinceTs)}`,
+      headers: { Authorization: `Bearer ${rawToken}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.ok).toBe(true)
+    expect(body.data.incremental).toBe(true)
+    // The item should be included because its version was updated
+    const returnedItemIds = body.data.items.map((i: { id: string }) => i.id)
+    expect(returnedItemIds).toContain(itemId)
+  })
+
+  // Test 2: ?since includes item whose media_file.updated_at >= since even if media_item.updated_at did not change
+  it('?since includes item whose media_file.updated_at >= since (item itself not updated)', async () => {
+    const oldTs = '2020-01-01T00:00:00.000Z'
+    const newTs = '2026-01-01T00:00:00.000Z'
+    const sinceTs = '2025-01-01T00:00:00.000Z'
+
+    const { itemId, fileId } = await seedLocalCatalog(db, localNodeId, oldTs)
+
+    // Update file updated_at — item stays old
+    await db.update(mediaFiles).set({ updated_at: newTs }).where(eq(mediaFiles.id, fileId))
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/federation/catalog?since=${encodeURIComponent(sinceTs)}`,
+      headers: { Authorization: `Bearer ${rawToken}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.ok).toBe(true)
+    expect(body.data.incremental).toBe(true)
+    const returnedItemIds = body.data.items.map((i: { id: string }) => i.id)
+    expect(returnedItemIds).toContain(itemId)
+  })
+
+  // Test 3: ?since includes the full version and file data for matched items
+  it('?since includes full version and file data for matched items', async () => {
+    const oldTs = '2020-01-01T00:00:00.000Z'
+    const newTs = '2026-01-01T00:00:00.000Z'
+    const sinceTs = '2025-01-01T00:00:00.000Z'
+
+    const { itemId, versionId, fileId } = await seedLocalCatalog(db, localNodeId, oldTs)
+
+    // Update the version timestamp so the item is included
+    await db.update(mediaVersions).set({ updated_at: newTs }).where(eq(mediaVersions.id, versionId))
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/federation/catalog?since=${encodeURIComponent(sinceTs)}`,
+      headers: { Authorization: `Bearer ${rawToken}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.ok).toBe(true)
+
+    // Item returned
+    expect(body.data.items.some((i: { id: string }) => i.id === itemId)).toBe(true)
+
+    // Version included
+    const returnedVersionIds = body.data.versions.map((v: { id: string }) => v.id)
+    expect(returnedVersionIds).toContain(versionId)
+
+    // File included
+    const returnedFileIds = body.data.files.map((f: { id: string }) => f.id)
+    expect(returnedFileIds).toContain(fileId)
+  })
+
+  // Test 4: item with no version/file change and media_item.updated_at < since is NOT included
+  it('item with no version/file change and item.updated_at < since is NOT included', async () => {
+    const oldTs = '2020-01-01T00:00:00.000Z'
+    const sinceTs = '2025-01-01T00:00:00.000Z'
+
+    await seedLocalCatalog(db, localNodeId, oldTs)
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/federation/catalog?since=${encodeURIComponent(sinceTs)}`,
+      headers: { Authorization: `Bearer ${rawToken}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.ok).toBe(true)
+    expect(body.data.incremental).toBe(true)
+    expect(body.data.items.length).toBe(0)
+    expect(body.data.versions.length).toBe(0)
+    expect(body.data.files.length).toBe(0)
+  })
+
+  // Test 5: response never includes filesystem paths (regression on path-stripping)
+  it('incremental response never exposes filesystem paths (regression)', async () => {
+    const newTs = new Date().toISOString()
+    await seedLocalCatalog(db, localNodeId, newTs)
+
+    const sinceTs = '2000-01-01T00:00:00.000Z'
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/federation/catalog?since=${encodeURIComponent(sinceTs)}`,
+      headers: { Authorization: `Bearer ${rawToken}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.ok).toBe(true)
+    expect(body.data.incremental).toBe(true)
+
+    // Items must not include raw fs paths
+    for (const item of body.data.items) {
+      expect(item.poster_path).toBeUndefined()
+      expect(item.backdrop_path).toBeUndefined()
+      expect(item.has_poster).toBeDefined()
+    }
+    // Files must not include path
+    for (const file of body.data.files) {
+      expect(file.path).toBeUndefined()
+      expect(file.filename).toBeDefined()
+    }
+  })
+})
+
+// ─── Import behaviour — version and file upserts via incremental ──────────────
+
+describe('Import behaviour — version and file upserts via incremental sync', () => {
+  let testDir: string
+  let db: TestDb
+  let app: ReturnType<typeof buildServer>
+  let localNodeId: string
+  let adminCookie: string
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `helix-inc-import-${crypto.randomUUID()}`)
+    mkdirSync(testDir, { recursive: true })
+    db = createTestDb(testDir)
+    localNodeId = await bootstrap(db, testDir)
+    app = buildServer(db, localNodeId, undefined, testDir)
+    await app.ready()
+    adminCookie = await setupAuth(app)
+  })
+
+  afterEach(async () => {
+    vi.unstubAllGlobals()
+    await app.close()
+    rmSync(testDir, { recursive: true, force: true })
+  })
+
+  async function addRemoteNode() {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/nodes',
+      headers: { Cookie: adminCookie },
+      payload: { name: 'Remote', base_url: 'http://remote:3001', api_token: 'tok' },
+    })
+    return JSON.parse(res.body).data.id as string
+  }
+
+  // Test 6: incremental import upserts changed media_version row correctly
+  it('incremental import upserts changed media_version row correctly', async () => {
+    const nodeId = await addRemoteNode()
+
+    // Initial full sync
+    const initial = buildMockCatalog(nodeId)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: initial }),
+    }))
+    await app.inject({ method: 'POST', url: `/api/v1/nodes/${nodeId}/sync`, headers: { Cookie: adminCookie } })
+
+    // Verify initial version
+    const [v1] = await db.select().from(mediaVersions).where(eq(mediaVersions.id, 'inc-ver-1'))
+    expect(v1).toBeDefined()
+    expect(v1.quality_label).toBe('1080p')
+
+    // Incremental sync with updated version quality_label
+    const updated = buildMockCatalog(nodeId, {
+      incremental: true,
+      since: new Date(Date.now() - 1000).toISOString(),
+      versions: [{
+        id: 'inc-ver-1',
+        media_item_id: 'inc-item-1',
+        label: null,
+        quality_label: '4K',
+        resolution_width: 3840,
+        resolution_height: 2160,
+        video_codec: 'H.265',
+        audio_codec: 'aac',
+        container: 'mkv',
+        duration_seconds: 5400,
+      }],
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: updated }),
+    }))
+    await db.update(nodes).set({ last_sync_at: Date.now() - 1000 }).where(eq(nodes.id, nodeId))
+    await app.inject({ method: 'POST', url: `/api/v1/nodes/${nodeId}/sync`, headers: { Cookie: adminCookie } })
+
+    // Version should be updated
+    const [v2] = await db.select().from(mediaVersions).where(eq(mediaVersions.id, 'inc-ver-1'))
+    expect(v2.quality_label).toBe('4K')
+    expect(v2.resolution_width).toBe(3840)
+  })
+
+  // Test 7: incremental import upserts changed media_file row correctly
+  it('incremental import upserts changed media_file row correctly', async () => {
+    const nodeId = await addRemoteNode()
+
+    // Initial full sync
+    const initial = buildMockCatalog(nodeId)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: initial }),
+    }))
+    await app.inject({ method: 'POST', url: `/api/v1/nodes/${nodeId}/sync`, headers: { Cookie: adminCookie } })
+
+    const [f1] = await db.select().from(mediaFiles).where(eq(mediaFiles.id, 'inc-file-1'))
+    expect(f1.size_bytes).toBe(3000000000)
+
+    // Incremental sync with updated file size
+    const updated = buildMockCatalog(nodeId, {
+      incremental: true,
+      since: new Date(Date.now() - 1000).toISOString(),
+      files: [{
+        id: 'inc-file-1',
+        media_item_id: 'inc-item-1',
+        media_version_id: 'inc-ver-1',
+        filename: 'test-movie-remux.mkv',
+        extension: 'mkv',
+        size_bytes: 20000000000,
+      }],
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: updated }),
+    }))
+    await db.update(nodes).set({ last_sync_at: Date.now() - 1000 }).where(eq(nodes.id, nodeId))
+    await app.inject({ method: 'POST', url: `/api/v1/nodes/${nodeId}/sync`, headers: { Cookie: adminCookie } })
+
+    const [f2] = await db.select().from(mediaFiles).where(eq(mediaFiles.id, 'inc-file-1'))
+    expect(f2.filename).toBe('test-movie-remux.mkv')
+    expect(f2.size_bytes).toBe(20000000000)
+  })
+
+  // Test 8: after incremental import, file record reflects updated source/version data
+  it('after incremental import, file record reflects updated version reference', async () => {
+    const nodeId = await addRemoteNode()
+
+    const initial = buildMockCatalog(nodeId)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: initial }),
+    }))
+    await app.inject({ method: 'POST', url: `/api/v1/nodes/${nodeId}/sync`, headers: { Cookie: adminCookie } })
+
+    // Incremental sync changes the version's container
+    const newVersionId = 'inc-ver-1'
+    const updated = buildMockCatalog(nodeId, {
+      incremental: true,
+      since: new Date(Date.now() - 1000).toISOString(),
+      versions: [{
+        id: newVersionId,
+        media_item_id: 'inc-item-1',
+        label: null,
+        quality_label: '1080p',
+        resolution_width: 1920,
+        resolution_height: 1080,
+        video_codec: 'H.264',
+        audio_codec: 'aac',
+        container: 'mp4',
+        duration_seconds: 5400,
+      }],
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: updated }),
+    }))
+    await db.update(nodes).set({ last_sync_at: Date.now() - 1000 }).where(eq(nodes.id, nodeId))
+    await app.inject({ method: 'POST', url: `/api/v1/nodes/${nodeId}/sync`, headers: { Cookie: adminCookie } })
+
+    // Version container should reflect the update
+    const [ver] = await db.select().from(mediaVersions).where(eq(mediaVersions.id, newVersionId))
+    expect(ver.container).toBe('mp4')
+  })
+
+  // Test 9: library permissions intact after version/file update via incremental sync
+  it('library permissions intact after version/file update via incremental sync', async () => {
+    const nodeId = await addRemoteNode()
+
+    // Initial full sync
+    const initial = buildMockCatalog(nodeId)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: initial }),
+    }))
+    await app.inject({ method: 'POST', url: `/api/v1/nodes/${nodeId}/sync`, headers: { Cookie: adminCookie } })
+
+    // Grant a user access to the synced library
+    const userRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/users',
+      headers: { Cookie: adminCookie },
+      payload: { username: 'testuser2', password: 'password123', displayName: 'Test User 2' },
+    })
+    const userId = JSON.parse(userRes.body).data.id
+
+    const { libraryPermissions: libPermsSchema } = await import('../src/db/schema')
+    const libRes = await db.select().from(libraries).where(eq(libraries.node_id, nodeId))
+    const libId = libRes[0].id
+
+    await app.inject({
+      method: 'PUT',
+      url: `/api/v1/nodes/${nodeId}/access`,
+      headers: { Cookie: adminCookie },
+      payload: { grants: [{ libraryId: libId, userId, canView: true, canPlay: true }] },
+    })
+
+    const grantsBefore = await db.select().from(libPermsSchema).where(eq(libPermsSchema.library_id, libId))
+    expect(grantsBefore.length).toBe(1)
+
+    // Incremental sync that updates a version
+    const updated = buildMockCatalog(nodeId, {
+      incremental: true,
+      since: new Date(Date.now() - 1000).toISOString(),
+      versions: [{
+        id: 'inc-ver-1',
+        media_item_id: 'inc-item-1',
+        label: null,
+        quality_label: '4K',
+        resolution_width: 3840,
+        resolution_height: 2160,
+        video_codec: 'H.265',
+        audio_codec: 'aac',
+        container: 'mkv',
+        duration_seconds: 5400,
+      }],
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: updated }),
+    }))
+    await db.update(nodes).set({ last_sync_at: Date.now() - 1000 }).where(eq(nodes.id, nodeId))
+    await app.inject({ method: 'POST', url: `/api/v1/nodes/${nodeId}/sync`, headers: { Cookie: adminCookie } })
+
+    // Permissions must still be intact
+    const grantsAfter = await db.select().from(libPermsSchema).where(eq(libPermsSchema.library_id, libId))
+    expect(grantsAfter.length).toBe(1)
+    expect(grantsAfter[0].can_view).toBe(true)
+    expect(grantsAfter[0].can_play).toBe(true)
+  })
+})
+
+// ─── Regression: version/file sync coverage ───────────────────────────────────
+
+describe('Incremental sync regressions — full sync and invalid timestamp', () => {
+  let testDir: string
+  let db: TestDb
+  let app: ReturnType<typeof buildServer>
+  let localNodeId: string
+  let adminCookie: string
+  let rawToken: string
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `helix-inc-reg2-${crypto.randomUUID()}`)
+    mkdirSync(testDir, { recursive: true })
+    db = createTestDb(testDir)
+    localNodeId = await bootstrap(db, testDir)
+    app = buildServer(db, localNodeId, undefined, testDir)
+    await app.ready()
+    adminCookie = await setupAuth(app)
+
+    const tokenRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/federation/token',
+      headers: { Cookie: adminCookie },
+    })
+    rawToken = JSON.parse(tokenRes.body).data.token
+  })
+
+  afterEach(async () => {
+    vi.unstubAllGlobals()
+    await app.close()
+    rmSync(testDir, { recursive: true, force: true })
+  })
+
+  // Test 10: full sync still returns all items including all versions/files
+  it('full sync still returns all items including all versions and files', async () => {
+    const ts = new Date().toISOString()
+    const { itemId, versionId, fileId } = await seedLocalCatalog(db, localNodeId, ts)
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/federation/catalog',
+      headers: { Authorization: `Bearer ${rawToken}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.ok).toBe(true)
+    expect(body.data.incremental).toBe(false)
+
+    const itemIds = body.data.items.map((i: { id: string }) => i.id)
+    expect(itemIds).toContain(itemId)
+
+    const versionIds = body.data.versions.map((v: { id: string }) => v.id)
+    expect(versionIds).toContain(versionId)
+
+    const fileIds = body.data.files.map((f: { id: string }) => f.id)
+    expect(fileIds).toContain(fileId)
+  })
+
+  // Test 11: ?since with invalid timestamp returns 400
+  it('?since with invalid timestamp still returns 400', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/federation/catalog?since=not-a-valid-timestamp',
+      headers: { Authorization: `Bearer ${rawToken}` },
+    })
+    expect(res.statusCode).toBe(400)
+    const body = JSON.parse(res.body)
+    expect(body.ok).toBe(false)
+    expect(body.error).toMatch(/invalid since|iso 8601/i)
+  })
+})
+
 // ─── Hub-side sync decision logic ─────────────────────────────────────────────
 
 describe('Hub incremental sync behaviour', () => {

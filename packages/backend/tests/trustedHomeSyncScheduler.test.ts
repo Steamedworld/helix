@@ -39,6 +39,8 @@ const DEFAULT_SYNC_RESULT: SyncRemoteNodeResult = {
   incremental: true,
   sinceUsed: new Date().toISOString(),
   itemsSynced: 5,
+  versionsSynced: 5,
+  filesSynced: 5,
   librariesSynced: 1,
   fallbackUsed: false,
 }

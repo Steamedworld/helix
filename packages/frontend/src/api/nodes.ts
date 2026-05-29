@@ -104,6 +104,8 @@ export interface SyncResponse {
   incremental: boolean
   sinceUsed: string | null
   itemsSynced: number
+  versionsSynced: number
+  filesSynced: number
   librariesSynced: number
   fallbackUsed: boolean
 }
