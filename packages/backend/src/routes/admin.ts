@@ -7,6 +7,24 @@ import { makeRequireAdmin } from '../middleware/auth'
 import { computeSyncSafetyEstimate } from '../services/federation/catalogSync'
 import { config } from '../config'
 
+// ─── Sync health derivation ───────────────────────────────────────────────────
+
+type SyncHealth = 'healthy' | 'never_synced' | 'failing' | 'stale' | 'unknown'
+
+function deriveSyncHealth(
+  lastSyncAttemptAt: string | null,
+  lastSyncAt: number | null,
+  lastSyncErrorCode: string | null,
+  nextSyncReason: 'no_last_sync' | 'tombstone_retention_exceeded' | 'within_retention',
+  _tombstoneRetentionDays: number
+): SyncHealth {
+  if (!lastSyncAttemptAt && !lastSyncAt) return 'never_synced'
+  if (lastSyncErrorCode !== null) return 'failing'
+  if (!lastSyncAt) return 'unknown' // attempted but no success recorded
+  if (nextSyncReason === 'tombstone_retention_exceeded') return 'stale'
+  return 'healthy'
+}
+
 export async function adminRoutes(
   app: FastifyInstance,
   opts: { db: DrizzleDB }
@@ -100,6 +118,10 @@ export async function adminRoutes(
         last_sync_items_removed: nodes.last_sync_items_removed,
         last_sync_versions_removed: nodes.last_sync_versions_removed,
         last_sync_files_removed: nodes.last_sync_files_removed,
+        last_sync_attempt_at: nodes.last_sync_attempt_at,
+        last_sync_error_at: nodes.last_sync_error_at,
+        last_sync_error_code: nodes.last_sync_error_code,
+        last_sync_error_message: nodes.last_sync_error_message,
       })
       .from(nodes)
       .where(sql`${nodes.kind} = 'remote'`)
@@ -114,6 +136,16 @@ export async function adminRoutes(
         lastSyncIso,
         tombstoneRetentionDays,
         now
+      )
+
+      const hasActiveSyncError = node.last_sync_error_code !== null
+
+      const syncHealth = deriveSyncHealth(
+        node.last_sync_attempt_at,
+        node.last_sync_at,
+        node.last_sync_error_code,
+        safetyEstimate.nextSyncReason,
+        tombstoneRetentionDays
       )
 
       return {
@@ -137,6 +169,12 @@ export async function adminRoutes(
         },
         tombstoneRetentionDays,
         ...safetyEstimate,
+        lastSyncAttemptAt: node.last_sync_attempt_at ?? null,
+        lastSyncErrorAt: node.last_sync_error_at ?? null,
+        lastSyncErrorCode: node.last_sync_error_code ?? null,
+        lastSyncErrorMessage: node.last_sync_error_message ?? null,
+        hasActiveSyncError,
+        syncHealth,
       }
     })
 

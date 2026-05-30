@@ -111,5 +111,13 @@
       "tag": "0013_last_sync_diagnostics",
       "breakpoints": true
     }
+    ,
+    {
+      "idx": 14,
+      "version": "5",
+      "when": 1748995700000,
+      "tag": "0014_sync_failure_visibility",
+      "breakpoints": true
+    }
   ]
 }

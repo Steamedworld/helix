@@ -3,6 +3,7 @@ import { nodes } from '../../db/schema'
 import type { DrizzleDB } from '../../db/client'
 import { logger } from '../../lib/logger'
 import type { SyncRemoteNodeResult } from './catalogSync'
+import { classifySyncError } from './syncErrorClassifier'
 
 // ─── Per-node in-progress lock ────────────────────────────────────────────────
 //
@@ -109,6 +110,16 @@ export function createTrustedHomeSyncScheduler(
 
       syncInProgress.add(node.id)
       try {
+        // Record that an attempt is starting
+        try {
+          await db
+            .update(nodes)
+            .set({ last_sync_attempt_at: new Date().toISOString() })
+            .where(eq(nodes.id, node.id))
+        } catch {
+          // Best-effort — failure to write attempt_at must not abort the sync
+        }
+
         const result = await syncFn(
           node.id,
           node.base_url,
@@ -118,7 +129,9 @@ export function createTrustedHomeSyncScheduler(
           { lastSyncAt: node.last_sync_at, tombstoneRetentionDays: cfg.tombstoneRetentionDays }
         )
 
-        // Update last_sync_at on success
+        // Success: update sync counts and clear current error state.
+        // last_sync_error_at is intentionally preserved — it records when the last error occurred.
+        // Active error state = last_sync_error_code IS NOT NULL.
         const nowMs = Date.now()
         await db
           .update(nodes)
@@ -138,6 +151,8 @@ export function createTrustedHomeSyncScheduler(
             last_sync_versions_removed: result.versionsRemoved,
             last_sync_files_removed: result.filesRemoved,
             last_sync_diagnostics_updated_at: new Date().toISOString(),
+            last_sync_error_code: null,
+            last_sync_error_message: null,
             updated_at: new Date().toISOString(),
           })
           .where(eq(nodes.id, node.id))
@@ -155,16 +170,21 @@ export function createTrustedHomeSyncScheduler(
       } catch (e) {
         // Record error but do NOT rethrow — other nodes must still sync
         const errMsg = e instanceof Error ? e.message : String(e)
+        const classified = classifySyncError(e)
         logger.warn(
           { err: e, nodeId: node.id, name: node.name },
           '[trustedHomeSync] Scheduled sync failed'
         )
         try {
+          // Failure: record safe error details but do NOT overwrite last successful sync count fields
           await db
             .update(nodes)
             .set({
               status: 'error',
               last_error: errMsg,
+              last_sync_error_at: new Date().toISOString(),
+              last_sync_error_code: classified.code,
+              last_sync_error_message: classified.safeMessage,
               updated_at: new Date().toISOString(),
             })
             .where(eq(nodes.id, node.id))

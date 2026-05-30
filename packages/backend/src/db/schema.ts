@@ -23,6 +23,10 @@ export const nodes = sqliteTable('nodes', {
   last_sync_versions_removed: integer('last_sync_versions_removed').notNull().default(0),
   last_sync_files_removed: integer('last_sync_files_removed').notNull().default(0),
   last_sync_diagnostics_updated_at: text('last_sync_diagnostics_updated_at'),
+  last_sync_attempt_at: text('last_sync_attempt_at'),
+  last_sync_error_at: text('last_sync_error_at'),
+  last_sync_error_code: text('last_sync_error_code'),
+  last_sync_error_message: text('last_sync_error_message'),
   created_at: text('created_at').notNull(),
   updated_at: text('updated_at').notNull(),
 })

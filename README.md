@@ -462,10 +462,18 @@ Helix retains deletion tombstones for a configurable number of days (default: 90
 - `tombstoneStats.ageBuckets.olderThanRetention` — tombstones already past the prune cutoff; will be cleaned on the next prune run.
 - `trustedHomeSync[*].incrementalSafeNow` — whether the next automatic sync for that home will be incremental. `false` if the home has not synced recently enough (see `nextSyncReason`).
 - `nextSyncReason`: `within_retention` | `tombstone_retention_exceeded` | `no_last_sync`
+- `lastSyncAttemptAt` — ISO timestamp of the most recent sync attempt (successful or not). `null` if sync has never been attempted.
+- `lastSyncErrorAt` — ISO timestamp of the most recent sync failure. Preserved across subsequent successes (records when the last error occurred, not whether an error is currently active).
+- `lastSyncErrorCode` — safe error classification code when a sync is actively failing: `remote_unreachable` | `auth_failed` | `remote_catalog_failed` | `timeout` | `network_error` | `invalid_remote_response` | `remote_no_since_support` | `unknown`. `null` when no active error.
+- `lastSyncErrorMessage` — a fixed human-readable description corresponding to the error code. Never contains raw error text, credentials, URLs, or stack traces.
+- `hasActiveSyncError` — `true` when `lastSyncErrorCode` is non-null (i.e., the most recent sync attempt failed and has not been cleared by a successful sync).
+- `syncHealth` — derived health summary: `healthy` | `failing` | `stale` | `never_synced` | `unknown`.
 
-**Security:** the endpoint is read-only. It never exposes credentials, API keys, file paths, tokens, signed URLs, or individual tombstone entity IDs. All tombstone counts are aggregated. The endpoint does not trigger any sync or pruning.
+**Sync failure visibility:** The diagnostics panel tracks when sync was last attempted, when it last succeeded, and whether a failure is actively blocking sync. Safe error codes classify common failures (unreachable home, expired token, network error). Raw error details, credentials, and stack traces are never exposed.
 
-**UI:** a collapsible "Show diagnostics" panel is available at the top of the Trusted Homes admin page, showing tombstone stats and a per-home sync status table.
+**Security:** the endpoint is read-only. It never exposes credentials, API keys, file paths, tokens, signed URLs, raw exception messages, or individual tombstone entity IDs. All tombstone counts are aggregated. The endpoint does not trigger any sync or pruning.
+
+**UI:** a collapsible "Show diagnostics" panel is available at the top of the Trusted Homes admin page, showing tombstone stats, per-home sync status, sync health indicators, and active error messages (safe classified text only).
 
 ### What is deferred
 

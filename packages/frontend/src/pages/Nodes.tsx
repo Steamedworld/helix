@@ -299,10 +299,31 @@ interface SyncDiagnosticsPanelProps {
   diagnostics: SyncDiagnosticsResponse
 }
 
+function syncHealthLabel(health: SyncDiagnosticsHomeEntry['syncHealth']): string {
+  switch (health) {
+    case 'healthy': return 'Healthy'
+    case 'failing': return 'Failing ⚠'
+    case 'stale': return 'Stale ⚠'
+    case 'never_synced': return 'Never synced'
+    case 'unknown': return 'Unknown'
+  }
+}
+
+function syncHealthColor(health: SyncDiagnosticsHomeEntry['syncHealth']): string {
+  switch (health) {
+    case 'healthy': return 'var(--ok)'
+    case 'failing': return 'var(--bad)'
+    case 'stale': return '#e6a817'
+    case 'never_synced': return 'var(--ink-4)'
+    case 'unknown': return 'var(--ink-4)'
+  }
+}
+
 function SyncDiagnosticsPanel({ diagnostics }: SyncDiagnosticsPanelProps) {
   const { tombstoneStats, trustedHomeSync } = diagnostics
   const safeCount = trustedHomeSync.filter((h) => h.incrementalSafeNow).length
   const fullCount = trustedHomeSync.length - safeCount
+  const failingCount = trustedHomeSync.filter((h) => h.hasActiveSyncError).length
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -338,6 +359,11 @@ function SyncDiagnosticsPanel({ diagnostics }: SyncDiagnosticsPanelProps) {
       {/* Summary line */}
       {trustedHomeSync.length > 0 && (
         <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+          {failingCount > 0 && (
+            <span style={{ color: 'var(--bad)', marginRight: 8 }}>
+              {failingCount} {failingCount === 1 ? 'home' : 'homes'} failing sync.
+            </span>
+          )}
           {safeCount > 0 && (
             <span style={{ color: 'var(--ok)' }}>
               {safeCount} {safeCount === 1 ? 'home' : 'homes'} safe for incremental sync.
@@ -365,24 +391,55 @@ function SyncDiagnosticsPanel({ diagnostics }: SyncDiagnosticsPanelProps) {
             </thead>
             <tbody>
               {trustedHomeSync.map((entry) => (
-                <tr key={entry.nodeId} style={{ borderBottom: '1px solid var(--border)' }}>
-                  <td style={{ padding: '6px 0', color: 'var(--ink-1)', paddingRight: 16 }}>
-                    {entry.name}
-                  </td>
-                  <td style={{ padding: '6px 0', color: 'var(--ink-3)', paddingRight: 16 }}>
-                    {entry.lastSuccessfulSyncAt
-                      ? formatRelativeDateIso(entry.lastSuccessfulSyncAt)
-                      : <span style={{ color: 'var(--ink-4)' }}>Never</span>}
-                  </td>
-                  <td style={{ padding: '6px 0', paddingRight: 16 }}>
-                    <span style={{ color: entry.nextSyncModeEstimate === 'full' ? '#e6a817' : 'var(--ok)' }}>
-                      {nextSyncLabel(entry)}
-                    </span>
-                  </td>
-                  <td style={{ padding: '6px 0', color: 'var(--ink-3)' }}>
-                    {lastResultSummary(entry)}
-                  </td>
-                </tr>
+                <>
+                  <tr key={entry.nodeId} style={{ borderBottom: entry.hasActiveSyncError ? 'none' : '1px solid var(--border)' }}>
+                    <td style={{ padding: '6px 0', paddingRight: 16 }}>
+                      <div style={{ color: 'var(--ink-1)' }}>{entry.name}</div>
+                      <div style={{ color: syncHealthColor(entry.syncHealth), fontSize: 11, marginTop: 2 }}>
+                        {syncHealthLabel(entry.syncHealth)}
+                      </div>
+                    </td>
+                    <td style={{ padding: '6px 0', color: 'var(--ink-3)', paddingRight: 16 }}>
+                      <div>
+                        {entry.lastSuccessfulSyncAt
+                          ? formatRelativeDateIso(entry.lastSuccessfulSyncAt)
+                          : <span style={{ color: 'var(--ink-4)' }}>—</span>}
+                      </div>
+                      <div style={{ color: 'var(--ink-4)', fontSize: 11, marginTop: 1 }}>
+                        {entry.lastSyncAttemptAt
+                          ? <>Last attempt: {formatRelativeDateIso(entry.lastSyncAttemptAt)}</>
+                          : 'No attempt yet'}
+                      </div>
+                    </td>
+                    <td style={{ padding: '6px 0', paddingRight: 16 }}>
+                      <span style={{ color: entry.nextSyncModeEstimate === 'full' ? '#e6a817' : 'var(--ok)' }}>
+                        {nextSyncLabel(entry)}
+                      </span>
+                    </td>
+                    <td style={{ padding: '6px 0', color: 'var(--ink-3)' }}>
+                      {lastResultSummary(entry)}
+                    </td>
+                  </tr>
+                  {entry.hasActiveSyncError && (
+                    <tr key={`${entry.nodeId}-error`} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td colSpan={4} style={{ paddingBottom: 8, paddingTop: 0 }}>
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: 'var(--bad)',
+                            background: 'oklch(0.70 0.13 25 / 0.07)',
+                            border: '1px solid oklch(0.70 0.13 25 / 0.25)',
+                            borderRadius: 'var(--r-1)',
+                            padding: '5px 9px',
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          Background sync may be failing — last error: {entry.lastSyncErrorMessage ?? 'Sync failed.'}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
               ))}
             </tbody>
           </table>

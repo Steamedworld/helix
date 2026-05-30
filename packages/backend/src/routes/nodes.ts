@@ -8,6 +8,7 @@ import { encryptApiKey, decryptApiKey } from '../services/integrations/encryptio
 import { checkRemoteHealth } from '../services/federation/healthCheck'
 import { syncRemoteNode } from '../services/federation/catalogSync'
 import { syncInProgress } from '../services/federation/trustedHomeSyncScheduler'
+import { classifySyncError } from '../services/federation/syncErrorClassifier'
 import { canViewLibrary } from '../lib/permissions'
 import { fetchRemoteCapabilities, type NodeCapabilities } from '../services/federation/capabilities'
 import { isLoopbackUrl, config } from '../config'
@@ -404,6 +405,12 @@ export async function nodeRoutes(
 
       syncInProgress.add(node.id)
       try {
+        // Record that an attempt is starting
+        await db
+          .update(nodes)
+          .set({ last_sync_attempt_at: new Date().toISOString() })
+          .where(eq(nodes.id, node.id))
+
         const nowMs = Date.now()
         const rawTokenForSync = decryptApiKey(node.api_token_encrypted, dataDir)
         const [syncResult, capabilities] = await Promise.all([
@@ -414,6 +421,9 @@ export async function nodeRoutes(
           }),
           fetchRemoteCapabilities(node.base_url, rawTokenForSync),
         ])
+        // Success: update sync counts and clear current error state.
+        // last_sync_error_at is intentionally preserved — it records when the last error occurred,
+        // not whether an error is currently active. Active error state = last_sync_error_code IS NOT NULL.
         await db
           .update(nodes)
           .set({
@@ -433,22 +443,29 @@ export async function nodeRoutes(
             last_sync_versions_removed: syncResult.versionsRemoved,
             last_sync_files_removed: syncResult.filesRemoved,
             last_sync_diagnostics_updated_at: new Date().toISOString(),
+            last_sync_error_code: null,
+            last_sync_error_message: null,
             updated_at: new Date().toISOString(),
           })
           .where(eq(nodes.id, node.id))
         return ok({ ...syncResult, synced: true, capabilities: capabilities ?? null })
       } catch (e) {
         const errMsg = e instanceof Error ? e.message : 'Sync failed'
+        const classified = classifySyncError(e)
+        // Failure: record safe error details but do NOT overwrite last successful sync count fields
         await db
           .update(nodes)
           .set({
             status: 'error',
             last_error: errMsg,
+            last_sync_error_at: new Date().toISOString(),
+            last_sync_error_code: classified.code,
+            last_sync_error_message: classified.safeMessage,
             updated_at: new Date().toISOString(),
           })
           .where(eq(nodes.id, node.id))
         reply.status(500)
-        return err(errMsg)
+        return err(classified.safeMessage)
       } finally {
         syncInProgress.delete(node.id)
       }

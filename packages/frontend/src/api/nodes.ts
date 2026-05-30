@@ -318,6 +318,12 @@ export interface SyncDiagnosticsHomeEntry {
   incrementalSafeNow: boolean
   nextSyncModeEstimate: 'full' | 'incremental'
   nextSyncReason: 'no_last_sync' | 'tombstone_retention_exceeded' | 'within_retention'
+  lastSyncAttemptAt?: string | null
+  lastSyncErrorAt?: string | null
+  lastSyncErrorCode?: string | null
+  lastSyncErrorMessage?: string | null
+  hasActiveSyncError: boolean
+  syncHealth: 'healthy' | 'never_synced' | 'failing' | 'stale' | 'unknown'
 }
 
 export interface SyncDiagnosticsResponse {
