@@ -95,5 +95,13 @@
       "tag": "0011_invite_used_by",
       "breakpoints": true
     }
+    ,
+    {
+      "idx": 12,
+      "version": "5",
+      "when": 1748995500000,
+      "tag": "0012_catalog_tombstones",
+      "breakpoints": true
+    }
   ]
 }

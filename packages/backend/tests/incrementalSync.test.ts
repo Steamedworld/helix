@@ -17,8 +17,10 @@ import { runMigrations } from '../src/db/migrate'
 import { bootstrap } from '../src/bootstrap'
 import { buildServer } from '../src/server'
 import { setupAuth } from './helpers/auth'
-import { nodes, libraries, mediaItems, mediaVersions, mediaFiles } from '../src/db/schema'
+import { nodes, libraries, mediaItems, mediaVersions, mediaFiles, catalogTombstones } from '../src/db/schema'
 import type { FederationCatalogData } from '../src/services/federation/catalogSync'
+import { importCatalog } from '../src/services/federation/catalogSync'
+import { recordTombstone, recordTombstones } from '../src/services/federation/tombstones'
 
 function createTestDb(testDir: string) {
   mkdirSync(testDir, { recursive: true })
@@ -1235,5 +1237,623 @@ describe('Incremental sync integration regressions', () => {
       expect(body.ok).toBe(false)
       expect(body.error).toMatch(/artwork|not found/i)
     }
+  })
+})
+
+// ─── Tombstone API — catalog endpoint ────────────────────────────────────────
+
+describe('Tombstone catalog API', () => {
+  let testDir: string
+  let db: ReturnType<typeof createDb>
+  let app: ReturnType<typeof buildServer>
+  let localNodeId: string
+  let adminCookie: string
+  let rawToken: string
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `helix-tombstone-api-${crypto.randomUUID()}`)
+    mkdirSync(testDir, { recursive: true })
+    db = createDb(join(testDir, 'test.db'))
+    runMigrations(db, join(__dirname, '../drizzle'))
+    localNodeId = await bootstrap(db, testDir)
+    app = buildServer(db, localNodeId, undefined, testDir)
+    await app.ready()
+    adminCookie = await setupAuth(app)
+    const tokenRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/federation/token',
+      headers: { Cookie: adminCookie },
+    })
+    rawToken = JSON.parse(tokenRes.body).data.token
+  })
+
+  afterEach(async () => {
+    vi.unstubAllGlobals()
+    await app.close()
+    rmSync(testDir, { recursive: true, force: true })
+  })
+
+  // Test 1: ?since response includes tombstones after the timestamp
+  it('?since response includes tombstones created after since timestamp', async () => {
+    const sinceTs = '2025-01-01T00:00:00.000Z'
+    const afterTs = '2026-01-01T00:00:00.000Z'
+    const beforeTs = '2024-01-01T00:00:00.000Z'
+
+    // Insert tombstones directly — one after since, one before
+    await db.insert(catalogTombstones).values([
+      {
+        id: crypto.randomUUID(),
+        node_id: localNodeId,
+        entity_type: 'media_file',
+        entity_id: 'file-after',
+        deleted_at: afterTs,
+        reason: 'scan_missing',
+        created_at: afterTs,
+      },
+      {
+        id: crypto.randomUUID(),
+        node_id: localNodeId,
+        entity_type: 'media_item',
+        entity_id: 'item-before',
+        deleted_at: beforeTs,
+        reason: 'unknown',
+        created_at: beforeTs,
+      },
+    ])
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/federation/catalog?since=${encodeURIComponent(sinceTs)}`,
+      headers: { Authorization: `Bearer ${rawToken}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.ok).toBe(true)
+    expect(body.data.tombstones).toBeDefined()
+    const tombstones = body.data.tombstones as Array<{ entityId: string }>
+    const ids = tombstones.map((t) => t.entityId)
+    expect(ids).toContain('file-after')
+    expect(ids).not.toContain('item-before')
+  })
+
+  // Test 2: tombstones before ?since are excluded
+  it('tombstones before since timestamp are excluded from response', async () => {
+    const sinceTs = '2025-06-01T00:00:00.000Z'
+    // Insert a tombstone well before the since ts
+    await db.insert(catalogTombstones).values({
+      id: crypto.randomUUID(),
+      node_id: localNodeId,
+      entity_type: 'media_version',
+      entity_id: 'old-version',
+      deleted_at: '2024-01-01T00:00:00.000Z',
+      reason: 'unknown',
+      created_at: '2024-01-01T00:00:00.000Z',
+    })
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/federation/catalog?since=${encodeURIComponent(sinceTs)}`,
+      headers: { Authorization: `Bearer ${rawToken}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.data.tombstones).toBeDefined()
+    const ids = (body.data.tombstones as Array<{ entityId: string }>).map((t) => t.entityId)
+    expect(ids).not.toContain('old-version')
+  })
+
+  // Test 3: full sync (no ?since) returns tombstones as empty array or field absent
+  it('full catalog response has empty tombstones array', async () => {
+    await db.insert(catalogTombstones).values({
+      id: crypto.randomUUID(),
+      node_id: localNodeId,
+      entity_type: 'media_file',
+      entity_id: 'some-file',
+      deleted_at: new Date().toISOString(),
+      reason: 'scan_missing',
+      created_at: new Date().toISOString(),
+    })
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/federation/catalog',
+      headers: { Authorization: `Bearer ${rawToken}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.ok).toBe(true)
+    // Full sync: tombstones should be empty or absent
+    const tombstones = body.data.tombstones ?? []
+    expect(Array.isArray(tombstones)).toBe(true)
+    expect(tombstones.length).toBe(0)
+  })
+
+  // Test 4: tombstone response fields — entityType, entityId, deletedAt, reason
+  it('tombstone response includes entityType, entityId, deletedAt, reason fields', async () => {
+    const deletedAt = '2026-03-15T12:00:00.000Z'
+    await db.insert(catalogTombstones).values({
+      id: crypto.randomUUID(),
+      node_id: localNodeId,
+      entity_type: 'media_item',
+      entity_id: 'item-abc',
+      deleted_at: deletedAt,
+      reason: 'scan_missing',
+      created_at: deletedAt,
+    })
+
+    const sinceTs = '2026-01-01T00:00:00.000Z'
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/federation/catalog?since=${encodeURIComponent(sinceTs)}`,
+      headers: { Authorization: `Bearer ${rawToken}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    const ts = (body.data.tombstones as Array<Record<string, string>>).find((t) => t.entityId === 'item-abc')
+    expect(ts).toBeDefined()
+    expect(ts!.entityType).toBe('media_item')
+    expect(ts!.deletedAt).toBe(deletedAt)
+    expect(ts!.reason).toBe('scan_missing')
+  })
+
+  // Test 5: tombstone response never includes file paths or secrets
+  it('tombstone response never includes file paths or secrets', async () => {
+    const ts2 = await seedLocalCatalog(db, localNodeId, new Date().toISOString())
+    const deletedAt = new Date().toISOString()
+    await db.insert(catalogTombstones).values({
+      id: crypto.randomUUID(),
+      node_id: localNodeId,
+      entity_type: 'media_file',
+      entity_id: ts2.fileId,
+      deleted_at: deletedAt,
+      reason: 'scan_missing',
+      created_at: deletedAt,
+    })
+
+    const sinceTs = '2000-01-01T00:00:00.000Z'
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/federation/catalog?since=${encodeURIComponent(sinceTs)}`,
+      headers: { Authorization: `Bearer ${rawToken}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    const tombstones = body.data.tombstones as Array<Record<string, unknown>>
+    for (const t of tombstones) {
+      expect(t.path).toBeUndefined()
+      expect(t.root_path).toBeUndefined()
+      expect(t.api_token_encrypted).toBeUndefined()
+      expect(t.federation_token_hash).toBeUndefined()
+      // Should only have entityType, entityId, deletedAt, reason
+      expect(t.entityType).toBeDefined()
+      expect(t.entityId).toBeDefined()
+      expect(t.deletedAt).toBeDefined()
+    }
+  })
+})
+
+// ─── Tombstone creation via recordTombstone helpers ───────────────────────────
+
+describe('Tombstone creation helpers', () => {
+  let testDir: string
+  let db: ReturnType<typeof createDb>
+  let localNodeId: string
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `helix-tombstone-create-${crypto.randomUUID()}`)
+    mkdirSync(testDir, { recursive: true })
+    db = createDb(join(testDir, 'test.db'))
+    runMigrations(db, join(__dirname, '../drizzle'))
+    localNodeId = await bootstrap(db, testDir)
+  })
+
+  afterEach(() => {
+    rmSync(testDir, { recursive: true, force: true })
+  })
+
+  // Test 6: deleting a media_file records a media_file tombstone
+  it('recordTombstone creates a media_file tombstone', async () => {
+    await recordTombstone(db, localNodeId, 'media_file', 'file-xyz', 'scan_missing')
+    const rows = await db
+      .select()
+      .from(catalogTombstones)
+      .where(eq(catalogTombstones.entity_id, 'file-xyz'))
+    expect(rows.length).toBe(1)
+    expect(rows[0].entity_type).toBe('media_file')
+    expect(rows[0].reason).toBe('scan_missing')
+    expect(rows[0].node_id).toBe(localNodeId)
+  })
+
+  // Test 7: recordTombstones for a batch records one tombstone per ID
+  it('recordTombstones creates tombstones for all IDs in batch', async () => {
+    const ids = ['ver-1', 'ver-2', 'ver-3']
+    await recordTombstones(db, localNodeId, 'media_version', ids, 'unknown')
+    const rows = await db
+      .select()
+      .from(catalogTombstones)
+      .where(eq(catalogTombstones.entity_type, 'media_version'))
+    expect(rows.length).toBe(3)
+    const recordedIds = rows.map((r) => r.entity_id)
+    for (const id of ids) {
+      expect(recordedIds).toContain(id)
+    }
+  })
+
+  // Test 8: tombstones for item, version, and file all get their own records
+  it('tombstones for item + version + file are all recorded', async () => {
+    await recordTombstone(db, localNodeId, 'media_item', 'item-1', 'unknown')
+    await recordTombstone(db, localNodeId, 'media_version', 'ver-1', 'unknown')
+    await recordTombstone(db, localNodeId, 'media_file', 'file-1', 'unknown')
+
+    const rows = await db.select().from(catalogTombstones)
+    const types = rows.map((r) => r.entity_type)
+    expect(types).toContain('media_item')
+    expect(types).toContain('media_version')
+    expect(types).toContain('media_file')
+  })
+
+  // Test 9: library tombstone is recorded with correct entity_type
+  it('tombstone for library entity is recorded correctly', async () => {
+    await recordTombstone(db, localNodeId, 'library', 'lib-99', 'admin_disconnect')
+    const [row] = await db
+      .select()
+      .from(catalogTombstones)
+      .where(eq(catalogTombstones.entity_id, 'lib-99'))
+    expect(row).toBeDefined()
+    expect(row.entity_type).toBe('library')
+    expect(row.reason).toBe('admin_disconnect')
+  })
+
+  // Test 9b: recordTombstones is a no-op for empty array
+  it('recordTombstones with empty array inserts nothing', async () => {
+    await recordTombstones(db, localNodeId, 'media_file', [], 'unknown')
+    const rows = await db.select().from(catalogTombstones)
+    expect(rows.length).toBe(0)
+  })
+})
+
+// ─── Tombstone import safety ──────────────────────────────────────────────────
+
+describe('Tombstone import safety', () => {
+  let testDir: string
+  let db: ReturnType<typeof createDb>
+  let localNodeId: string
+  let remoteNodeId: string
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `helix-tombstone-import-${crypto.randomUUID()}`)
+    mkdirSync(testDir, { recursive: true })
+    db = createDb(join(testDir, 'test.db'))
+    runMigrations(db, join(__dirname, '../drizzle'))
+    localNodeId = await bootstrap(db, testDir)
+
+    // Create a remote node record
+    remoteNodeId = crypto.randomUUID()
+    const now = new Date().toISOString()
+    await db.insert(
+      (await import('../src/db/schema')).nodes
+    ).values({
+      id: remoteNodeId,
+      name: 'Remote',
+      kind: 'remote',
+      base_url: 'http://remote:3001',
+      status: 'online',
+      created_at: now,
+      updated_at: now,
+    })
+  })
+
+  afterEach(() => {
+    rmSync(testDir, { recursive: true, force: true })
+  })
+
+  async function seedRemoteCatalog() {
+    const libId = crypto.randomUUID()
+    const itemId = crypto.randomUUID()
+    const versionId = crypto.randomUUID()
+    const fileId = crypto.randomUUID()
+    const now = new Date().toISOString()
+
+    await db.insert(libraries).values({
+      id: libId, node_id: remoteNodeId, name: 'Remote Lib', kind: 'movies',
+      root_path: `remote://${remoteNodeId}`, scan_status: 'idle',
+      created_at: now, updated_at: now,
+    })
+    await db.insert(mediaItems).values({
+      id: itemId, library_id: libId, kind: 'movie', title: 'Remote Movie',
+      sort_title: 'remote movie', metadata_status: 'matched',
+      created_at: now, updated_at: now,
+    })
+    await db.insert(mediaVersions).values({
+      id: versionId, media_item_id: itemId, quality_label: '1080p',
+      container: 'mkv', created_at: now, updated_at: now,
+    })
+    await db.insert(mediaFiles).values({
+      id: fileId, node_id: remoteNodeId, library_id: libId,
+      media_item_id: itemId, media_version_id: versionId,
+      path: `remote://${remoteNodeId}/${fileId}`,
+      filename: 'movie.mkv', extension: 'mkv',
+      size_bytes: 1000000, file_hash: null, missing_at: null,
+      discovered_at: now, updated_at: now,
+    })
+    return { libId, itemId, versionId, fileId }
+  }
+
+  // Test 10: remote media_file tombstone only deletes that file (node_id check)
+  it('remote media_file tombstone deletes only the matching file owned by remoteNodeId', async () => {
+    const { fileId, itemId } = await seedRemoteCatalog()
+
+    // Also seed a local file that should NOT be touched
+    const { fileId: localFileId } = await seedLocalCatalog(db, localNodeId, new Date().toISOString())
+
+    const catalog: FederationCatalogData = {
+      nodeId: remoteNodeId, nodeName: 'Remote', exportedAt: Date.now(),
+      libraries: [], items: [], versions: [], files: [],
+      tombstones: [{ entityType: 'media_file', entityId: fileId, deletedAt: new Date().toISOString() }],
+    }
+    const result = await importCatalog(remoteNodeId, catalog, db)
+
+    // Remote file deleted
+    const remoteFile = await db.select().from(mediaFiles).where(eq(mediaFiles.id, fileId))
+    expect(remoteFile.length).toBe(0)
+
+    // Local file untouched
+    const localFile = await db.select().from(mediaFiles).where(eq(mediaFiles.id, localFileId))
+    expect(localFile.length).toBe(1)
+
+    expect(result.tombstonesApplied).toBe(1)
+    expect(result.filesRemoved).toBe(1)
+  })
+
+  // Test 11: remote media_item tombstone deletes item + versions + files for that node only
+  it('remote media_item tombstone deletes item, versions, and files for remote node only', async () => {
+    const { itemId } = await seedRemoteCatalog()
+    const { itemId: localItemId } = await seedLocalCatalog(db, localNodeId, new Date().toISOString())
+
+    const catalog: FederationCatalogData = {
+      nodeId: remoteNodeId, nodeName: 'Remote', exportedAt: Date.now(),
+      libraries: [], items: [], versions: [], files: [],
+      tombstones: [{ entityType: 'media_item', entityId: itemId, deletedAt: new Date().toISOString() }],
+    }
+    await importCatalog(remoteNodeId, catalog, db)
+
+    // Remote item gone
+    const remoteItem = await db.select().from(mediaItems).where(eq(mediaItems.id, itemId))
+    expect(remoteItem.length).toBe(0)
+
+    // Local item untouched
+    const localItem = await db.select().from(mediaItems).where(eq(mediaItems.id, localItemId))
+    expect(localItem.length).toBe(1)
+  })
+
+  // Test 12: tombstone for a local-node row is ignored (node_id mismatch)
+  it('tombstone for a local-node row is ignored when remoteNodeId is different', async () => {
+    const { fileId: localFileId } = await seedLocalCatalog(db, localNodeId, new Date().toISOString())
+
+    // Catalog from remoteNodeId carries a tombstone for localFileId
+    const catalog: FederationCatalogData = {
+      nodeId: remoteNodeId, nodeName: 'Remote', exportedAt: Date.now(),
+      libraries: [], items: [], versions: [], files: [],
+      tombstones: [{ entityType: 'media_file', entityId: localFileId, deletedAt: new Date().toISOString() }],
+    }
+    await importCatalog(remoteNodeId, catalog, db)
+
+    // Local file must NOT be deleted
+    const localFile = await db.select().from(mediaFiles).where(eq(mediaFiles.id, localFileId))
+    expect(localFile.length).toBe(1)
+  })
+
+  // Test 13: tombstone for a different remote node's row is ignored
+  it('tombstone for a different remote node row is ignored', async () => {
+    // Seed catalog under remoteNodeId
+    const { fileId } = await seedRemoteCatalog()
+
+    // A second remote node tries to tombstone remoteNodeId's file
+    const otherNodeId = crypto.randomUUID()
+    const now2 = new Date().toISOString()
+    await db.insert(
+      (await import('../src/db/schema')).nodes
+    ).values({
+      id: otherNodeId, name: 'Other Remote', kind: 'remote',
+      base_url: 'http://other:3002', status: 'online',
+      created_at: now2, updated_at: now2,
+    })
+
+    const catalog: FederationCatalogData = {
+      nodeId: otherNodeId, nodeName: 'Other Remote', exportedAt: Date.now(),
+      libraries: [], items: [], versions: [], files: [],
+      tombstones: [{ entityType: 'media_file', entityId: fileId, deletedAt: new Date().toISOString() }],
+    }
+    await importCatalog(otherNodeId, catalog, db)
+
+    // File owned by remoteNodeId must NOT be deleted
+    const file = await db.select().from(mediaFiles).where(eq(mediaFiles.id, fileId))
+    expect(file.length).toBe(1)
+  })
+
+  // Test 14: duplicate tombstone import is idempotent
+  it('applying the same tombstone twice is idempotent', async () => {
+    const { fileId } = await seedRemoteCatalog()
+    const deletedAt = new Date().toISOString()
+
+    const catalog: FederationCatalogData = {
+      nodeId: remoteNodeId, nodeName: 'Remote', exportedAt: Date.now(),
+      libraries: [], items: [], versions: [], files: [],
+      tombstones: [{ entityType: 'media_file', entityId: fileId, deletedAt }],
+    }
+
+    // First apply — should delete
+    const r1 = await importCatalog(remoteNodeId, catalog, db)
+    expect(r1.tombstonesApplied).toBe(1)
+
+    // Second apply — row already gone, should not throw
+    const r2 = await importCatalog(remoteNodeId, catalog, db)
+    expect(r2.tombstonesApplied).toBe(0) // nothing to delete
+  })
+
+  // Test 15: tombstone for unknown entityId is harmless (row already gone)
+  it('tombstone for non-existent entityId is harmless', async () => {
+    const catalog: FederationCatalogData = {
+      nodeId: remoteNodeId, nodeName: 'Remote', exportedAt: Date.now(),
+      libraries: [], items: [], versions: [], files: [],
+      tombstones: [{ entityType: 'media_file', entityId: 'does-not-exist', deletedAt: new Date().toISOString() }],
+    }
+    // Should not throw
+    const result = await importCatalog(remoteNodeId, catalog, db)
+    expect(result.tombstonesApplied).toBe(0)
+  })
+})
+
+// ─── Tombstone counts and UI ──────────────────────────────────────────────────
+
+describe('Tombstone counts and sync response', () => {
+  let testDir: string
+  let db: ReturnType<typeof createDb>
+  let app: ReturnType<typeof buildServer>
+  let localNodeId: string
+  let adminCookie: string
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `helix-tombstone-ui-${crypto.randomUUID()}`)
+    mkdirSync(testDir, { recursive: true })
+    db = createDb(join(testDir, 'test.db'))
+    runMigrations(db, join(__dirname, '../drizzle'))
+    localNodeId = await bootstrap(db, testDir)
+    app = buildServer(db, localNodeId, undefined, testDir)
+    await app.ready()
+    adminCookie = await setupAuth(app)
+  })
+
+  afterEach(async () => {
+    vi.unstubAllGlobals()
+    await app.close()
+    rmSync(testDir, { recursive: true, force: true })
+  })
+
+  async function addRemoteNode() {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/nodes',
+      headers: { Cookie: adminCookie },
+      payload: { name: 'Remote', base_url: 'http://remote:3001', api_token: 'tok' },
+    })
+    return JSON.parse(res.body).data.id as string
+  }
+
+  // Test 16: sync response includes tombstonesApplied and removal counts
+  it('sync response includes tombstonesApplied and removal counts', async () => {
+    const nodeId = await addRemoteNode()
+
+    // Full sync first
+    const initial = buildMockCatalog(nodeId)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: initial }),
+    }))
+    await app.inject({ method: 'POST', url: `/api/v1/nodes/${nodeId}/sync`, headers: { Cookie: adminCookie } })
+
+    // Incremental sync with a tombstone for the file
+    const withTombstone: FederationCatalogData = {
+      ...buildMockCatalog(nodeId),
+      incremental: true,
+      since: new Date(Date.now() - 1000).toISOString(),
+      items: [],
+      tombstones: [{ entityType: 'media_file', entityId: 'inc-file-1', deletedAt: new Date().toISOString() }],
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: withTombstone }),
+    }))
+    await db.update(nodes).set({ last_sync_at: Date.now() - 1000 }).where(eq(nodes.id, nodeId))
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/nodes/${nodeId}/sync`,
+      headers: { Cookie: adminCookie },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.data.tombstonesApplied).toBeDefined()
+    expect(typeof body.data.tombstonesApplied).toBe('number')
+    expect(body.data.filesRemoved).toBeDefined()
+    expect(body.data.itemsRemoved).toBeDefined()
+  })
+
+  // Test 17: library_permissions cleaned up when library tombstone applied
+  it('library permissions are removed when a library tombstone is applied', async () => {
+    const nodeId = await addRemoteNode()
+
+    // Full sync
+    const initial = buildMockCatalog(nodeId)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: initial }),
+    }))
+    await app.inject({ method: 'POST', url: `/api/v1/nodes/${nodeId}/sync`, headers: { Cookie: adminCookie } })
+
+    // Grant a user access
+    const userRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/users',
+      headers: { Cookie: adminCookie },
+      payload: { username: 'testuser-tomb', password: 'password123', displayName: 'Tombstone User' },
+    })
+    const userId = JSON.parse(userRes.body).data.id
+    const { libraryPermissions: libPerms } = await import('../src/db/schema')
+    const libRows = await db.select().from(libraries).where(eq(libraries.node_id, nodeId))
+    const libId = libRows[0].id
+
+    await app.inject({
+      method: 'PUT',
+      url: `/api/v1/nodes/${nodeId}/access`,
+      headers: { Cookie: adminCookie },
+      payload: { grants: [{ libraryId: libId, userId, canView: true, canPlay: true }] },
+    })
+    const grantsBefore = await db.select().from(libPerms).where(eq(libPerms.library_id, libId))
+    expect(grantsBefore.length).toBe(1)
+
+    // Incremental sync with library tombstone
+    const withTombstone: FederationCatalogData = {
+      ...buildMockCatalog(nodeId),
+      incremental: true,
+      since: new Date(Date.now() - 1000).toISOString(),
+      items: [],
+      tombstones: [{ entityType: 'library', entityId: libId, deletedAt: new Date().toISOString() }],
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: withTombstone }),
+    }))
+    await db.update(nodes).set({ last_sync_at: Date.now() - 1000 }).where(eq(nodes.id, nodeId))
+    await app.inject({ method: 'POST', url: `/api/v1/nodes/${nodeId}/sync`, headers: { Cookie: adminCookie } })
+
+    // Library gone → FK cascade removes permissions
+    const grantsAfter = await db.select().from(libPerms).where(eq(libPerms.library_id, libId))
+    expect(grantsAfter.length).toBe(0)
+  })
+
+  // Test 18: sync display still works when tombstonesApplied is 0
+  it('sync response is valid when tombstonesApplied is 0 (no removals)', async () => {
+    const nodeId = await addRemoteNode()
+
+    const catalog = buildMockCatalog(nodeId)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: catalog }),
+    }))
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/nodes/${nodeId}/sync`,
+      headers: { Cookie: adminCookie },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.data.synced).toBe(true)
+    expect(body.data.tombstonesApplied).toBe(0)
+    expect(body.data.itemsRemoved).toBe(0)
+    expect(body.data.versionsRemoved).toBe(0)
+    expect(body.data.filesRemoved).toBe(0)
+    expect(body.data.librariesRemoved).toBe(0)
   })
 })

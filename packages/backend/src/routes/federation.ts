@@ -3,11 +3,11 @@ import { createHash, timingSafeEqual, randomBytes } from 'crypto'
 import { createReadStream, existsSync, statSync } from 'fs'
 import { extname } from 'path'
 import { eq, inArray, gt, and, or, sql } from 'drizzle-orm'
-import { nodes, libraries, mediaItems, mediaVersions, mediaFiles, trustedHomeInvites } from '../db/schema'
+import { nodes, libraries, mediaItems, mediaVersions, mediaFiles, trustedHomeInvites, catalogTombstones } from '../db/schema'
 import { ok, err } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
 import { makeRequireAdmin } from '../middleware/auth'
-import type { FederationCatalogData } from '../services/federation/catalogSync'
+import type { FederationCatalogData, FederationTombstone } from '../services/federation/catalogSync'
 import { makeLocalCapabilities } from '../services/federation/capabilities'
 import { signStreamToken } from '../lib/signedTokens'
 import { config } from '../config'
@@ -435,6 +435,32 @@ export async function federationRoutes(
 
       const localLibraryIds = localLibraries.map((l) => l.id)
 
+      // Fetch tombstones for incremental responses
+      // Always scoped to localNodeId — never expose tombstones from other nodes
+      let tombstoneList: FederationTombstone[] = []
+      if (incremental && sinceIso) {
+        const tombstoneRows = await db
+          .select({
+            entity_type: catalogTombstones.entity_type,
+            entity_id: catalogTombstones.entity_id,
+            deleted_at: catalogTombstones.deleted_at,
+            reason: catalogTombstones.reason,
+          })
+          .from(catalogTombstones)
+          .where(
+            and(
+              eq(catalogTombstones.node_id, localNodeId),
+              gt(catalogTombstones.deleted_at, sinceIso)
+            )
+          )
+        tombstoneList = tombstoneRows.map((r) => ({
+          entityType: r.entity_type,
+          entityId: r.entity_id,
+          deletedAt: r.deleted_at,
+          reason: r.reason ?? undefined,
+        }))
+      }
+
       if (localLibraryIds.length === 0) {
         const catalogData: FederationCatalogData = {
           nodeId: localNodeId,
@@ -446,6 +472,7 @@ export async function federationRoutes(
           items: [],
           versions: [],
           files: [],
+          tombstones: incremental ? tombstoneList : [],
         }
         return ok(catalogData)
       }
@@ -551,6 +578,7 @@ export async function federationRoutes(
         since: sinceIso ?? undefined,
         versionsSynced: localVersions.length,
         filesSynced: localFiles.length,
+        tombstones: incremental ? tombstoneList : [],
         libraries: librariesToExport.map((lib) => ({
           id: lib.id,
           name: lib.name,

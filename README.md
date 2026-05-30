@@ -367,7 +367,7 @@ Helix automatically syncs connected Trusted Homes in the background so catalogs 
 
 **Known limitations:**
 
-- Remote deletions are not propagated incrementally — use **Full re-sync** to reconcile items that were deleted on the remote home.
+- Incremental sync now propagates remote deletions via tombstones. When a Trusted Home removes a catalog item, version, or file, connecting homes receive tombstone records on the next sync and apply the deletion safely. Full re-sync remains available for full reconciliation.
 
 To reconnect after disconnecting, create a new invite on the other home and use Accept invite again.
 
@@ -389,7 +389,9 @@ After revoking, users will no longer see or play from that home's libraries. You
 
 After the initial full sync, subsequent **Sync** operations are incremental — only items whose `updated_at` is newer than `last_sync_at` are fetched from the remote. The response envelope includes `"incremental": true` and the `"since"` timestamp used.
 
-Incremental sync (`?since`) detects changes across `media_items`, `media_versions`, and `media_files`. If a version or file record changes (e.g. quality upgrade, file replaced), its parent item is included in the incremental response with full version and file data. Remote deletions still require a Full re-sync to reconcile.
+Incremental sync (`?since`) detects changes across `media_items`, `media_versions`, and `media_files`. If a version or file record changes (e.g. quality upgrade, file replaced), its parent item is included in the incremental response with full version and file data. Remote deletions are propagated via tombstones in the incremental response (see below).
+
+Tombstones only apply to rows owned by the announcing home; local catalog rows and rows from other Trusted Homes are never affected.
 
 **Sync decision logic:**
 - `last_sync_at` is null (first sync or never synced) → full sync, no `?since`
@@ -403,8 +405,9 @@ Incremental sync (`?since`) detects changes across `media_items`, `media_version
 
 **Incremental sync and deletions:**
 - Incremental sync upserts only the returned items — it does NOT remove remote items that are absent from the partial response.
-- Remote deletions are only reconciled by a full sync (first sync, `force=true`, or **Full re-sync** button).
-- If the remote catalog seems stale or items that were deleted on the remote home are still appearing, use **Full re-sync** to reconcile.
+- Remote deletions are propagated via tombstones in the incremental response. When a Trusted Home deletes a catalog item, version, file, or library, the next incremental sync applies those deletions safely. The sync result includes `tombstonesApplied` and removal counts.
+- Full re-sync (`force=true` or **Full re-sync** button) is still available for full reconciliation.
+- If the remote catalog seems stale, use **Full re-sync** to reconcile.
 
 **Troubleshooting stale remote catalog:**
 - Use **Full re-sync** on the Trusted Home to fetch and re-import the complete catalog.

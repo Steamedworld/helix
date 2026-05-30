@@ -191,6 +191,20 @@ export const externalMediaLinks = sqliteTable('external_media_links', {
   updated_at: integer('updated_at').notNull(),
 })
 
+export const catalogTombstones = sqliteTable('catalog_tombstones', {
+  id: text('id').primaryKey(),
+  node_id: text('node_id').notNull().references(() => nodes.id, { onDelete: 'cascade' }),
+  entity_type: text('entity_type', { enum: ['library', 'media_item', 'media_version', 'media_file'] }).notNull(),
+  entity_id: text('entity_id').notNull(),
+  deleted_at: text('deleted_at').notNull(),
+  reason: text('reason', { enum: ['scan_missing', 'integration_delete', 'admin_disconnect', 'unknown'] }),
+  created_at: text('created_at').notNull(),
+}, (t) => ({
+  idx_node_deleted: index('idx_tombstones_node_deleted').on(t.node_id, t.deleted_at),
+  idx_entity: index('idx_tombstones_entity').on(t.entity_type, t.entity_id),
+  idx_deleted_at: index('idx_tombstones_deleted_at').on(t.deleted_at),
+}))
+
 export const trustedHomeInvites = sqliteTable('trusted_home_invites', {
   id: text('id').primaryKey(),
   token_hash: text('token_hash').notNull().unique(),

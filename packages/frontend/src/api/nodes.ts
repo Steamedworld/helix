@@ -108,6 +108,11 @@ export interface SyncResponse {
   filesSynced: number
   librariesSynced: number
   fallbackUsed: boolean
+  tombstonesApplied?: number
+  itemsRemoved?: number
+  versionsRemoved?: number
+  filesRemoved?: number
+  librariesRemoved?: number
 }
 
 export function syncNode(id: string, force = false) {

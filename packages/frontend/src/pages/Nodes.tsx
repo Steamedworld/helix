@@ -1573,6 +1573,9 @@ function TrustedHomeRow({ node, onDeleted, onUpdated, defaultOpenAccess = false 
                 {syncResult.filesSynced > 0 && `, ${syncResult.filesSynced} ${syncResult.filesSynced === 1 ? 'file' : 'files'}`}
               </>
             )}
+            {(syncResult.tombstonesApplied ?? 0) > 0 && (
+              `, ${syncResult.tombstonesApplied} removed`
+            )}
             .
           </div>
           {syncResult.fallbackUsed && (

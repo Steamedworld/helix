@@ -1,6 +1,16 @@
 import type { DrizzleDB } from '../../db/client'
 import { libraries, mediaItems, mediaVersions, mediaFiles } from '../../db/schema'
+import { eq, and } from 'drizzle-orm'
 import { decryptApiKey } from '../integrations/encryption'
+
+// ─── Tombstone wire-format type ───────────────────────────────────────────────
+
+export interface FederationTombstone {
+  entityType: 'library' | 'media_item' | 'media_version' | 'media_file'
+  entityId: string
+  deletedAt: string
+  reason?: string
+}
 
 // ─── Wire-format types ────────────────────────────────────────────────────────
 
@@ -74,6 +84,12 @@ export interface FederationCatalogData {
   versionsSynced?: number
   /** Count of distinct file rows included (informational) */
   filesSynced?: number
+  /**
+   * Tombstone records for entities deleted since `since`.
+   * Present in incremental responses; empty array or absent in full syncs.
+   * Never contains file paths or secrets — only opaque entity IDs.
+   */
+  tombstones?: FederationTombstone[]
 }
 
 // ─── Fetch ────────────────────────────────────────────────────────────────────
@@ -106,7 +122,17 @@ export async function importCatalog(
   nodeId: string,
   catalog: FederationCatalogData,
   db: DrizzleDB
-): Promise<{ librariesSynced: number; itemsSynced: number; versionsSynced: number; filesSynced: number }> {
+): Promise<{
+  librariesSynced: number
+  itemsSynced: number
+  versionsSynced: number
+  filesSynced: number
+  tombstonesApplied: number
+  librariesRemoved: number
+  itemsRemoved: number
+  versionsRemoved: number
+  filesRemoved: number
+}> {
   const now = new Date().toISOString()
   const remoteRootPath = `remote://${nodeId}`
 
@@ -244,11 +270,137 @@ export async function importCatalog(
       })
   }
 
+  // ─── Apply tombstones ──────────────────────────────────────────────────────
+  // Safety: every delete is scoped to nodeId — never touch rows owned by another node.
+  // Pattern: pre-check ownership with a SELECT, then delete.
+
+  let tombstonesApplied = 0
+  let librariesRemoved = 0
+  let itemsRemoved = 0
+  let versionsRemoved = 0
+  let filesRemoved = 0
+
+  for (const tombstone of catalog.tombstones ?? []) {
+    const { entityType, entityId } = tombstone
+    try {
+      switch (entityType) {
+        case 'media_file': {
+          // media_files has node_id — direct ownership check
+          const deleted = await db
+            .delete(mediaFiles)
+            .where(and(eq(mediaFiles.id, entityId), eq(mediaFiles.node_id, nodeId)))
+            .returning({ id: mediaFiles.id })
+          if (deleted.length > 0) {
+            tombstonesApplied++
+            filesRemoved += deleted.length
+          }
+          break
+        }
+        case 'media_version': {
+          // Ownership: check version's item lives in a library owned by nodeId
+          const owned = await db
+            .select({ id: mediaVersions.id })
+            .from(mediaVersions)
+            .innerJoin(mediaItems, eq(mediaVersions.media_item_id, mediaItems.id))
+            .innerJoin(libraries, eq(mediaItems.library_id, libraries.id))
+            .where(and(eq(mediaVersions.id, entityId), eq(libraries.node_id, nodeId)))
+            .limit(1)
+          if (owned.length === 0) break
+
+          // Delete files for this version scoped to nodeId
+          const df = await db
+            .delete(mediaFiles)
+            .where(and(eq(mediaFiles.media_version_id, entityId), eq(mediaFiles.node_id, nodeId)))
+            .returning({ id: mediaFiles.id })
+          filesRemoved += df.length
+
+          // Delete the version
+          await db.delete(mediaVersions).where(eq(mediaVersions.id, entityId))
+          versionsRemoved++
+          tombstonesApplied++
+          break
+        }
+        case 'media_item': {
+          // Ownership: item's library must be owned by nodeId
+          const owned = await db
+            .select({ id: mediaItems.id })
+            .from(mediaItems)
+            .innerJoin(libraries, eq(mediaItems.library_id, libraries.id))
+            .where(and(eq(mediaItems.id, entityId), eq(libraries.node_id, nodeId)))
+            .limit(1)
+          if (owned.length === 0) break
+
+          // Delete files for this item scoped to nodeId
+          const df = await db
+            .delete(mediaFiles)
+            .where(and(eq(mediaFiles.media_item_id, entityId), eq(mediaFiles.node_id, nodeId)))
+            .returning({ id: mediaFiles.id })
+          filesRemoved += df.length
+
+          // Collect version IDs for counting (versions don't have node_id directly)
+          const vRows = await db
+            .select({ id: mediaVersions.id })
+            .from(mediaVersions)
+            .where(eq(mediaVersions.media_item_id, entityId))
+          versionsRemoved += vRows.length
+          // Delete versions (mediaItems FK cascade will also remove them, but explicit is safer)
+          if (vRows.length > 0) {
+            await db.delete(mediaVersions).where(eq(mediaVersions.media_item_id, entityId))
+          }
+
+          // Delete the item
+          await db.delete(mediaItems).where(eq(mediaItems.id, entityId))
+          itemsRemoved++
+          tombstonesApplied++
+          break
+        }
+        case 'library': {
+          // Verify ownership before deleting
+          const [libRow] = await db
+            .select({ id: libraries.id })
+            .from(libraries)
+            .where(and(eq(libraries.id, entityId), eq(libraries.node_id, nodeId)))
+          if (!libRow) break
+
+          // Delete files for this library scoped to nodeId
+          const df = await db
+            .delete(mediaFiles)
+            .where(and(eq(mediaFiles.library_id, entityId), eq(mediaFiles.node_id, nodeId)))
+            .returning({ id: mediaFiles.id })
+          filesRemoved += df.length
+
+          // Count items before cascade
+          const itemRows = await db
+            .select({ id: mediaItems.id })
+            .from(mediaItems)
+            .where(eq(mediaItems.library_id, entityId))
+          itemsRemoved += itemRows.length
+
+          // Delete items (FK cascade removes their versions and remaining files)
+          await db.delete(mediaItems).where(eq(mediaItems.library_id, entityId))
+
+          // Delete the library
+          await db.delete(libraries).where(and(eq(libraries.id, entityId), eq(libraries.node_id, nodeId)))
+          librariesRemoved++
+          tombstonesApplied++
+          break
+        }
+      }
+    } catch {
+      // Tombstone already reflected (row already gone) — idempotent, continue
+    }
+  }
+
   return {
     librariesSynced: catalog.libraries.length,
     itemsSynced: catalog.items.length,
     versionsSynced: catalog.versions.length,
     filesSynced: catalog.files.length,
+    tombstonesApplied,
+    librariesRemoved,
+    itemsRemoved,
+    versionsRemoved,
+    filesRemoved,
   }
 }
 
@@ -263,6 +415,11 @@ export interface SyncRemoteNodeResult {
   filesSynced: number
   librariesSynced: number
   fallbackUsed: boolean
+  tombstonesApplied: number
+  librariesRemoved: number
+  itemsRemoved: number
+  versionsRemoved: number
+  filesRemoved: number
 }
 
 /**
@@ -340,6 +497,11 @@ export async function syncRemoteNode(
     filesSynced: importResult.filesSynced,
     librariesSynced: importResult.librariesSynced,
     fallbackUsed,
+    tombstonesApplied: importResult.tombstonesApplied,
+    librariesRemoved: importResult.librariesRemoved,
+    itemsRemoved: importResult.itemsRemoved,
+    versionsRemoved: importResult.versionsRemoved,
+    filesRemoved: importResult.filesRemoved,
   }
 }
 

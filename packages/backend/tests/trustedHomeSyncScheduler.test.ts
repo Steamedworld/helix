@@ -43,6 +43,11 @@ const DEFAULT_SYNC_RESULT: SyncRemoteNodeResult = {
   filesSynced: 5,
   librariesSynced: 1,
   fallbackUsed: false,
+  tombstonesApplied: 0,
+  librariesRemoved: 0,
+  itemsRemoved: 0,
+  versionsRemoved: 0,
+  filesRemoved: 0,
 }
 
 function makeCfg(overrides?: Partial<TrustedHomeSyncConfig>): TrustedHomeSyncConfig {

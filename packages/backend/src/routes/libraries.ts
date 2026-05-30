@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { eq, and } from 'drizzle-orm'
-import { libraries, mediaItems, libraryPermissions, users } from '../db/schema'
+import { libraries, mediaItems, mediaVersions, mediaFiles, libraryPermissions, users } from '../db/schema'
 import { ok, err } from '../lib/response'
 import { scanLibrary } from '../services/scanner'
 import type { DrizzleDB } from '../db/client'
@@ -9,6 +9,7 @@ import { count } from 'drizzle-orm'
 import { makeRequireAdmin, makeRequireAuth } from '../middleware/auth'
 import { enrichmentQueue } from '../services/enrichmentQueue'
 import { canViewLibrary, filterLibrariesForUser } from '../lib/permissions'
+import { recordTombstone, recordTombstones } from '../services/federation/tombstones'
 
 export async function libraryRoutes(
   app: FastifyInstance,
@@ -92,6 +93,42 @@ export async function libraryRoutes(
       reply.status(404)
       return err('Library not found')
     }
+
+    // Tombstone: collect IDs before deletion so FK cascades don't erase them
+    // Only tombstone if this is a local library (node_id === localNodeId)
+    if (existing.node_id === localNodeId) {
+      const itemRows = await db
+        .select({ id: mediaItems.id })
+        .from(mediaItems)
+        .where(eq(mediaItems.library_id, existing.id))
+      const itemIds = itemRows.map((r) => r.id)
+
+      const versionIds: string[] = []
+      const fileIds: string[] = []
+      if (itemIds.length > 0) {
+        // Collect all version and file IDs across all items
+        for (const itemId of itemIds) {
+          const vv = await db
+            .select({ id: mediaVersions.id })
+            .from(mediaVersions)
+            .where(eq(mediaVersions.media_item_id, itemId))
+          versionIds.push(...vv.map((v) => v.id))
+          const ff = await db
+            .select({ id: mediaFiles.id })
+            .from(mediaFiles)
+            .where(eq(mediaFiles.media_item_id, itemId))
+          fileIds.push(...ff.map((f) => f.id))
+        }
+      }
+
+      // Record tombstones before deletion (outermost entity last for cascades,
+      // but we record all before any delete so nothing is missed)
+      await recordTombstone(db, localNodeId, 'library', existing.id, 'unknown')
+      await recordTombstones(db, localNodeId, 'media_item', itemIds, 'unknown')
+      await recordTombstones(db, localNodeId, 'media_version', versionIds, 'unknown')
+      await recordTombstones(db, localNodeId, 'media_file', fileIds, 'unknown')
+    }
+
     await db.delete(libraries).where(eq(libraries.id, req.params.id))
     return ok({ deleted: true })
   })
