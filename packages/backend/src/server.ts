@@ -70,7 +70,7 @@ export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string
   app.register(cookie)
 
   // Routes
-  app.register(healthRoutes, { prefix: '/api/v1' })
+  app.register(healthRoutes, { prefix: '/api/v1', db } as Parameters<typeof healthRoutes>[1] & { prefix: string })
   app.register(configRoutes, { prefix: '/api/v1' })
 
   // Auth routes

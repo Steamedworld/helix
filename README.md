@@ -475,6 +475,23 @@ Helix retains deletion tombstones for a configurable number of days (default: 90
 
 **UI:** a collapsible "Show diagnostics" panel is available at the top of the Trusted Homes admin page, showing tombstone stats, per-home sync status, sync health indicators, and active error messages (safe classified text only).
 
+**Health endpoint rollup:** `GET /api/v1/health` includes a `trustedHomeSync` aggregate with counts of healthy, failing, stale, and never-synced homes, plus `hasFailures` and `tombstoneRetentionDays`. This is safe for ops polling — no node IDs, names, credentials, or error details are included. Example:
+
+```json
+"trustedHomeSync": {
+  "total": 2,
+  "healthy": 1,
+  "failing": 1,
+  "stale": 0,
+  "neverSynced": 0,
+  "unknown": 0,
+  "hasFailures": true,
+  "tombstoneRetentionDays": 90,
+  "oldestActiveErrorAt": "2026-05-10T08:00:00Z",
+  "newestAttemptAt": "2026-05-30T06:00:00Z"
+}
+```
+
 ### What is deferred
 
 - **Hub video proxy** — the browser streams directly from the remote node. No hub-side buffering or re-streaming.

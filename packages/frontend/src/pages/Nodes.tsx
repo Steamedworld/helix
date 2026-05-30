@@ -1972,6 +1972,14 @@ export function Nodes() {
             {healthData.tombstoneRetentionDays != null && (
               <>{' '}&mdash; Deletion history retained for {healthData.tombstoneRetentionDays} days.</>
             )}
+            {healthData.trustedHomeSync?.hasFailures && (
+              <span style={{ color: 'var(--bad)', marginLeft: 6 }}>
+                &mdash;{' '}
+                {healthData.trustedHomeSync.failing === 1
+                  ? '1 Trusted Home sync failing.'
+                  : `${healthData.trustedHomeSync.failing} Trusted Homes syncing with errors.`}
+              </span>
+            )}
             {' '}
             <button
               onClick={() => setShowDiagnostics((v) => !v)}

@@ -5,25 +5,8 @@ import { ok } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
 import { makeRequireAdmin } from '../middleware/auth'
 import { computeSyncSafetyEstimate } from '../services/federation/catalogSync'
+import { deriveSyncHealth } from '../services/federation/syncHealthRollup'
 import { config } from '../config'
-
-// ─── Sync health derivation ───────────────────────────────────────────────────
-
-type SyncHealth = 'healthy' | 'never_synced' | 'failing' | 'stale' | 'unknown'
-
-function deriveSyncHealth(
-  lastSyncAttemptAt: string | null,
-  lastSyncAt: number | null,
-  lastSyncErrorCode: string | null,
-  nextSyncReason: 'no_last_sync' | 'tombstone_retention_exceeded' | 'within_retention',
-  _tombstoneRetentionDays: number
-): SyncHealth {
-  if (!lastSyncAttemptAt && !lastSyncAt) return 'never_synced'
-  if (lastSyncErrorCode !== null) return 'failing'
-  if (!lastSyncAt) return 'unknown' // attempted but no success recorded
-  if (nextSyncReason === 'tombstone_retention_exceeded') return 'stale'
-  return 'healthy'
-}
 
 export async function adminRoutes(
   app: FastifyInstance,

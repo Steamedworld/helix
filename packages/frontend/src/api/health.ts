@@ -9,6 +9,18 @@ export interface HealthResponse {
     intervalMs: number
   }
   tombstoneRetentionDays?: number
+  trustedHomeSync?: {
+    total: number
+    healthy: number
+    failing: number
+    stale: number
+    neverSynced: number
+    unknown: number
+    hasFailures: boolean
+    tombstoneRetentionDays: number
+    oldestActiveErrorAt: string | null
+    newestAttemptAt: string | null
+  }
 }
 
 export function getHealth() {
