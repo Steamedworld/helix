@@ -21,6 +21,7 @@ export interface TrustedHomeSyncConfig {
   intervalMs: number
   staggerMs: number
   onStartup: boolean
+  tombstoneRetentionDays?: number
 }
 
 // ─── Sync function signature ──────────────────────────────────────────────────
@@ -31,7 +32,7 @@ export type SyncFn = (
   apiTokenEncrypted: string,
   dataDir: string,
   db: DrizzleDB,
-  opts?: { lastSyncAt?: number | null; force?: boolean }
+  opts?: { lastSyncAt?: number | null; force?: boolean; tombstoneRetentionDays?: number }
 ) => Promise<SyncRemoteNodeResult>
 
 // ─── Scheduler ───────────────────────────────────────────────────────────────
@@ -114,7 +115,7 @@ export function createTrustedHomeSyncScheduler(
           node.api_token_encrypted,
           dataDir,
           db,
-          { lastSyncAt: node.last_sync_at }
+          { lastSyncAt: node.last_sync_at, tombstoneRetentionDays: cfg.tombstoneRetentionDays }
         )
 
         // Update last_sync_at on success

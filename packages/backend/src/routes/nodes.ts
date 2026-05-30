@@ -10,7 +10,7 @@ import { syncRemoteNode } from '../services/federation/catalogSync'
 import { syncInProgress } from '../services/federation/trustedHomeSyncScheduler'
 import { canViewLibrary } from '../lib/permissions'
 import { fetchRemoteCapabilities, type NodeCapabilities } from '../services/federation/capabilities'
-import { isLoopbackUrl } from '../config'
+import { isLoopbackUrl, config } from '../config'
 
 type NodeRow = typeof nodes.$inferSelect
 
@@ -410,6 +410,7 @@ export async function nodeRoutes(
           syncRemoteNode(node.id, node.base_url, node.api_token_encrypted, dataDir, db, {
             lastSyncAt: node.last_sync_at,
             force,
+            tombstoneRetentionDays: config.tombstoneRetentionDays,
           }),
           fetchRemoteCapabilities(node.base_url, rawTokenForSync),
         ])

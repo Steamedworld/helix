@@ -77,6 +77,9 @@ export const config = {
   trustedHomeSyncStaggerMs: Number(process.env.TRUSTED_HOME_SYNC_STAGGER_MS ?? 30000),
   trustedHomeSyncOnStartup: (process.env.TRUSTED_HOME_SYNC_ON_STARTUP ?? 'false') === 'true',
 
+  // Tombstone retention
+  tombstoneRetentionDays: Math.max(1, Number(process.env.TOMBSTONE_RETENTION_DAYS ?? 90)),
+
   // Public base URL — validated and normalized; null if not set
   baseUrl: configuredBaseUrl,
 }

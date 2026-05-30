@@ -12,6 +12,7 @@ export async function healthRoutes(app: FastifyInstance) {
         enabled: config.trustedHomeSyncEnabled,
         intervalMs: config.trustedHomeSyncIntervalMs,
       },
+      tombstoneRetentionDays: config.tombstoneRetentionDays,
     })
   })
 }

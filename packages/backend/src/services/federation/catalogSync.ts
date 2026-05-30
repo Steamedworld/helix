@@ -415,6 +415,12 @@ export interface SyncRemoteNodeResult {
   filesSynced: number
   librariesSynced: number
   fallbackUsed: boolean
+  /** Reason for falling back to full sync (absent when no fallback occurred) */
+  fallbackReason?: 'tombstone_retention_exceeded' | 'remote_no_since_support' | 'no_last_sync' | string
+  /** Retention window used during this sync decision */
+  tombstoneRetentionDays: number
+  /** The ?since ISO string that was (or would have been) sent, if applicable */
+  incrementalSince?: string | null
   tombstonesApplied: number
   librariesRemoved: number
   itemsRemoved: number
@@ -426,13 +432,18 @@ export interface SyncRemoteNodeResult {
  * Sync a remote node's catalog.
  *
  * Decision logic:
- *   - If lastSyncAt is null or force=true → full sync (no ?since)
- *   - If lastSyncAt is set → incremental sync with ?since=<lastSyncAt as ISO>
- *       - If remote returns 400 (does not support ?since) → fall back to full sync, warn
+ *   - If force=true → full sync (no ?since)
+ *   - If lastSyncAt is null → full sync, fallbackReason = 'no_last_sync'
+ *   - If lastSyncAt < (now - tombstoneRetentionDays) → full sync,
+ *       fallbackUsed = true, fallbackReason = 'tombstone_retention_exceeded'
+ *       (tombstones for that period may have been pruned; incremental would miss deletions)
+ *   - Otherwise → incremental sync with ?since=<lastSyncAt as ISO>
+ *       - If remote returns 400 (does not support ?since) → fall back to full sync,
+ *         fallbackUsed = true, fallbackReason = 'remote_no_since_support'
  *       - Any other error → propagate (do NOT silently fall back)
  *
  * Incremental sync upserts only returned items — does NOT delete absent items.
- * A full sync (force=true or first sync) reconciles stale/deleted records.
+ * A full sync reconciles stale/deleted records.
  */
 export async function syncRemoteNode(
   nodeId: string,
@@ -440,17 +451,45 @@ export async function syncRemoteNode(
   apiTokenEncrypted: string,
   dataDir: string,
   db: DrizzleDB,
-  opts?: { lastSyncAt?: number | null; force?: boolean }
+  opts?: { lastSyncAt?: number | null; force?: boolean; tombstoneRetentionDays?: number }
 ): Promise<SyncRemoteNodeResult> {
   const rawToken = decryptApiKey(apiTokenEncrypted, dataDir)
   const { lastSyncAt, force } = opts ?? {}
+  const tombstoneRetentionDays = opts?.tombstoneRetentionDays ?? 90
 
-  // Determine whether to attempt incremental sync
-  const attemptIncremental = !force && lastSyncAt != null
-  const sinceIso = attemptIncremental ? new Date(lastSyncAt!).toISOString() : undefined
+  // Compute retention cutoff (epoch ms)
+  const retentionCutoffMs = Date.now() - tombstoneRetentionDays * 24 * 60 * 60 * 1000
+
+  let fallbackUsed = false
+  let fallbackReason: SyncRemoteNodeResult['fallbackReason'] | undefined = undefined
+  let incrementalSince: string | null | undefined = undefined
+
+  // Determine sync mode
+  let attemptIncremental: boolean
+  let sinceIso: string | undefined
+
+  if (force) {
+    // Explicit full sync request
+    attemptIncremental = false
+  } else if (lastSyncAt == null) {
+    // No previous sync — full sync, note reason
+    attemptIncremental = false
+    fallbackReason = 'no_last_sync'
+  } else if (lastSyncAt < retentionCutoffMs) {
+    // last_sync_at is older than the retention window — tombstones may have been pruned;
+    // must use full sync to avoid silently missing deletions
+    attemptIncremental = false
+    fallbackUsed = true
+    fallbackReason = 'tombstone_retention_exceeded'
+    incrementalSince = new Date(lastSyncAt).toISOString()
+  } else {
+    // Within retention window — attempt incremental
+    attemptIncremental = true
+    sinceIso = new Date(lastSyncAt).toISOString()
+    incrementalSince = sinceIso
+  }
 
   let catalog: FederationCatalogData
-  let fallbackUsed = false
 
   if (attemptIncremental) {
     // Try incremental first
@@ -470,6 +509,7 @@ export async function syncRemoteNode(
       // Remote does not support ?since — fall back to full sync
       console.warn(`[catalogSync] Remote node ${nodeId} returned 400 for ?since — falling back to full sync`)
       fallbackUsed = true
+      fallbackReason = 'remote_no_since_support'
       catalog = await fetchRemoteCatalog(baseUrl, rawToken)
     } else if (!incRes.ok) {
       const text = await incRes.text().catch(() => '')
@@ -497,6 +537,9 @@ export async function syncRemoteNode(
     filesSynced: importResult.filesSynced,
     librariesSynced: importResult.librariesSynced,
     fallbackUsed,
+    ...(fallbackReason !== undefined ? { fallbackReason } : {}),
+    tombstoneRetentionDays,
+    incrementalSince,
     tombstonesApplied: importResult.tombstonesApplied,
     librariesRemoved: importResult.librariesRemoved,
     itemsRemoved: importResult.itemsRemoved,

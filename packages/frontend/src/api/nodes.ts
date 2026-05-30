@@ -108,6 +108,9 @@ export interface SyncResponse {
   filesSynced: number
   librariesSynced: number
   fallbackUsed: boolean
+  fallbackReason?: string
+  tombstoneRetentionDays?: number
+  incrementalSince?: string | null
   tombstonesApplied?: number
   itemsRemoved?: number
   versionsRemoved?: number

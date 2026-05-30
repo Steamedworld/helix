@@ -1857,3 +1857,357 @@ describe('Tombstone counts and sync response', () => {
     expect(body.data.librariesRemoved).toBe(0)
   })
 })
+
+// ─── Tombstone retention sync safety ─────────────────────────────────────────
+
+describe('Tombstone retention sync safety', () => {
+  let testDir: string
+  let db: ReturnType<typeof createDb>
+  let app: ReturnType<typeof buildServer>
+  let localNodeId: string
+  let adminCookie: string
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `helix-retention-${crypto.randomUUID()}`)
+    mkdirSync(testDir, { recursive: true })
+    db = createDb(join(testDir, 'test.db'))
+    runMigrations(db, join(__dirname, '../drizzle'))
+    localNodeId = await bootstrap(db, testDir)
+    app = buildServer(db, localNodeId, undefined, testDir)
+    await app.ready()
+    adminCookie = await setupAuth(app)
+  })
+
+  afterEach(async () => {
+    vi.unstubAllGlobals()
+    await app.close()
+    rmSync(testDir, { recursive: true, force: true })
+  })
+
+  async function addRemoteNode() {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/nodes',
+      headers: { Cookie: adminCookie },
+      payload: { name: 'Remote', base_url: 'http://remote:3001', api_token: 'tok' },
+    })
+    return JSON.parse(res.body).data.id as string
+  }
+
+  // Test 8 (regression): node with last_sync_at = null uses full sync
+  it('node with last_sync_at = null uses full sync (regression)', async () => {
+    const nodeId = await addRemoteNode()
+    const mockCatalog = buildMockCatalog(nodeId)
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: mockCatalog }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/nodes/${nodeId}/sync`,
+      headers: { Cookie: adminCookie },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.data.fullSync).toBe(true)
+    expect(body.data.incremental).toBe(false)
+    expect(body.data.sinceUsed).toBeNull()
+    // Verify no ?since in URL
+    const calledUrl = fetchMock.mock.calls[0][0] as string
+    expect(calledUrl).not.toContain('since')
+  })
+
+  // Test 9 (regression): node with last_sync_at within retention uses incremental ?since
+  it('node with last_sync_at within retention window uses incremental sync', async () => {
+    const nodeId = await addRemoteNode()
+
+    // Set last_sync_at to 1 hour ago (well within 90-day window)
+    const lastSyncMs = Date.now() - 3600_000
+    await db.update(nodes).set({ last_sync_at: lastSyncMs }).where(eq(nodes.id, nodeId))
+
+    const mockCatalog = buildMockCatalog(nodeId)
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: { ...mockCatalog, incremental: true, since: new Date(lastSyncMs).toISOString() } }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/nodes/${nodeId}/sync`,
+      headers: { Cookie: adminCookie },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.data.incremental).toBe(true)
+    expect(body.data.fallbackUsed).toBe(false)
+    const calledUrl = fetchMock.mock.calls[0][0] as string
+    expect(calledUrl).toContain('since=')
+  })
+
+  // Test 10: node with last_sync_at older than retention falls back to full sync
+  it('node with last_sync_at older than retention window falls back to full sync', async () => {
+    const nodeId = await addRemoteNode()
+
+    // Set last_sync_at to 100 days ago (beyond 90-day retention)
+    const oldSyncMs = Date.now() - 100 * 24 * 60 * 60 * 1000
+    await db.update(nodes).set({ last_sync_at: oldSyncMs }).where(eq(nodes.id, nodeId))
+
+    const mockCatalog = buildMockCatalog(nodeId)
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: mockCatalog }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/nodes/${nodeId}/sync`,
+      headers: { Cookie: adminCookie },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.data.fullSync).toBe(true)
+    expect(body.data.incremental).toBe(false)
+    // Verify no ?since was sent to the remote
+    const calledUrl = fetchMock.mock.calls[0][0] as string
+    expect(calledUrl).not.toContain('since=')
+  })
+
+  // Test 11: fallback result includes fallbackUsed=true and fallbackReason='tombstone_retention_exceeded'
+  it('retention fallback sets fallbackUsed=true and fallbackReason=tombstone_retention_exceeded', async () => {
+    const nodeId = await addRemoteNode()
+
+    // Set last_sync_at to 200 days ago
+    const oldSyncMs = Date.now() - 200 * 24 * 60 * 60 * 1000
+    await db.update(nodes).set({ last_sync_at: oldSyncMs }).where(eq(nodes.id, nodeId))
+
+    const mockCatalog = buildMockCatalog(nodeId)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: mockCatalog }),
+    }))
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/nodes/${nodeId}/sync`,
+      headers: { Cookie: adminCookie },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.data.fallbackUsed).toBe(true)
+    expect(body.data.fallbackReason).toBe('tombstone_retention_exceeded')
+  })
+
+  // Test 12: fallback full sync does not delete local-node rows
+  it('retention fallback full sync does not delete local-node catalog rows', async () => {
+    const nodeId = await addRemoteNode()
+
+    // First do a normal full sync to populate remote catalog
+    const mockCatalog = buildMockCatalog(nodeId)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: mockCatalog }),
+    }))
+    await app.inject({ method: 'POST', url: `/api/v1/nodes/${nodeId}/sync`, headers: { Cookie: adminCookie } })
+
+    // Also seed a local item that MUST NOT be touched
+    const localLibId = crypto.randomUUID()
+    const localItemId = crypto.randomUUID()
+    const localVersionId = crypto.randomUUID()
+    const localFileId = crypto.randomUUID()
+    const now = new Date().toISOString()
+    await db.insert(libraries).values({
+      id: localLibId, node_id: localNodeId, name: 'Local Movies', kind: 'movies',
+      root_path: '/local/movies', scan_status: 'idle', created_at: now, updated_at: now,
+    })
+    await db.insert(mediaItems).values({
+      id: localItemId, library_id: localLibId, kind: 'movie', title: 'Local Movie',
+      sort_title: 'local movie', metadata_status: 'matched', created_at: now, updated_at: now,
+    })
+    await db.insert(mediaVersions).values({
+      id: localVersionId, media_item_id: localItemId, quality_label: '1080p',
+      container: 'mkv', created_at: now, updated_at: now,
+    })
+    await db.insert(mediaFiles).values({
+      id: localFileId, node_id: localNodeId, library_id: localLibId,
+      media_item_id: localItemId, media_version_id: localVersionId,
+      path: '/local/movies/movie.mkv', filename: 'movie.mkv', extension: 'mkv',
+      size_bytes: 1000000, file_hash: null, missing_at: null,
+      discovered_at: now, updated_at: now,
+    })
+
+    // Now set last_sync_at to 100 days ago to trigger retention fallback
+    const oldSyncMs = Date.now() - 100 * 24 * 60 * 60 * 1000
+    await db.update(nodes).set({ last_sync_at: oldSyncMs }).where(eq(nodes.id, nodeId))
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: mockCatalog }),
+    }))
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/nodes/${nodeId}/sync`,
+      headers: { Cookie: adminCookie },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.data.fallbackUsed).toBe(true)
+
+    // Local node catalog rows must still exist
+    const localItem = await db.select().from(mediaItems).where(eq(mediaItems.id, localItemId))
+    expect(localItem.length).toBe(1)
+    const localFile = await db.select().from(mediaFiles).where(eq(mediaFiles.id, localFileId))
+    expect(localFile.length).toBe(1)
+  })
+})
+
+// ─── API response fields — tombstoneRetentionDays, incrementalSince ───────────
+
+describe('Sync response new fields', () => {
+  let testDir: string
+  let db: ReturnType<typeof createDb>
+  let app: ReturnType<typeof buildServer>
+  let localNodeId: string
+  let adminCookie: string
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `helix-resp-fields-${crypto.randomUUID()}`)
+    mkdirSync(testDir, { recursive: true })
+    db = createDb(join(testDir, 'test.db'))
+    runMigrations(db, join(__dirname, '../drizzle'))
+    localNodeId = await bootstrap(db, testDir)
+    app = buildServer(db, localNodeId, undefined, testDir)
+    await app.ready()
+    adminCookie = await setupAuth(app)
+  })
+
+  afterEach(async () => {
+    vi.unstubAllGlobals()
+    await app.close()
+    rmSync(testDir, { recursive: true, force: true })
+  })
+
+  async function addRemoteNode() {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/nodes',
+      headers: { Cookie: adminCookie },
+      payload: { name: 'Remote', base_url: 'http://remote:3001', api_token: 'tok' },
+    })
+    return JSON.parse(res.body).data.id as string
+  }
+
+  // Test 13: sync response includes tombstoneRetentionDays
+  it('sync response includes tombstoneRetentionDays', async () => {
+    const nodeId = await addRemoteNode()
+    const mockCatalog = buildMockCatalog(nodeId)
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: mockCatalog }),
+    }))
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/nodes/${nodeId}/sync`,
+      headers: { Cookie: adminCookie },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.data.tombstoneRetentionDays).toBeDefined()
+    expect(typeof body.data.tombstoneRetentionDays).toBe('number')
+    expect(body.data.tombstoneRetentionDays).toBeGreaterThanOrEqual(1)
+  })
+
+  // Test 14: sync response includes incrementalSince when using incremental sync
+  it('sync response includes incrementalSince when incremental sync is used', async () => {
+    const nodeId = await addRemoteNode()
+    const lastSyncMs = Date.now() - 3600_000
+
+    await db.update(nodes).set({ last_sync_at: lastSyncMs }).where(eq(nodes.id, nodeId))
+
+    const mockCatalog = buildMockCatalog(nodeId)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: { ...mockCatalog, incremental: true, since: new Date(lastSyncMs).toISOString() } }),
+    }))
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/nodes/${nodeId}/sync`,
+      headers: { Cookie: adminCookie },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.data.incremental).toBe(true)
+    expect(body.data.incrementalSince).toBeDefined()
+    expect(typeof body.data.incrementalSince).toBe('string')
+    expect(body.data.incrementalSince).toBe(new Date(lastSyncMs).toISOString())
+  })
+
+  // Test 15 (regression): existing tombstone import tests still pass — full sync result is valid
+  it('full sync response (regression): synced=true with correct counts', async () => {
+    const nodeId = await addRemoteNode()
+    const mockCatalog = buildMockCatalog(nodeId)
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: mockCatalog }),
+    }))
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/nodes/${nodeId}/sync`,
+      headers: { Cookie: adminCookie },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.data.synced).toBe(true)
+    expect(body.data.librariesSynced).toBe(1)
+    expect(body.data.itemsSynced).toBe(1)
+    expect(body.data.tombstonesApplied).toBe(0)
+  })
+
+  // Test 15b (regression): incremental tombstone import still works
+  it('incremental tombstone import works after new fields added (regression)', async () => {
+    const nodeId = await addRemoteNode()
+
+    // Initial full sync
+    const initial = buildMockCatalog(nodeId)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: initial }),
+    }))
+    await app.inject({ method: 'POST', url: `/api/v1/nodes/${nodeId}/sync`, headers: { Cookie: adminCookie } })
+
+    // Incremental sync with tombstone
+    const withTombstone: FederationCatalogData = {
+      ...buildMockCatalog(nodeId),
+      incremental: true,
+      since: new Date(Date.now() - 1000).toISOString(),
+      items: [],
+      tombstones: [{ entityType: 'media_file', entityId: 'inc-file-1', deletedAt: new Date().toISOString() }],
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: withTombstone }),
+    }))
+    await db.update(nodes).set({ last_sync_at: Date.now() - 1000 }).where(eq(nodes.id, nodeId))
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/nodes/${nodeId}/sync`,
+      headers: { Cookie: adminCookie },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.data.tombstonesApplied).toBe(1)
+    expect(body.data.filesRemoved).toBe(1)
+    expect(body.data.incremental).toBe(true)
+  })
+})

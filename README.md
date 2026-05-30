@@ -108,6 +108,7 @@ Copy `.env.example` to `packages/backend/.env` and fill in the values you need. 
 | `TRUSTED_HOME_SYNC_INTERVAL_MS` | `21600000` (6 h) | How often to sync all remote Trusted Home catalogs. |
 | `TRUSTED_HOME_SYNC_STAGGER_MS` | `30000` (30 s) | Delay between each node's background sync start (avoids thundering herd). |
 | `TRUSTED_HOME_SYNC_ON_STARTUP` | `false` | If true, syncs all remote nodes immediately on server startup. |
+| `TOMBSTONE_RETENTION_DAYS` | `90` | How many days deletion tombstones are retained. Nodes that have not synced within this window automatically receive a full sync (see Tombstone retention below). Minimum: 1. |
 
 ---
 
@@ -364,6 +365,7 @@ Helix automatically syncs connected Trusted Homes in the background so catalogs 
 | `TRUSTED_HOME_SYNC_INTERVAL_MS` | `21600000` | Sync interval in ms (default 6 hours) |
 | `TRUSTED_HOME_SYNC_STAGGER_MS` | `30000` | Delay between each node's sync start (ms) |
 | `TRUSTED_HOME_SYNC_ON_STARTUP` | `false` | Sync immediately on server startup |
+| `TOMBSTONE_RETENTION_DAYS` | `90` | Days deletion tombstones are retained; nodes unsynced longer than this receive a full sync |
 
 **Known limitations:**
 
@@ -395,9 +397,13 @@ Tombstones only apply to rows owned by the announcing home; local catalog rows a
 
 **Sync decision logic:**
 - `last_sync_at` is null (first sync or never synced) → full sync, no `?since`
-- `last_sync_at` is set → incremental sync with `?since=<last_sync_at as ISO8601>`
-- Remote returns 400 for `?since` (older server) → automatic fallback to full sync; `fallbackUsed: true` is included in the response
+- `last_sync_at` is older than `TOMBSTONE_RETENTION_DAYS` → full sync (tombstones for that period may have been pruned; `fallbackUsed: true`, `fallbackReason: 'tombstone_retention_exceeded'` in response)
+- `last_sync_at` is within the retention window → incremental sync with `?since=<last_sync_at as ISO8601>`
+- Remote returns 400 for `?since` (older server) → automatic fallback to full sync; `fallbackUsed: true`, `fallbackReason: 'remote_no_since_support'` in response
 - Any other remote error → sync fails, `last_sync_at` is NOT updated
+
+**Tombstone retention:**
+Helix retains deletion tombstones for a configurable number of days (default: 90, controlled by `TOMBSTONE_RETENTION_DAYS`). If a Trusted Home has not synced within this window, Helix automatically falls back to a full catalog sync to ensure deletion history is not silently skipped. Admins can trigger a full re-sync manually at any time. The retention period is shown in the health endpoint (`tombstoneRetentionDays`) and on the Trusted Homes page.
 
 **`last_sync_at` is updated only on success.** Failed syncs leave the timestamp unchanged so the next attempt retries from the same baseline.
 

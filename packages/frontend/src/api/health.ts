@@ -8,6 +8,7 @@ export interface HealthResponse {
     enabled: boolean
     intervalMs: number
   }
+  tombstoneRetentionDays?: number
 }
 
 export function getHealth() {

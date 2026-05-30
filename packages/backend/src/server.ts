@@ -22,6 +22,7 @@ import { enrichmentQueueRoutes } from './routes/enrichmentQueue'
 import { trustedHomeInviteRoutes, acceptInviteRoutes } from './routes/trustedHomeInvites'
 import { enrichmentQueue } from './services/enrichmentQueue'
 import { createTrustedHomeSyncScheduler } from './services/federation/trustedHomeSyncScheduler'
+import { createTombstonePruner } from './services/federation/tombstonePruner'
 import { syncRemoteNode } from './services/federation/catalogSync'
 import { err } from './lib/response'
 import type { DrizzleDB } from './db/client'
@@ -185,18 +186,24 @@ export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string
       intervalMs: config.trustedHomeSyncIntervalMs,
       staggerMs: config.trustedHomeSyncStaggerMs,
       onStartup: config.trustedHomeSyncOnStartup,
+      tombstoneRetentionDays: config.tombstoneRetentionDays,
     },
     syncRemoteNode
   )
 
+  // Tombstone pruner — runs once on startup then daily
+  const tombstonePruner = createTombstonePruner(db, config.tombstoneRetentionDays)
+
   app.addHook('onReady', async () => {
     enrichmentQueue.start(db)
     trustedHomeSyncScheduler.start()
+    tombstonePruner.start()
   })
 
   app.addHook('onClose', async () => {
     enrichmentQueue.stop()
     await trustedHomeSyncScheduler.stop()
+    await tombstonePruner.stop()
   })
 
   // TV hierarchy routes

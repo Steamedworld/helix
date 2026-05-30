@@ -43,6 +43,7 @@ const DEFAULT_SYNC_RESULT: SyncRemoteNodeResult = {
   filesSynced: 5,
   librariesSynced: 1,
   fallbackUsed: false,
+  tombstoneRetentionDays: 90,
   tombstonesApplied: 0,
   librariesRemoved: 0,
   itemsRemoved: 0,

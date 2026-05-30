@@ -1578,7 +1578,22 @@ function TrustedHomeRow({ node, onDeleted, onUpdated, defaultOpenAccess = false 
             )}
             .
           </div>
-          {syncResult.fallbackUsed && (
+          {syncResult.fallbackUsed && syncResult.fallbackReason === 'tombstone_retention_exceeded' && (
+            <div
+              style={{
+                fontSize: 12,
+                color: '#e6a817',
+                background: 'oklch(0.78 0.14 65 / 0.07)',
+                border: '1px solid oklch(0.78 0.14 65 / 0.25)',
+                borderRadius: 'var(--r-1)',
+                padding: '5px 9px',
+                lineHeight: 1.5,
+              }}
+            >
+              Full sync used — deletion history window exceeded.
+            </div>
+          )}
+          {syncResult.fallbackUsed && syncResult.fallbackReason !== 'tombstone_retention_exceeded' && (
             <div
               style={{
                 fontSize: 12,
@@ -1740,6 +1755,9 @@ export function Nodes() {
             {healthData.autoSync.enabled
               ? `Background sync: every ${Math.round(healthData.autoSync.intervalMs / 3600000)} hours`
               : 'Background sync: disabled'}
+            {healthData.tombstoneRetentionDays != null && (
+              <>{' '}&mdash; Deletion history retained for {healthData.tombstoneRetentionDays} days.</>
+            )}
           </p>
         )}
       </div>
