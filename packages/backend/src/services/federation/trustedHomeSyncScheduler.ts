@@ -127,6 +127,17 @@ export function createTrustedHomeSyncScheduler(
             last_seen_at: nowMs,
             last_sync_at: nowMs,
             last_error: null,
+            last_sync_mode: result.fullSync ? 'full' : 'incremental',
+            last_sync_fallback_reason: result.fallbackReason ?? null,
+            last_sync_items_synced: result.itemsSynced,
+            last_sync_versions_synced: result.versionsSynced,
+            last_sync_files_synced: result.filesSynced,
+            last_sync_tombstones_applied: result.tombstonesApplied,
+            last_sync_libraries_removed: result.librariesRemoved,
+            last_sync_items_removed: result.itemsRemoved,
+            last_sync_versions_removed: result.versionsRemoved,
+            last_sync_files_removed: result.filesRemoved,
+            last_sync_diagnostics_updated_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           })
           .where(eq(nodes.id, node.id))

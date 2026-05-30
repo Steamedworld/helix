@@ -277,3 +277,54 @@ export function updateNodeAccess(nodeId: string, grants: AccessUpdateGrant[]) {
     body: JSON.stringify({ grants }),
   })
 }
+
+// ─── Admin sync diagnostics ────────────────────────────────────────────────────
+
+export interface SyncDiagnosticsTombstoneStats {
+  total: number
+  byEntityType: Record<string, number>
+  ageBuckets: {
+    under7Days: number
+    days7To30: number
+    days30ToRetention: number
+    olderThanRetention: number
+  }
+  oldestDeletedAt: string | null
+  newestDeletedAt: string | null
+  tombstoneRetentionDays: number
+  pruneCutoff: string
+}
+
+export interface SyncDiagnosticsSyncCounts {
+  itemsSynced: number
+  versionsSynced: number
+  filesSynced: number
+  tombstonesApplied: number
+  librariesRemoved: number
+  itemsRemoved: number
+  versionsRemoved: number
+  filesRemoved: number
+}
+
+export interface SyncDiagnosticsHomeEntry {
+  nodeId: string
+  name: string
+  status: string
+  lastSuccessfulSyncAt: string | null
+  lastSyncMode: string | null
+  lastFallbackReason: string | null
+  lastSyncCounts: SyncDiagnosticsSyncCounts
+  tombstoneRetentionDays: number
+  incrementalSafeNow: boolean
+  nextSyncModeEstimate: 'full' | 'incremental'
+  nextSyncReason: 'no_last_sync' | 'tombstone_retention_exceeded' | 'within_retention'
+}
+
+export interface SyncDiagnosticsResponse {
+  tombstoneStats: SyncDiagnosticsTombstoneStats
+  trustedHomeSync: SyncDiagnosticsHomeEntry[]
+}
+
+export function getSyncDiagnostics() {
+  return apiFetch<SyncDiagnosticsResponse>('/api/v1/admin/sync-diagnostics')
+}

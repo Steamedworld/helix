@@ -419,6 +419,54 @@ Helix retains deletion tombstones for a configurable number of days (default: 90
 - Use **Full re-sync** on the Trusted Home to fetch and re-import the complete catalog.
 - If the remote home's URL changed, disconnect and re-invite.
 
+### Trusted Home sync diagnostics
+
+`GET /api/v1/admin/sync-diagnostics` (admin only) returns a read-only snapshot of sync and tombstone health.
+
+**Response shape:**
+
+```json
+{
+  "tombstoneStats": {
+    "total": 142,
+    "byEntityType": { "library": 3, "media_item": 87, "media_version": 31, "media_file": 21 },
+    "ageBuckets": {
+      "under7Days": 12, "days7To30": 45, "days30ToRetention": 67, "olderThanRetention": 18
+    },
+    "oldestDeletedAt": "2026-01-01T00:00:00Z",
+    "newestDeletedAt": "2026-05-30T10:00:00Z",
+    "tombstoneRetentionDays": 90,
+    "pruneCutoff": "2026-03-01T..."
+  },
+  "trustedHomeSync": [
+    {
+      "nodeId": "abc123",
+      "name": "Bob's Helix",
+      "status": "online",
+      "lastSuccessfulSyncAt": "2026-05-29T08:00:00Z",
+      "lastSyncMode": "incremental",
+      "lastFallbackReason": null,
+      "lastSyncCounts": { "itemsSynced": 12, "versionsSynced": 3, "filesSynced": 1,
+        "tombstonesApplied": 2, "librariesRemoved": 0, "itemsRemoved": 2,
+        "versionsRemoved": 0, "filesRemoved": 0 },
+      "tombstoneRetentionDays": 90,
+      "incrementalSafeNow": true,
+      "nextSyncModeEstimate": "incremental",
+      "nextSyncReason": "within_retention"
+    }
+  ]
+}
+```
+
+**Key fields:**
+- `tombstoneStats.ageBuckets.olderThanRetention` — tombstones already past the prune cutoff; will be cleaned on the next prune run.
+- `trustedHomeSync[*].incrementalSafeNow` — whether the next automatic sync for that home will be incremental. `false` if the home has not synced recently enough (see `nextSyncReason`).
+- `nextSyncReason`: `within_retention` | `tombstone_retention_exceeded` | `no_last_sync`
+
+**Security:** the endpoint is read-only. It never exposes credentials, API keys, file paths, tokens, signed URLs, or individual tombstone entity IDs. All tombstone counts are aggregated. The endpoint does not trigger any sync or pruning.
+
+**UI:** a collapsible "Show diagnostics" panel is available at the top of the Trusted Homes admin page, showing tombstone stats and a per-home sync status table.
+
 ### What is deferred
 
 - **Hub video proxy** — the browser streams directly from the remote node. No hub-side buffering or re-streaming.

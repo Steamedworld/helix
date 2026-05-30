@@ -20,6 +20,7 @@ import { integrationRoutes } from './routes/integrations'
 import { webhookRoutes } from './routes/webhooks'
 import { enrichmentQueueRoutes } from './routes/enrichmentQueue'
 import { trustedHomeInviteRoutes, acceptInviteRoutes } from './routes/trustedHomeInvites'
+import { adminRoutes } from './routes/admin'
 import { enrichmentQueue } from './services/enrichmentQueue'
 import { createTrustedHomeSyncScheduler } from './services/federation/trustedHomeSyncScheduler'
 import { createTombstonePruner } from './services/federation/tombstonePruner'
@@ -170,6 +171,12 @@ export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string
     dataDir: resolvedDataDir,
     baseUrl: baseUrl ?? null,
   } as Parameters<typeof acceptInviteRoutes>[1] & { prefix: string })
+
+  // Admin routes (admin-only, read-only diagnostics)
+  app.register(adminRoutes, {
+    prefix: '/api/v1',
+    db,
+  } as Parameters<typeof adminRoutes>[1] & { prefix: string })
 
   // Enrichment queue routes + background runner
   app.register(enrichmentQueueRoutes, {

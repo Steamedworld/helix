@@ -18,10 +18,11 @@ import {
   acceptInvite,
   getNodeAccessSummary,
   updateNodeAccess,
+  getSyncDiagnostics,
 } from '../api/nodes'
 import { getServerConfig } from '../api/config'
 import { getHealth } from '../api/health'
-import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic, InviteSummary, AcceptInviteResponse, AccessLibrarySummary, AccessUpdateGrant, SyncResponse } from '../api/nodes'
+import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic, InviteSummary, AcceptInviteResponse, AccessLibrarySummary, AccessUpdateGrant, SyncResponse, SyncDiagnosticsResponse, SyncDiagnosticsHomeEntry } from '../api/nodes'
 import type { ServerConfig } from '../api/config'
 import type { HealthResponse } from '../api/health'
 
@@ -252,6 +253,147 @@ function AdminBanner({ hasRemoteNodes, serverConfig, dismissed, onDismiss }: Adm
       >
         ×
       </button>
+    </div>
+  )
+}
+
+// ─── Sync diagnostics panel ───────────────────────────────────────────────────
+
+function formatRelativeDateIso(iso: string | null): string {
+  if (!iso) return 'never'
+  const diffMs = Date.now() - new Date(iso).getTime()
+  const diffSecs = Math.floor(diffMs / 1000)
+  if (diffSecs < 60) return 'just now'
+  const diffMins = Math.floor(diffSecs / 60)
+  if (diffMins < 60) return `${diffMins} ${diffMins === 1 ? 'minute' : 'minutes'} ago`
+  const diffHours = Math.floor(diffMins / 60)
+  if (diffHours < 24) return `${diffHours} ${diffHours === 1 ? 'hour' : 'hours'} ago`
+  const diffDays = Math.floor(diffHours / 24)
+  return `${diffDays} ${diffDays === 1 ? 'day' : 'days'} ago`
+}
+
+function nextSyncLabel(entry: SyncDiagnosticsHomeEntry): string {
+  if (entry.nextSyncModeEstimate === 'incremental') return 'Incremental'
+  if (entry.nextSyncReason === 'tombstone_retention_exceeded') return 'Full sync ⚠ (window exceeded)'
+  if (entry.nextSyncReason === 'no_last_sync') return 'Full sync (first sync)'
+  return 'Full sync'
+}
+
+function lastResultSummary(entry: SyncDiagnosticsHomeEntry): string {
+  if (!entry.lastSyncMode) return 'No sync yet'
+  const c = entry.lastSyncCounts
+  const parts: string[] = []
+  if (c.itemsSynced > 0) parts.push(`${c.itemsSynced} items`)
+  if (c.versionsSynced > 0) parts.push(`${c.versionsSynced} versions`)
+  if (c.filesSynced > 0) parts.push(`${c.filesSynced} files`)
+  const removed = c.librariesRemoved + c.itemsRemoved + c.versionsRemoved + c.filesRemoved
+  if (removed > 0) parts.push(`${removed} removed`)
+  if (parts.length === 0) {
+    if (entry.lastSyncMode === 'full') return 'Last sync used full sync'
+    return 'No changes'
+  }
+  return parts.join(', ')
+}
+
+interface SyncDiagnosticsPanelProps {
+  diagnostics: SyncDiagnosticsResponse
+}
+
+function SyncDiagnosticsPanel({ diagnostics }: SyncDiagnosticsPanelProps) {
+  const { tombstoneStats, trustedHomeSync } = diagnostics
+  const safeCount = trustedHomeSync.filter((h) => h.incrementalSafeNow).length
+  const fullCount = trustedHomeSync.length - safeCount
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Tombstone stats */}
+      <div
+        style={{
+          background: 'var(--bg-2)',
+          borderRadius: 'var(--r-1)',
+          padding: '10px 12px',
+          fontSize: 12,
+          color: 'var(--ink-3)',
+          lineHeight: 1.6,
+        }}
+      >
+        <div>
+          Deletion history retained for <strong>{tombstoneStats.tombstoneRetentionDays} days</strong>.
+        </div>
+        <div>
+          <strong>{tombstoneStats.total}</strong> tombstones total.
+          {tombstoneStats.ageBuckets.olderThanRetention > 0 && (
+            <span style={{ color: '#e6a817', marginLeft: 6 }}>
+              ({tombstoneStats.ageBuckets.olderThanRetention} past prune cutoff — will be removed next prune run)
+            </span>
+          )}
+        </div>
+        {tombstoneStats.oldestDeletedAt && (
+          <div>
+            Oldest: <strong>{formatRelativeDateIso(tombstoneStats.oldestDeletedAt)}</strong>.
+          </div>
+        )}
+      </div>
+
+      {/* Summary line */}
+      {trustedHomeSync.length > 0 && (
+        <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+          {safeCount > 0 && (
+            <span style={{ color: 'var(--ok)' }}>
+              {safeCount} {safeCount === 1 ? 'home' : 'homes'} safe for incremental sync.
+            </span>
+          )}
+          {fullCount > 0 && (
+            <span style={{ color: fullCount > 0 && safeCount > 0 ? '#e6a817' : 'var(--ink-3)', marginLeft: safeCount > 0 ? 8 : 0 }}>
+              {fullCount} {fullCount === 1 ? 'home' : 'homes'} will use full sync next time.
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Per-home table */}
+      {trustedHomeSync.length > 0 && (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ color: 'var(--ink-4)', textAlign: 'left', borderBottom: '1px solid var(--border)' }}>
+                <th style={{ paddingBottom: 6, fontWeight: 500 }}>Home</th>
+                <th style={{ paddingBottom: 6, fontWeight: 500 }}>Last sync</th>
+                <th style={{ paddingBottom: 6, fontWeight: 500 }}>Next sync</th>
+                <th style={{ paddingBottom: 6, fontWeight: 500 }}>Last result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {trustedHomeSync.map((entry) => (
+                <tr key={entry.nodeId} style={{ borderBottom: '1px solid var(--border)' }}>
+                  <td style={{ padding: '6px 0', color: 'var(--ink-1)', paddingRight: 16 }}>
+                    {entry.name}
+                  </td>
+                  <td style={{ padding: '6px 0', color: 'var(--ink-3)', paddingRight: 16 }}>
+                    {entry.lastSuccessfulSyncAt
+                      ? formatRelativeDateIso(entry.lastSuccessfulSyncAt)
+                      : <span style={{ color: 'var(--ink-4)' }}>Never</span>}
+                  </td>
+                  <td style={{ padding: '6px 0', paddingRight: 16 }}>
+                    <span style={{ color: entry.nextSyncModeEstimate === 'full' ? '#e6a817' : 'var(--ok)' }}>
+                      {nextSyncLabel(entry)}
+                    </span>
+                  </td>
+                  <td style={{ padding: '6px 0', color: 'var(--ink-3)' }}>
+                    {lastResultSummary(entry)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {trustedHomeSync.length === 0 && (
+        <div style={{ fontSize: 12, color: 'var(--ink-4)' }}>
+          No trusted homes connected.
+        </div>
+      )}
     </div>
   )
 }
@@ -1665,6 +1807,9 @@ export function Nodes() {
       return false
     }
   })
+  const [showDiagnostics, setShowDiagnostics] = useState(false)
+  const [diagnostics, setDiagnostics] = useState<SyncDiagnosticsResponse | null>(null)
+  const [diagnosticsError, setDiagnosticsError] = useState(false)
 
   useEffect(() => {
     loadNodes()
@@ -1675,6 +1820,18 @@ export function Nodes() {
       if (res.ok) setHealthData(res.data)
     })
   }, [])
+
+  useEffect(() => {
+    if (!showDiagnostics) return
+    setDiagnosticsError(false)
+    getSyncDiagnostics().then((res) => {
+      if (res.ok) {
+        setDiagnostics(res.data)
+      } else {
+        setDiagnosticsError(true)
+      }
+    })
+  }, [showDiagnostics])
 
   async function loadNodes() {
     setLoading(true)
@@ -1758,7 +1915,45 @@ export function Nodes() {
             {healthData.tombstoneRetentionDays != null && (
               <>{' '}&mdash; Deletion history retained for {healthData.tombstoneRetentionDays} days.</>
             )}
+            {' '}
+            <button
+              onClick={() => setShowDiagnostics((v) => !v)}
+              style={{
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                cursor: 'pointer',
+                color: 'var(--accent)',
+                fontSize: 12,
+                textDecoration: 'underline',
+              }}
+            >
+              {showDiagnostics ? 'Hide diagnostics' : 'Show diagnostics'}
+            </button>
           </p>
+        )}
+
+        {showDiagnostics && (
+          <div
+            style={{
+              marginTop: 4,
+              padding: '12px 14px',
+              background: 'var(--bg-2)',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--r-1)',
+            }}
+          >
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink-2)', marginBottom: 10 }}>
+              Sync diagnostics
+            </div>
+            {diagnosticsError ? (
+              <div style={{ fontSize: 12, color: 'var(--ink-4)' }}>Diagnostics unavailable.</div>
+            ) : diagnostics ? (
+              <SyncDiagnosticsPanel diagnostics={diagnostics} />
+            ) : (
+              <div style={{ fontSize: 12, color: 'var(--ink-4)' }}>Loading…</div>
+            )}
+          </div>
         )}
       </div>
 

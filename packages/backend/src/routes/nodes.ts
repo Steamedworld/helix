@@ -422,6 +422,17 @@ export async function nodeRoutes(
             last_sync_at: nowMs,
             last_error: null,
             capabilities_json: capabilities ? JSON.stringify(capabilities) : null,
+            last_sync_mode: syncResult.fullSync ? 'full' : 'incremental',
+            last_sync_fallback_reason: syncResult.fallbackReason ?? null,
+            last_sync_items_synced: syncResult.itemsSynced,
+            last_sync_versions_synced: syncResult.versionsSynced,
+            last_sync_files_synced: syncResult.filesSynced,
+            last_sync_tombstones_applied: syncResult.tombstonesApplied,
+            last_sync_libraries_removed: syncResult.librariesRemoved,
+            last_sync_items_removed: syncResult.itemsRemoved,
+            last_sync_versions_removed: syncResult.versionsRemoved,
+            last_sync_files_removed: syncResult.filesRemoved,
+            last_sync_diagnostics_updated_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           })
           .where(eq(nodes.id, node.id))

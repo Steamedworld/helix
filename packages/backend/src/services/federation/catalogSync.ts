@@ -548,6 +548,52 @@ export async function syncRemoteNode(
   }
 }
 
+// ─── Incremental safety helper ────────────────────────────────────────────────
+
+/**
+ * Computes whether an incremental sync is safe to use right now for a given node,
+ * using the same cutoff logic as `syncRemoteNode`.
+ *
+ * Logic mirrors exactly:
+ *   - lastSyncAt == null → no_last_sync (full)
+ *   - lastSyncAt < (now - tombstoneRetentionDays * 24h) → tombstone_retention_exceeded (full)
+ *   - otherwise → within_retention (incremental)
+ */
+export function computeSyncSafetyEstimate(
+  lastSyncAt: string | null,
+  tombstoneRetentionDays: number,
+  now = new Date()
+): {
+  incrementalSafeNow: boolean
+  nextSyncModeEstimate: 'full' | 'incremental'
+  nextSyncReason: 'no_last_sync' | 'tombstone_retention_exceeded' | 'within_retention'
+} {
+  if (lastSyncAt == null) {
+    return {
+      incrementalSafeNow: false,
+      nextSyncModeEstimate: 'full',
+      nextSyncReason: 'no_last_sync',
+    }
+  }
+
+  const lastSyncMs = new Date(lastSyncAt).getTime()
+  const retentionCutoffMs = now.getTime() - tombstoneRetentionDays * 24 * 60 * 60 * 1000
+
+  if (lastSyncMs < retentionCutoffMs) {
+    return {
+      incrementalSafeNow: false,
+      nextSyncModeEstimate: 'full',
+      nextSyncReason: 'tombstone_retention_exceeded',
+    }
+  }
+
+  return {
+    incrementalSafeNow: true,
+    nextSyncModeEstimate: 'incremental',
+    nextSyncReason: 'within_retention',
+  }
+}
+
 // ─── Backward-compat stubs ────────────────────────────────────────────────────
 
 export async function pushCatalogUpdate(_items: unknown[]): Promise<void> {}
