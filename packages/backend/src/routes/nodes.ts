@@ -50,6 +50,10 @@ function sanitizeNode(node: NodeRow) {
       node.kind === 'local' ? !!node.federation_token_hash : !!node.api_token_encrypted,
     capabilities,
     lastPlaybackIssue,
+    // Progress sync settings (safe to expose — not credentials)
+    progressSyncEnabled: node.progress_sync_enabled === 1,
+    allowProgressPush: node.allow_progress_push === 1,
+    allowProgressReceive: node.allow_progress_receive === 1,
   }
 }
 
@@ -171,6 +175,47 @@ export async function nodeRoutes(
       return err('Node not found')
     }
     return ok(sanitizeNode(node))
+  })
+
+  // PATCH /:id/settings — update progress sync settings for a node (admin only)
+  app.patch<{
+    Params: { id: string }
+    Body: Partial<{
+      progressSyncEnabled: boolean
+      allowProgressPush: boolean
+      allowProgressReceive: boolean
+    }>
+  }>('/:id/settings', { preHandler: requireAdmin }, async (req, reply) => {
+    const [node] = await db.select().from(nodes).where(eq(nodes.id, req.params.id))
+    if (!node) {
+      reply.status(404)
+      return err('Node not found')
+    }
+    const now = new Date().toISOString()
+    const updates: Partial<typeof nodes.$inferInsert> = { updated_at: now }
+
+    if (typeof req.body?.progressSyncEnabled === 'boolean') {
+      updates.progress_sync_enabled = req.body.progressSyncEnabled ? 1 : 0
+    }
+    if (typeof req.body?.allowProgressPush === 'boolean') {
+      updates.allow_progress_push = req.body.allowProgressPush ? 1 : 0
+    }
+    if (typeof req.body?.allowProgressReceive === 'boolean') {
+      updates.allow_progress_receive = req.body.allowProgressReceive ? 1 : 0
+    }
+
+    await db.update(nodes).set(updates).where(eq(nodes.id, req.params.id))
+    const [updated] = await db.select().from(nodes).where(eq(nodes.id, req.params.id))
+
+    // Return only settings summary — NEVER credentials, tokens, or paths
+    return ok({
+      id: updated.id,
+      name: updated.name,
+      kind: updated.kind,
+      progressSyncEnabled: updated.progress_sync_enabled === 1,
+      allowProgressPush: updated.allow_progress_push === 1,
+      allowProgressReceive: updated.allow_progress_receive === 1,
+    })
   })
 
   // PATCH /:id — update remote node

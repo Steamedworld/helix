@@ -6,7 +6,7 @@ import type { DrizzleDB } from '../db/client'
 import { makeRequireAdmin } from '../middleware/auth'
 import { computeSyncSafetyEstimate } from '../services/federation/catalogSync'
 import { deriveSyncHealth } from '../services/federation/syncHealthRollup'
-import { config } from '../config'
+import { config, getPlaybackRefreshSecretHealth } from '../config'
 
 export async function adminRoutes(
   app: FastifyInstance,
@@ -161,6 +161,26 @@ export async function adminRoutes(
       }
     })
 
+    // ─── Secrets health ─────────────────────────────────────────────────────────
+    // State only — MUST NOT include secret value, hash, env var contents, or token examples.
+
+    const playbackRefreshState = getPlaybackRefreshSecretHealth()
+    const playbackRefreshRecommendation: string | null =
+      playbackRefreshState === 'derived_fallback'
+        ? 'Set TRUSTED_HOME_PLAYBACK_REFRESH_SECRET for explicit key isolation.'
+        : playbackRefreshState === 'dev_random'
+        ? 'Random per-process key in use (development only). Set TRUSTED_HOME_PLAYBACK_REFRESH_SECRET or MEDIA_TOKEN_SECRET for persistent tokens.'
+        : playbackRefreshState === 'missing'
+        ? 'No signing secret configured. Production startup will fail. Set TRUSTED_HOME_PLAYBACK_REFRESH_SECRET.'
+        : null
+
+    const secretsHealth = {
+      playbackRefreshToken: {
+        state: playbackRefreshState,
+        ...(playbackRefreshRecommendation !== null ? { recommendation: playbackRefreshRecommendation } : {}),
+      },
+    }
+
     return ok({
       tombstoneStats: {
         total,
@@ -177,6 +197,7 @@ export async function adminRoutes(
         pruneCutoff: pruneCutoffIso,
       },
       trustedHomeSync,
+      secretsHealth,
     })
   })
 }

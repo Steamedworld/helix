@@ -116,6 +116,8 @@ export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string
   app.register(watchStateRoutes, {
     prefix: '/api/v1/watchstate',
     db,
+    localNodeId,
+    dataDir: resolvedDataDir,
   } as Parameters<typeof watchStateRoutes>[1] & { prefix: string })
   app.register(streamRoutes, {
     prefix: '/api/v1',

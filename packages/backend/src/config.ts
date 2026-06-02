@@ -95,6 +95,35 @@ export function isPrivateUrl(url: string): boolean {
  *
  * The returned secret is a hex string safe for use as an HMAC key.
  */
+/**
+ * Describes the resolution state of the playback refresh signing key.
+ *
+ *   explicit_secret  — TRUSTED_HOME_PLAYBACK_REFRESH_SECRET is set.
+ *   derived_fallback — Derived from MEDIA_TOKEN_SECRET via HMAC domain-separation.
+ *   dev_random       — Random per-process key (development only, non-production).
+ *   missing          — No key available (would throw in production).
+ *
+ * MUST NOT be called in production when no secret is configured — call
+ * resolvePlaybackRefreshSecret() for that (it throws appropriately).
+ *
+ * IMPORTANT: This function NEVER returns the secret value, hash, or any
+ * env var contents — only the state label.
+ */
+export type RefreshSecretHealth = 'explicit_secret' | 'derived_fallback' | 'dev_random' | 'missing'
+
+export function getPlaybackRefreshSecretHealth(): RefreshSecretHealth {
+  if (process.env.TRUSTED_HOME_PLAYBACK_REFRESH_SECRET) {
+    return 'explicit_secret'
+  }
+  if (process.env.MEDIA_TOKEN_SECRET) {
+    return 'derived_fallback'
+  }
+  if (process.env.NODE_ENV === 'production') {
+    return 'missing'
+  }
+  return 'dev_random'
+}
+
 export function resolvePlaybackRefreshSecret(): string {
   if (process.env.TRUSTED_HOME_PLAYBACK_REFRESH_SECRET) {
     return process.env.TRUSTED_HOME_PLAYBACK_REFRESH_SECRET
@@ -166,9 +195,10 @@ export const config = {
   //        throws at startup to prevent accidental insecurity.
   //
   // trustedHomePlaybackRefreshTokenTtlMs — lifetime of each refresh token (ms).
-  //   Default 10 minutes. Clients should call the refresh endpoint before this
+  //   Default 3 minutes. Clients should call the refresh endpoint before this
   //   expires; they receive a new token (rotated nonce/iat/exp) on every refresh.
+  //   Reduced from 10 min to 3 min for tighter token-expiry windows.
   trustedHomePlaybackRefreshTokenTtlMs: Number(
-    process.env.TRUSTED_HOME_PLAYBACK_REFRESH_TOKEN_TTL_MS ?? 600000
+    process.env.TRUSTED_HOME_PLAYBACK_REFRESH_TOKEN_TTL_MS ?? 180000
   ),
 }

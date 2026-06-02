@@ -110,6 +110,10 @@ export interface WatchState {
   duration_seconds: number | null
   completed: boolean
   updated_at: string
+  /** Federated progress push status — only present when push has been attempted */
+  progress_push_status?: string | null
+  progress_push_at?: string | null
+  progress_push_error_code?: string | null
 }
 
 export interface PlaybackSession {

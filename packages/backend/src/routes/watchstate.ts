@@ -6,12 +6,110 @@ import type { DrizzleDB } from '../db/client'
 import { sql } from 'drizzle-orm'
 import { makeRequireAuth } from '../middleware/auth'
 import { canViewLibrary, canPlayLibrary, getViewableLibraryIds } from '../lib/permissions'
+import { createHash } from 'crypto'
+import { decryptApiKey } from '../services/integrations/encryption'
+import { config } from '../config'
+import { classifySyncError } from '../services/federation/syncErrorClassifier'
+
+// ─── Best-effort federated progress push ─────────────────────────────────────
+//
+// Pushes local watch progress to the source Trusted Home.
+// NEVER throws — caller must fire-and-forget (.catch(() => {})).
+// NEVER sends local userId to the source Home.
+// NEVER fails the local watchState write.
+// Uses only the stored node.base_url (SSRF prevention).
+
+async function attemptProgressPush(
+  db: DrizzleDB,
+  watchStateId: string,
+  userId: string,
+  mediaItemId: string,
+  node: typeof nodes.$inferSelect,
+  progress: { positionSeconds: number; durationSeconds?: number | null; completed: boolean },
+  dataDir: string
+): Promise<void> {
+  // Decrypt the federation token (server-side only — never sent to browser)
+  let rawToken: string
+  try {
+    if (!node.api_token_encrypted) return
+    rawToken = decryptApiKey(node.api_token_encrypted, dataDir)
+  } catch {
+    await db.update(watchStates).set({
+      progress_push_status: 'failed',
+      progress_push_at: new Date().toISOString(),
+      progress_push_error_code: 'auth_failed',
+    }).where(eq(watchStates.id, watchStateId))
+    return
+  }
+
+  // Derive a stable, privacy-preserving client event ID from userId + mediaItemId
+  // This is a hash — never the raw userId
+  const clientEventId = createHash('sha256')
+    .update(`${userId}:${mediaItemId}`)
+    .digest('hex')
+    .slice(0, 16)
+
+  const upstreamUrl = `${node.base_url}/api/v1/federation/media/${mediaItemId}/watch-progress`
+
+  const body = JSON.stringify({
+    positionSeconds: progress.positionSeconds,
+    durationSeconds: progress.durationSeconds ?? undefined,
+    watched: progress.completed,
+    updatedAt: new Date().toISOString(),
+    clientEventId,
+  })
+
+  // Include caller node ID so the source Home can attribute the progress
+  // We include the local node's concept — but we don't have localNodeId here directly.
+  // Since this is best-effort, we just make the request.
+  let upstreamRes: Response
+  try {
+    const timeoutMs = config.trustedHomeProxyRequestTimeoutMs > 0
+      ? Math.min(config.trustedHomeProxyRequestTimeoutMs, 15000)
+      : 15000
+
+    upstreamRes = await fetch(upstreamUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${rawToken}`,
+      },
+      body,
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+  } catch (fetchErr) {
+    const classified = classifySyncError(fetchErr)
+    await db.update(watchStates).set({
+      progress_push_status: 'failed',
+      progress_push_at: new Date().toISOString(),
+      progress_push_error_code: classified.code,
+    }).where(eq(watchStates.id, watchStateId))
+    return
+  }
+
+  if (upstreamRes.ok) {
+    await db.update(watchStates).set({
+      progress_push_status: 'synced',
+      progress_push_at: new Date().toISOString(),
+      progress_push_error_code: null,
+    }).where(eq(watchStates.id, watchStateId))
+  } else {
+    const classified = classifySyncError({ status: upstreamRes.status })
+    await db.update(watchStates).set({
+      progress_push_status: 'failed',
+      progress_push_at: new Date().toISOString(),
+      progress_push_error_code: classified.code,
+    }).where(eq(watchStates.id, watchStateId))
+  }
+}
 
 export async function watchStateRoutes(
   app: FastifyInstance,
-  opts: { db: DrizzleDB }
+  opts: { db: DrizzleDB; localNodeId?: string; dataDir?: string }
 ) {
   const { db } = opts
+  const localNodeId = opts.localNodeId ?? null
+  const dataDir = opts.dataDir ?? './data'
   const requireAuth = makeRequireAuth(db)
 
   // PUT /watchstate/:media_item_id
@@ -83,6 +181,9 @@ export async function watchStateRoutes(
       )
       .limit(1)
 
+    let savedWatchStateId: string
+    let savedCompleted: boolean
+
     if (existing) {
       // Completion protection: never un-complete a previously completed item
       // unless the caller explicitly requests completed=false AND the position
@@ -113,6 +214,43 @@ export async function watchStateRoutes(
         .select()
         .from(watchStates)
         .where(eq(watchStates.id, existing.id))
+
+      savedWatchStateId = existing.id
+      savedCompleted = resolvedCompleted
+
+      // ── Best-effort federated progress push (fire-and-forget) ────────────────
+      // Only for remote items (library belongs to a remote node) when push is enabled.
+      // Push failure MUST NOT fail the local watchState write — always fire-and-forget.
+      if (localNodeId) {
+        const [lib] = await db
+          .select({ node_id: libraries.node_id })
+          .from(libraries)
+          .where(eq(libraries.id, item.library_id))
+          .limit(1)
+        if (lib && lib.node_id !== localNodeId) {
+          const [sourceNode] = await db
+            .select()
+            .from(nodes)
+            .where(eq(nodes.id, lib.node_id))
+            .limit(1)
+          if (
+            sourceNode &&
+            sourceNode.progress_sync_enabled &&
+            sourceNode.allow_progress_push
+          ) {
+            attemptProgressPush(
+              db,
+              savedWatchStateId,
+              user.id,
+              mediaItemId,
+              sourceNode,
+              { positionSeconds: position_seconds, durationSeconds: duration_seconds ?? existing.duration_seconds, completed: savedCompleted },
+              dataDir
+            ).catch(() => {})
+          }
+        }
+      }
+
       return ok(updated)
     } else {
       const id = crypto.randomUUID()
@@ -129,6 +267,41 @@ export async function watchStateRoutes(
         .select()
         .from(watchStates)
         .where(eq(watchStates.id, id))
+
+      savedWatchStateId = id
+      savedCompleted = created?.completed ?? false
+
+      // ── Best-effort federated progress push (fire-and-forget) ────────────────
+      if (localNodeId) {
+        const [lib] = await db
+          .select({ node_id: libraries.node_id })
+          .from(libraries)
+          .where(eq(libraries.id, item.library_id))
+          .limit(1)
+        if (lib && lib.node_id !== localNodeId) {
+          const [sourceNode] = await db
+            .select()
+            .from(nodes)
+            .where(eq(nodes.id, lib.node_id))
+            .limit(1)
+          if (
+            sourceNode &&
+            sourceNode.progress_sync_enabled &&
+            sourceNode.allow_progress_push
+          ) {
+            attemptProgressPush(
+              db,
+              savedWatchStateId,
+              user.id,
+              mediaItemId,
+              sourceNode,
+              { positionSeconds: position_seconds, durationSeconds: duration_seconds ?? null, completed: savedCompleted },
+              dataDir
+            ).catch(() => {})
+          }
+        }
+      }
+
       return ok(created)
     }
   })

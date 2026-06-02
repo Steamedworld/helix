@@ -19,10 +19,11 @@ import {
   getNodeAccessSummary,
   updateNodeAccess,
   getSyncDiagnostics,
+  updateNodeSettings,
 } from '../api/nodes'
 import { getServerConfig } from '../api/config'
 import { getHealth } from '../api/health'
-import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic, RemotePlaybackDiagnostic, PlaybackIssueDiagnostic, InviteSummary, AcceptInviteResponse, AccessLibrarySummary, AccessUpdateGrant, SyncResponse, SyncDiagnosticsResponse, SyncDiagnosticsHomeEntry } from '../api/nodes'
+import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic, RemotePlaybackDiagnostic, PlaybackIssueDiagnostic, InviteSummary, AcceptInviteResponse, AccessLibrarySummary, AccessUpdateGrant, SyncResponse, SyncDiagnosticsResponse, SyncDiagnosticsHomeEntry, RefreshSecretHealthEntry } from '../api/nodes'
 import type { ServerConfig } from '../api/config'
 import type { HealthResponse } from '../api/health'
 
@@ -258,6 +259,117 @@ function RemotePlaybackPanel({
           </span>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── Progress sync status ─────────────────────────────────────────────────────
+
+interface ProgressSyncStatusProps {
+  node: NodeRecord
+  onUpdated: (node: NodeRecord) => void
+}
+
+function ProgressSyncStatus({ node, onUpdated }: ProgressSyncStatusProps) {
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  async function handleToggle(field: 'progressSyncEnabled' | 'allowProgressPush' | 'allowProgressReceive', value: boolean) {
+    setSaving(true)
+    setSaveError(null)
+    const res = await updateNodeSettings(node.id, { [field]: value })
+    setSaving(false)
+    if (res.ok) {
+      // Merge updated settings into node
+      onUpdated({ ...node, progressSyncEnabled: res.data.progressSyncEnabled, allowProgressPush: res.data.allowProgressPush, allowProgressReceive: res.data.allowProgressReceive })
+    } else {
+      setSaveError(res.error ?? 'Failed to save setting')
+    }
+  }
+
+  return (
+    <div
+      style={{
+        marginTop: 4,
+        fontSize: 12,
+        color: 'var(--ink-3)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+      }}
+    >
+      <div style={{ color: 'var(--ink-4)', fontWeight: 500, marginBottom: 2 }}>Progress sync</div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+        <input
+          type="checkbox"
+          checked={node.progressSyncEnabled}
+          disabled={saving}
+          onChange={(e) => handleToggle('progressSyncEnabled', e.target.checked)}
+        />
+        <span>
+          Progress sync: <strong>{node.progressSyncEnabled ? 'enabled' : 'disabled'}</strong>
+        </span>
+      </label>
+      {node.progressSyncEnabled && (
+        <>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginLeft: 16 }}>
+            <input
+              type="checkbox"
+              checked={node.allowProgressPush}
+              disabled={saving}
+              onChange={(e) => handleToggle('allowProgressPush', e.target.checked)}
+            />
+            <span>Allow pushing our progress to this Home</span>
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginLeft: 16 }}>
+            <input
+              type="checkbox"
+              checked={node.allowProgressReceive}
+              disabled={saving}
+              onChange={(e) => handleToggle('allowProgressReceive', e.target.checked)}
+            />
+            <span>Allow receiving progress from this Home</span>
+          </label>
+        </>
+      )}
+      {saveError && (
+        <div style={{ color: 'var(--bad)', fontSize: 11 }}>{saveError}</div>
+      )}
+    </div>
+  )
+}
+
+// ─── Secrets health warning ───────────────────────────────────────────────────
+
+function SecretsHealthWarning({ health }: { health: RefreshSecretHealthEntry | undefined }) {
+  if (!health) return null
+  if (health.state === 'explicit_secret') return null
+
+  const message =
+    health.state === 'derived_fallback'
+      ? 'Playback refresh key is using a derived fallback. Set TRUSTED_HOME_PLAYBACK_REFRESH_SECRET for isolation.'
+      : health.state === 'dev_random'
+      ? 'Playback refresh key is randomly generated each restart (development mode). Tokens do not survive server restarts.'
+      : health.state === 'missing'
+      ? 'No playback refresh signing secret is configured. Production startup will fail.'
+      : null
+
+  if (!message) return null
+
+  return (
+    <div
+      style={{
+        fontSize: 11,
+        color: '#e6a817',
+        background: 'oklch(0.78 0.14 65 / 0.07)',
+        border: '1px solid oklch(0.78 0.14 65 / 0.25)',
+        borderRadius: 'var(--r-1)',
+        padding: '5px 9px',
+        lineHeight: 1.5,
+        marginTop: 4,
+      }}
+    >
+      <strong>⚠ Key health:</strong> {message}
     </div>
   )
 }
@@ -1823,6 +1935,9 @@ function TrustedHomeRow({ node, onDeleted, onUpdated, defaultOpenAccess = false 
         />
       )}
 
+      {/* Progress sync settings — admin only, per-node bilateral opt-in */}
+      <ProgressSyncStatus node={node} onUpdated={onUpdated} />
+
       {node.last_error && (
         <div style={{ fontSize: 12, color: 'var(--bad)' }}>{node.last_error}</div>
       )}
@@ -2082,7 +2197,10 @@ export function Nodes() {
             {diagnosticsError ? (
               <div style={{ fontSize: 12, color: 'var(--ink-4)' }}>Diagnostics unavailable.</div>
             ) : diagnostics ? (
-              <SyncDiagnosticsPanel diagnostics={diagnostics} />
+              <>
+                <SyncDiagnosticsPanel diagnostics={diagnostics} />
+                <SecretsHealthWarning health={diagnostics.secretsHealth?.playbackRefreshToken} />
+              </>
             ) : (
               <div style={{ fontSize: 12, color: 'var(--ink-4)' }}>Loading…</div>
             )}

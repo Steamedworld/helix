@@ -1273,6 +1273,18 @@ export function MediaDetail() {
                 ? 'Watched'
                 : `${Math.round(watchState.position_seconds)}s watched`}
             </p>
+            {/* Federated progress sync status — quiet, non-obtrusive */}
+            {watchState.progress_push_status === 'synced' && (
+              <p style={{ fontSize: 11, color: 'var(--ink-4)' }}>Progress synced</p>
+            )}
+            {(watchState.progress_push_status === 'failed' ||
+              watchState.progress_push_status === 'source_unavailable') && (
+              <p style={{ fontSize: 11, color: 'var(--ink-4)' }}>Progress sync unavailable</p>
+            )}
+            {(!watchState.progress_push_status ||
+              watchState.progress_push_status === 'not_enabled') && (
+              <p style={{ fontSize: 11, color: 'var(--ink-4)' }}>Progress stored locally</p>
+            )}
           </div>
         ) : (
           <p style={{ fontSize: 13, color: 'var(--ink-3)' }}>Not started</p>

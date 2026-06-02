@@ -32,6 +32,10 @@ export const nodes = sqliteTable('nodes', {
   last_playback_issue_mode: text('last_playback_issue_mode'),
   last_playback_issue_code: text('last_playback_issue_code'),
   last_playback_issue_message: text('last_playback_issue_message'),
+  // Federated watch-progress sync settings (both default to disabled — bilateral opt-in)
+  progress_sync_enabled: integer('progress_sync_enabled').notNull().default(0),
+  allow_progress_push: integer('allow_progress_push').notNull().default(0),
+  allow_progress_receive: integer('allow_progress_receive').notNull().default(0),
   created_at: text('created_at').notNull(),
   updated_at: text('updated_at').notNull(),
 })
@@ -137,6 +141,10 @@ export const watchStates = sqliteTable('watch_states', {
   duration_seconds: real('duration_seconds'),
   completed: integer('completed', { mode: 'boolean' }).notNull().default(false),
   updated_at: text('updated_at').notNull(),
+  // Viewer-side federated push sync status
+  progress_push_status: text('progress_push_status'),
+  progress_push_at: text('progress_push_at'),
+  progress_push_error_code: text('progress_push_error_code'),
 })
 
 export const playbackSessions = sqliteTable('playback_sessions', {
@@ -239,4 +247,32 @@ export const trustedHomeInvites = sqliteTable('trusted_home_invites', {
   updated_at: integer('updated_at').notNull(),
 }, (t) => ({
   idx_token_hash: uniqueIndex('idx_invites_token_hash').on(t.token_hash),
+}))
+
+/**
+ * Remote watch-progress records.
+ *
+ * Source-side: progress entries pushed from a viewer Trusted Home.
+ * identity: the calling Home sends no local user ID; we derive a stable
+ * viewer hash from the caller's node ID (and optional clientEventId) so
+ * all progress from one node maps to one pseudo-viewer.
+ *
+ * MUST NOT store: viewer session ID, local user IDs of the source Home,
+ * filesystem paths, federation token values, or Authorization header contents.
+ */
+export const remoteWatchProgress = sqliteTable('remote_watch_progress', {
+  id: text('id').primaryKey(),
+  source_node_id: text('source_node_id').notNull().references(() => nodes.id, { onDelete: 'cascade' }),
+  remote_viewer_hash: text('remote_viewer_hash').notNull(),
+  media_item_id: text('media_item_id').notNull().references(() => mediaItems.id, { onDelete: 'cascade' }),
+  position_seconds: real('position_seconds').notNull().default(0),
+  duration_seconds: real('duration_seconds'),
+  watched: integer('watched').notNull().default(0),
+  updated_at: text('updated_at').notNull(),
+  client_event_id: text('client_event_id'),
+  created_at: text('created_at').notNull(),
+}, (t) => ({
+  unique_viewer_media: uniqueIndex('idx_remote_progress_unique').on(t.source_node_id, t.remote_viewer_hash, t.media_item_id),
+  idx_node: index('idx_remote_progress_node').on(t.source_node_id),
+  idx_media: index('idx_remote_progress_media').on(t.media_item_id, t.source_node_id),
 }))

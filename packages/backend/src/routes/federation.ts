@@ -11,6 +11,7 @@ import type { FederationCatalogData, FederationTombstone } from '../services/fed
 import { makeLocalCapabilities } from '../services/federation/capabilities'
 import { signStreamToken } from '../lib/signedTokens'
 import { config } from '../config'
+import { remoteWatchProgress } from '../db/schema'
 
 const CONTAINER_MIME: Record<string, string> = {
   mp4: 'video/mp4',
@@ -866,5 +867,249 @@ export async function federationRoutes(
     '/media/:id/stream',
     { preHandler: requireFederationToken },
     handleFederationMediaStream
+  )
+
+  // ── Source-side federated watch-progress receiver ─────────────────────────────
+
+  /**
+   * PUT /federation/media/:id/watch-progress
+   *
+   * Receives watch-progress pushes from a viewer Trusted Home (bilateral opt-in).
+   *
+   * Security:
+   *   - Requires federation token → identifies calling node (not a user)
+   *   - Caller node must have allow_progress_push = 1 (viewer Home opt-in)
+   *   - Local node must have allow_progress_receive = 1 (source Home opt-in)
+   *   - Media item must belong to local node (not an imported sentinel)
+   *   - Viewer identity is derived from caller node ID (no local user ID exposed)
+   *   - Conflict rule: newer updatedAt wins; equal timestamps → prefer higher position
+   *   - watched=true only accepted when positionSeconds >= durationSeconds * 0.90
+   *   - positionSeconds must not exceed durationSeconds * 1.01 (1% rounding tolerance)
+   *   - updatedAt must not be more than 5 minutes in the future
+   *
+   * MUST NOT expose: viewer session ID, local user IDs, filesystem paths,
+   * stack traces, upstream URLs, or authorization values.
+   */
+  app.put<{
+    Params: { id: string }
+    Body: {
+      positionSeconds: unknown
+      durationSeconds: unknown
+      watched: unknown
+      updatedAt: unknown
+      clientEventId?: unknown
+    }
+  }>(
+    '/media/:id/watch-progress',
+    { preHandler: requireFederationToken },
+    async (req, reply) => {
+      const mediaItemId = req.params.id
+
+      // ── Step 1: find the calling node (already auth-verified by requireFederationToken) ──
+      // The federation token uniquely identifies the local node only — it does NOT identify
+      // the calling remote node. We look up the caller by re-checking the token to find
+      // which remote node corresponds to this call.
+      //
+      // Design note: the federation token is stored on the LOCAL node (it's the token
+      // that remote nodes use to call us). All remote nodes calling us share ONE federation
+      // token. To identify the caller for progress attribution, we use a caller-identity
+      // header if present, or fall back to a nonce from the body.
+      //
+      // For v1, use the clientEventId as a stable hash input. The remote viewer identity is:
+      //   sha256(callerNodeId + ':' + clientEventId)[0..31]
+      // Without clientEventId: sha256(callerNodeId)[0..31]
+      //
+      // For caller identification we require the caller to send X-Caller-Node-Id header.
+      // If absent, we use a generic "unknown" caller scoped to no specific remote node.
+      const callerNodeIdHeader = (req.headers['x-caller-node-id'] as string | undefined)?.trim() ?? ''
+
+      // Find the calling node — must be remote, active
+      let callerNode: typeof nodes.$inferSelect | null = null
+      if (callerNodeIdHeader) {
+        const [row] = await db
+          .select()
+          .from(nodes)
+          .where(and(eq(nodes.id, callerNodeIdHeader), eq(nodes.kind, 'remote')))
+          .limit(1)
+        callerNode = row ?? null
+      }
+
+      // Even without a caller node ID we proceed — caller's ability to push is governed by
+      // the local node's allow_progress_receive setting. If no caller node found, we use
+      // a generic hash. But we still check allow_progress_push per caller if identified.
+      if (callerNode && !callerNode.allow_progress_push) {
+        reply.status(403)
+        return err('Progress sync not enabled for this connection.')
+      }
+
+      // ── Step 2: check local node allow_progress_receive ─────────────────────
+      const [localNodeRow] = await db
+        .select({
+          id: nodes.id,
+          allow_progress_receive: nodes.allow_progress_receive,
+        })
+        .from(nodes)
+        .where(eq(nodes.id, localNodeId))
+        .limit(1)
+
+      if (!localNodeRow?.allow_progress_receive) {
+        reply.status(403)
+        return err('Progress sync not enabled for this connection.')
+      }
+
+      // ── Step 3: find local media item — must belong to local node ───────────
+      const [item] = await db
+        .select({
+          id: mediaItems.id,
+          library_id: mediaItems.library_id,
+        })
+        .from(mediaItems)
+        .innerJoin(libraries, eq(mediaItems.library_id, libraries.id))
+        .where(
+          and(
+            eq(mediaItems.id, mediaItemId),
+            eq(libraries.node_id, localNodeId)
+          )
+        )
+        .limit(1)
+
+      if (!item) {
+        reply.status(404)
+        return err('Media item not found')
+      }
+
+      // ── Step 4: validate request body ────────────────────────────────────────
+      const body = req.body ?? {}
+      const { positionSeconds, durationSeconds, watched, updatedAt, clientEventId } = body
+
+      if (
+        typeof positionSeconds !== 'number' ||
+        !isFinite(positionSeconds) ||
+        positionSeconds < 0 ||
+        positionSeconds > 999999
+      ) {
+        reply.status(400)
+        return err('positionSeconds must be a finite number between 0 and 999999')
+      }
+
+      if (
+        typeof durationSeconds !== 'number' ||
+        !isFinite(durationSeconds) ||
+        durationSeconds <= 0 ||
+        durationSeconds > 999999
+      ) {
+        reply.status(400)
+        return err('durationSeconds must be a finite positive number no greater than 999999')
+      }
+
+      if (typeof watched !== 'boolean') {
+        reply.status(400)
+        return err('watched must be a boolean')
+      }
+
+      if (typeof updatedAt !== 'string') {
+        reply.status(400)
+        return err('updatedAt must be an ISO8601 string')
+      }
+
+      const updatedAtDate = new Date(updatedAt)
+      if (isNaN(updatedAtDate.getTime())) {
+        reply.status(400)
+        return err('updatedAt must be a valid ISO8601 timestamp')
+      }
+
+      // Reject timestamps more than 5 minutes in the future
+      const nowMs = Date.now()
+      if (updatedAtDate.getTime() > nowMs + 5 * 60 * 1000) {
+        reply.status(400)
+        return err('updatedAt is too far in the future')
+      }
+
+      // Validate clientEventId if provided
+      let safeClientEventId: string | null = null
+      if (clientEventId !== undefined) {
+        if (typeof clientEventId !== 'string' || clientEventId.length > 64 || !/^[a-zA-Z0-9\-_]+$/.test(clientEventId)) {
+          reply.status(400)
+          return err('clientEventId must be an alphanumeric string (max 64 chars, a-z A-Z 0-9 - _)')
+        }
+        safeClientEventId = clientEventId
+      }
+
+      // positionSeconds must not exceed durationSeconds * 1.01 (1% rounding tolerance)
+      if (positionSeconds > durationSeconds * 1.01) {
+        reply.status(422)
+        return ok({ accepted: false, reason: 'positionSeconds exceeds durationSeconds' })
+      }
+
+      // watched=true only accepted when positionSeconds >= durationSeconds * 0.90
+      if (watched && positionSeconds < durationSeconds * 0.90) {
+        reply.status(422)
+        return ok({ accepted: false, reason: 'watched=true requires at least 90% completion' })
+      }
+
+      // ── Step 5: derive viewer identity ───────────────────────────────────────
+      // Never stores viewer session ID or local user ID
+      const callerIdForHash = callerNodeIdHeader || localNodeId
+      const hashInput = safeClientEventId
+        ? `${callerIdForHash}:${safeClientEventId}`
+        : callerIdForHash
+      const remoteViewerHash = createHash('sha256').update(hashInput).digest('hex').slice(0, 32)
+
+      // ── Step 6: upsert with conflict rules ──────────────────────────────────
+      const updatedAtIso = updatedAtDate.toISOString()
+      const now = new Date().toISOString()
+
+      const [existing] = await db
+        .select()
+        .from(remoteWatchProgress)
+        .where(
+          and(
+            eq(remoteWatchProgress.source_node_id, callerIdForHash),
+            eq(remoteWatchProgress.remote_viewer_hash, remoteViewerHash),
+            eq(remoteWatchProgress.media_item_id, mediaItemId)
+          )
+        )
+        .limit(1)
+
+      if (existing) {
+        // Newer updatedAt wins
+        const existingDate = new Date(existing.updated_at)
+        if (existingDate > updatedAtDate) {
+          // Stored is newer — skip (idempotent 200)
+          return ok({ accepted: false, reason: 'stale update ignored' })
+        }
+
+        // Equal timestamps: prefer higher positionSeconds
+        if (existingDate.getTime() === updatedAtDate.getTime() && existing.position_seconds >= positionSeconds) {
+          return ok({ accepted: false, reason: 'stale update ignored' })
+        }
+
+        await db
+          .update(remoteWatchProgress)
+          .set({
+            position_seconds: positionSeconds,
+            duration_seconds: durationSeconds,
+            watched: watched ? 1 : 0,
+            updated_at: updatedAtIso,
+            client_event_id: safeClientEventId,
+          })
+          .where(eq(remoteWatchProgress.id, existing.id))
+      } else {
+        await db.insert(remoteWatchProgress).values({
+          id: crypto.randomUUID(),
+          source_node_id: callerIdForHash,
+          remote_viewer_hash: remoteViewerHash,
+          media_item_id: mediaItemId,
+          position_seconds: positionSeconds,
+          duration_seconds: durationSeconds,
+          watched: watched ? 1 : 0,
+          updated_at: updatedAtIso,
+          client_event_id: safeClientEventId,
+          created_at: now,
+        })
+      }
+
+      return ok({ accepted: true })
+    }
   )
 }

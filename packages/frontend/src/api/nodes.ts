@@ -36,6 +36,10 @@ export interface NodeRecord {
   capabilities: NodeCapabilities | null
   /** Present only when there is an active (uncleared) playback issue for this Home. */
   lastPlaybackIssue: PlaybackIssueDiagnostic | null
+  /** Progress sync settings (both default false — bilateral opt-in) */
+  progressSyncEnabled: boolean
+  allowProgressPush: boolean
+  allowProgressReceive: boolean
   created_at: string
   updated_at: string
 }
@@ -343,11 +347,44 @@ export interface SyncDiagnosticsHomeEntry {
   syncHealth: 'healthy' | 'never_synced' | 'failing' | 'stale' | 'unknown'
 }
 
+export interface RefreshSecretHealthEntry {
+  /** State label — never includes the secret value, hash, or env var contents */
+  state: 'explicit_secret' | 'derived_fallback' | 'dev_random' | 'missing'
+  recommendation?: string
+}
+
+export interface SecretsHealthResponse {
+  playbackRefreshToken: RefreshSecretHealthEntry
+}
+
 export interface SyncDiagnosticsResponse {
   tombstoneStats: SyncDiagnosticsTombstoneStats
   trustedHomeSync: SyncDiagnosticsHomeEntry[]
+  secretsHealth?: SecretsHealthResponse
+}
+
+export interface NodeSettingsUpdateRequest {
+  progressSyncEnabled?: boolean
+  allowProgressPush?: boolean
+  allowProgressReceive?: boolean
+}
+
+export interface NodeSettingsSummary {
+  id: string
+  name: string
+  kind: string
+  progressSyncEnabled: boolean
+  allowProgressPush: boolean
+  allowProgressReceive: boolean
 }
 
 export function getSyncDiagnostics() {
   return apiFetch<SyncDiagnosticsResponse>('/api/v1/admin/sync-diagnostics')
+}
+
+export function updateNodeSettings(nodeId: string, settings: NodeSettingsUpdateRequest) {
+  return apiFetch<NodeSettingsSummary>(`/api/v1/nodes/${nodeId}/settings`, {
+    method: 'PATCH',
+    body: JSON.stringify(settings),
+  })
 }
