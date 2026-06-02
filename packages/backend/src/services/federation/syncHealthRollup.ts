@@ -51,6 +51,13 @@ export interface SyncHealthRollup {
   unknown: number
   hasFailures: boolean
   /**
+   * Simple 3-state aggregate status for quick health polling.
+   * - 'unknown'  — no trusted homes registered (total === 0)
+   * - 'ok'       — at least one home, none failing or stale
+   * - 'degraded' — at least one home is failing or stale
+   */
+  syncStatus: 'ok' | 'degraded' | 'unknown'
+  /**
    * ISO timestamp of the oldest active error across all failing nodes.
    * "Active" means last_sync_error_code is non-null at the time of this call.
    * null when no nodes are failing.
@@ -122,14 +129,25 @@ export function computeSyncHealthRollup(
     }
   }
 
+  const total = nodes.length
+  let syncStatus: 'ok' | 'degraded' | 'unknown'
+  if (total === 0) {
+    syncStatus = 'unknown'
+  } else if (failing > 0 || stale > 0) {
+    syncStatus = 'degraded'
+  } else {
+    syncStatus = 'ok'
+  }
+
   return {
-    total: nodes.length,
+    total,
     healthy,
     failing,
     stale,
     neverSynced,
     unknown,
     hasFailures: failing > 0,
+    syncStatus,
     oldestActiveErrorAt,
     newestAttemptAt,
   }

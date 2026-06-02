@@ -702,4 +702,169 @@ export async function federationRoutes(
       return reply.send(createReadStream(artworkPath))
     }
   )
+
+  // ── Source-side media stream (federation token only) ──────────────────────────
+
+  /**
+   * GET  /federation/media/:id/stream
+   * HEAD /federation/media/:id/stream
+   *
+   * Streams a local media file to a remote Trusted Home proxy.
+   * Authentication: Bearer federation token.
+   * Security:
+   *   - Rejects items where node_id != localNodeId (proxy loop prevention).
+   *   - Never exposes media_files.path in any response header or body.
+   *   - Supports Range requests (bytes=X-Y, bytes=X-, bytes=-Y).
+   */
+  async function handleFederationMediaStream(
+    req: import('fastify').FastifyRequest<{ Params: { id: string } }>,
+    reply: import('fastify').FastifyReply
+  ) {
+    const mediaItemId = req.params.id
+
+    // Find a suitable local file for this item — only non-missing files on the local node
+    const candidateFiles = await db
+      .select()
+      .from(mediaFiles)
+      .where(
+        and(
+          eq(mediaFiles.media_item_id, mediaItemId),
+          eq(mediaFiles.node_id, localNodeId)
+        )
+      )
+
+    const file = candidateFiles.find(
+      (f) => f.missing_at === null && !f.path.startsWith('remote://')
+    )
+
+    if (!file) {
+      reply.status(404)
+      reply.header('Content-Type', 'application/json')
+      return reply.send(JSON.stringify({ ok: false, error: 'Media file not found' }))
+    }
+
+    // Confirm item belongs to local node (proxy loop prevention)
+    if (file.node_id !== localNodeId) {
+      reply.status(404)
+      reply.header('Content-Type', 'application/json')
+      return reply.send(JSON.stringify({ ok: false, error: 'Media file not found' }))
+    }
+
+    // Confirm file exists on disk — never expose the path itself
+    if (!existsSync(file.path)) {
+      reply.status(404)
+      reply.header('Content-Type', 'application/json')
+      return reply.send(JSON.stringify({ ok: false, error: 'Media file not found on disk' }))
+    }
+
+    // Get file size
+    let fileSize: number
+    try {
+      const stat = statSync(file.path)
+      fileSize = stat.size
+    } catch {
+      reply.status(500)
+      reply.header('Content-Type', 'application/json')
+      return reply.send(JSON.stringify({ ok: false, error: 'Stream unavailable' }))
+    }
+
+    // Derive content-type from extension — never expose path
+    const ext = file.extension.toLowerCase()
+    const mimeType = CONTAINER_MIME[ext] ?? 'video/mp4'
+
+    const rangeHeader = req.headers.range
+
+    reply.header('Accept-Ranges', 'bytes')
+    reply.header('Content-Type', mimeType)
+
+    // HEAD requests: same headers, no body
+    const isHead = req.method === 'HEAD'
+
+    if (rangeHeader) {
+      // Parse range: bytes=X-Y, bytes=X-, bytes=-Y
+      const match = rangeHeader.match(/^bytes=(\d*)-(\d*)$/)
+      if (!match) {
+        // Unparseable range
+        reply.status(400)
+        reply.header('Content-Type', 'application/json')
+        return reply.send(JSON.stringify({ ok: false, error: 'Invalid Range header' }))
+      }
+
+      const rawStart = match[1]
+      const rawEnd = match[2]
+
+      if (rawStart === '' && rawEnd === '') {
+        reply.status(400)
+        reply.header('Content-Type', 'application/json')
+        return reply.send(JSON.stringify({ ok: false, error: 'Invalid Range header' }))
+      }
+
+      let start: number
+      let end: number
+
+      if (rawStart === '') {
+        // suffix-length: bytes=-N
+        const suffix = parseInt(rawEnd, 10)
+        if (suffix <= 0 || isNaN(suffix)) {
+          reply.status(416)
+          reply.header('Content-Range', `bytes */${fileSize}`)
+          return reply.send()
+        }
+        start = Math.max(0, fileSize - suffix)
+        end = fileSize - 1
+      } else {
+        start = parseInt(rawStart, 10)
+        end = rawEnd !== '' ? parseInt(rawEnd, 10) : fileSize - 1
+      }
+
+      if (isNaN(start) || isNaN(end) || start > end) {
+        reply.status(416)
+        reply.header('Content-Range', `bytes */${fileSize}`)
+        return reply.send()
+      }
+
+      // Unsatisfiable: start >= fileSize
+      if (start >= fileSize) {
+        reply.status(416)
+        reply.header('Content-Range', `bytes */${fileSize}`)
+        return reply.send()
+      }
+
+      end = Math.min(end, fileSize - 1)
+      const chunkSize = end - start + 1
+
+      reply.status(206)
+      reply.header('Content-Range', `bytes ${start}-${end}/${fileSize}`)
+      reply.header('Content-Length', String(chunkSize))
+
+      if (isHead) return reply.send()
+
+      const stream = createReadStream(file.path, { start, end })
+      // Abort stream on client disconnect
+      req.raw.on('close', () => stream.destroy())
+      return reply.send(stream)
+    }
+
+    // Full file
+    reply.status(200)
+    reply.header('Content-Length', String(fileSize))
+
+    if (isHead) return reply.send()
+
+    const stream = createReadStream(file.path)
+    req.raw.on('close', () => stream.destroy())
+    return reply.send(stream)
+  }
+
+  app.get<{ Params: { id: string } }>(
+    '/media/:id/stream',
+    { preHandler: requireFederationToken },
+    handleFederationMediaStream
+  )
+
+  app.head<{ Params: { id: string } }>(
+    '/media/:id/stream',
+    { preHandler: requireFederationToken },
+    handleFederationMediaStream
+  )
 }

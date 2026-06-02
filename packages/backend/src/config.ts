@@ -82,4 +82,8 @@ export const config = {
 
   // Public base URL — validated and normalized; null if not set
   baseUrl: configuredBaseUrl,
+
+  // Trusted Home playback proxy
+  trustedHomePlaybackProxyEnabled: (process.env.TRUSTED_HOME_PLAYBACK_PROXY_ENABLED ?? 'true') !== 'false',
+  trustedHomeProxyRequestTimeoutMs: Number(process.env.TRUSTED_HOME_PROXY_REQUEST_TIMEOUT_MS ?? 30000),
 }

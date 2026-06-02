@@ -31,12 +31,20 @@ export interface NodeRecord {
   updated_at: string
 }
 
+export interface RemotePlaybackDiagnostic {
+  proxyAvailable: boolean
+  directPlaybackAvailable: boolean
+  recommendedMode: 'proxy' | 'direct' | 'unavailable'
+  warnings: string[]
+}
+
 export interface DirectPlaybackDiagnostic {
   directPlaybackAvailable: boolean
   supportsRemotePlayback: boolean
   baseUrlConfigured: boolean
   publicBaseUrl: string | null
   warning?: string
+  remotePlayback?: RemotePlaybackDiagnostic
 }
 
 export function listNodes() {

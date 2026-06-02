@@ -109,6 +109,8 @@ Copy `.env.example` to `packages/backend/.env` and fill in the values you need. 
 | `TRUSTED_HOME_SYNC_STAGGER_MS` | `30000` (30 s) | Delay between each node's background sync start (avoids thundering herd). |
 | `TRUSTED_HOME_SYNC_ON_STARTUP` | `false` | If true, syncs all remote nodes immediately on server startup. |
 | `TOMBSTONE_RETENTION_DAYS` | `90` | How many days deletion tombstones are retained. Nodes that have not synced within this window automatically receive a full sync (see Tombstone retention below). Minimum: 1. |
+| `TRUSTED_HOME_PLAYBACK_PROXY_ENABLED` | `true` | Enable the Trusted Home playback proxy. When true, the browser streams media via the local Helix server (which relays server-to-server); the remote federation token never reaches the browser. |
+| `TRUSTED_HOME_PROXY_REQUEST_TIMEOUT_MS` | `30000` | Timeout for upstream proxy requests to a Trusted Home, in milliseconds. |
 
 ---
 
@@ -327,6 +329,53 @@ When a remote node supports playback (i.e. `supportsRemotePlayback: true`, `supp
 - No filesystem paths are exposed in any response.
 
 **Watch-state:** Progress is tracked on the hub only. The hub's `PUT /api/v1/watchstate/:mediaItemId` is called as the video plays. Watch state is never synced back to the remote node. "Continue Watching" reflects remote playback position.
+
+### Trusted Home Playback
+
+Helix supports two playback modes for remote Trusted Home media.
+
+#### Proxy mode (recommended)
+
+The browser calls your local Helix server (`GET /api/v1/nodes/:nodeId/media/:mediaId/stream`), which relays the stream from the Trusted Home server-to-server. The Trusted Home federation token never reaches your browser.
+
+- The UI shows **"Playing through this Home"** when proxy mode is active.
+- The federation token is decrypted in-process on the hub and used only for the server-to-server upstream request.
+- The browser receives only safe response headers (`Content-Type`, `Content-Length`, `Content-Range`, `Accept-Ranges`). All credential and internal headers are stripped.
+- Enabled by default; disable with `TRUSTED_HOME_PLAYBACK_PROXY_ENABLED=false`.
+- Upstream request timeout: `TRUSTED_HOME_PROXY_REQUEST_TIMEOUT_MS` (default 30 000 ms).
+
+#### Direct mode
+
+The browser contacts the Trusted Home server directly using a short-lived signed URL from `POST /federation/playback-intent`. Requires the source Home to be browser-reachable (same LAN, VPN, or public HTTPS). The UI shows **"Direct playback from Trusted Home"**.
+
+#### Security guarantees (proxy mode)
+
+1. **No proxy loops** — the source endpoint rejects any item whose `node_id` is not the local node; a Home can never proxy a remote item through another remote.
+2. **Token never to browser** — `Authorization`, `X-*` internal headers, and all credentials are stripped from proxy responses.
+3. **No SSRF** — the upstream URL is constructed solely from `node.base_url` stored in the database; no client-supplied URL is ever used.
+4. **Path never exposed** — `media_files.path` never appears in any response header or body.
+5. **Permission mandatory** — `can_play` is checked for the remote library before proxying; admins bypass; normal users must have an explicit grant.
+6. **No raw upstream errors** — all upstream failures map to safe messages; upstream error bodies and stack traces are never forwarded.
+7. **Abort on disconnect** — the upstream fetch is aborted when the browser disconnects; no dangling connections.
+
+#### Limitations
+
+- No transcoding — the format must be natively supported by your browser.
+- In proxy mode, bandwidth passes through both Homes' connections.
+- The source Home must be reachable by your local Helix server's network (not necessarily from your browser).
+- If the source Home is offline, playback is unavailable regardless of mode.
+
+#### syncStatus field
+
+`GET /api/v1/health` now includes `trustedHomeSync.syncStatus`:
+
+| Value | Meaning |
+|-------|---------|
+| `"unknown"` | No Trusted Homes registered (`total === 0`) |
+| `"ok"` | At least one Home registered, none failing or stale |
+| `"degraded"` | At least one Home is failing or stale |
+
+This is safe for unauthenticated polling and exposes no per-node identity.
 
 ### Disconnecting a Trusted Home
 

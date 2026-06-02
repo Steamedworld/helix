@@ -19,6 +19,7 @@ export async function healthRoutes(app: FastifyInstance, opts: { db?: DrizzleDB 
       neverSynced: 0,
       unknown: 0,
       hasFailures: false,
+      syncStatus: 'unknown' as 'ok' | 'degraded' | 'unknown',
       tombstoneRetentionDays: config.tombstoneRetentionDays,
       oldestActiveErrorAt: null as string | null,
       newestAttemptAt: null as string | null,

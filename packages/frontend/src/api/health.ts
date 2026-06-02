@@ -17,6 +17,7 @@ export interface HealthResponse {
     neverSynced: number
     unknown: number
     hasFailures: boolean
+    syncStatus: 'ok' | 'degraded' | 'unknown'
     tombstoneRetentionDays: number
     oldestActiveErrorAt: string | null
     newestAttemptAt: string | null

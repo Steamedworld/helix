@@ -5,7 +5,7 @@ import { mediaFiles, mediaVersions, nodes, mediaItems } from '../../db/schema'
 import { signStreamToken } from '../../lib/signedTokens'
 import type { NodeCapabilities } from './capabilities'
 import { decryptApiKey } from '../integrations/encryption'
-import { isLoopbackUrl } from '../../config'
+import { isLoopbackUrl, config } from '../../config'
 
 // ─── Refresh metadata helpers ─────────────────────────────────────────────────
 
@@ -69,6 +69,14 @@ export interface RemoteDirectPlaybackSource {
   mediaFileId: string
   contentType: string | null
   container: string | null
+  /**
+   * Proxy stream URL — available when proxy is enabled.
+   * The browser calls the local Helix server which relays the stream server-to-server.
+   * The Trusted Home token never reaches the browser.
+   */
+  proxyStreamUrl?: string
+  /** Direct stream URL from the remote node (requires the remote to be browser-reachable). */
+  directStreamUrl?: string
   /** Informational warning — does not block playback. Present when the stream URL
    *  points to a loopback address that remote browsers may not be able to reach. */
   warning?: string
@@ -338,19 +346,29 @@ export async function getPlaybackSource(
             const remoteTtlSeconds = Math.max(0, Math.floor((remoteExpiry.getTime() - remoteNow.getTime()) / 1000))
             const remoteRefreshAfter = computeRefreshAfter(remoteNow, remoteTtlSeconds)
 
+            // Build proxy stream URL — browser calls local server which relays server-to-server.
+            // The remote federation token never reaches the browser in this mode.
+            const proxyStreamUrl = config.trustedHomePlaybackProxyEnabled
+              ? `/api/v1/nodes/${remoteNodeId}/media/${mediaItemId}/stream`
+              : undefined
+
+            // For the primary streamUrl, prefer proxy when available
+            const primaryStreamUrl = proxyStreamUrl ?? intentResult.streamUrl
+
             return {
               source: {
                 code: 'remote_direct',
                 sourceType: 'remote_direct',
                 nodeId: remoteNodeId,
                 nodeName: remoteNodeName,
-                streamUrl: intentResult.streamUrl,
+                streamUrl: primaryStreamUrl,
                 expiresAt: intentResult.expiresAt,
                 refreshAfter: remoteRefreshAfter,
                 tokenTtlSeconds: remoteTtlSeconds,
                 mediaFileId: intentResult.mediaFileId,
                 contentType: intentResult.contentType ?? null,
                 container: intentResult.container ?? null,
+                ...(proxyStreamUrl ? { proxyStreamUrl, directStreamUrl: intentResult.streamUrl } : {}),
                 ...(streamWarning ? { warning: streamWarning } : {}),
               },
             }

@@ -51,6 +51,13 @@ export interface RemoteDirectPlaybackSource {
   mediaFileId: string
   contentType: string | null
   container: string | null
+  /**
+   * Proxy stream URL — available when proxy is enabled.
+   * The browser calls the local Helix server which relays the stream server-to-server.
+   */
+  proxyStreamUrl?: string
+  /** Direct stream URL from the remote node. Requires remote to be browser-reachable. */
+  directStreamUrl?: string
   /** Informational warning — does not block playback. Present when the stream URL
    *  points to a loopback address that remote browsers may not be able to reach. */
   warning?: string

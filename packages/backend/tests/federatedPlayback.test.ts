@@ -612,7 +612,15 @@ describe('playback-source: remote direct playback', () => {
     expect(body.data.source).toBeDefined()
     expect(body.data.source.code).toBe('remote_direct')
     expect(body.data.source.sourceType).toBe('remote_direct')
-    expect(body.data.source.streamUrl).toBe(mockIntent.streamUrl)
+    // When proxy is enabled, streamUrl is the proxy URL; directStreamUrl holds the original remote URL.
+    // When proxy is disabled, streamUrl is the original remote URL.
+    const src = body.data.source
+    if (src.proxyStreamUrl) {
+      expect(src.streamUrl).toContain('/api/v1/nodes/')
+      expect(src.directStreamUrl).toBe(mockIntent.streamUrl)
+    } else {
+      expect(src.streamUrl).toBe(mockIntent.streamUrl)
+    }
     expect(body.data.source.expiresAt).toBe(mockIntent.expiresAt)
     expect(body.data.source.mediaFileId).toBe('abc')
     expect(typeof body.data.source.nodeName).toBe('string')
@@ -737,9 +745,9 @@ describe('playback-source: remote direct playback', () => {
     expect(raw).not.toContain('remote://')
   })
 
-  it('remote streamUrl passed through to response unchanged', async () => {
+  it('remote streamUrl passed through to response (via proxy when enabled, direct otherwise)', async () => {
     const { itemId } = await insertRemoteSetup(db, localNodeId, testDir)
-    const expectedUrl = 'http://remote-hub:3001/api/v1/media-files/jkl/stream?token=ccc'
+    const remoteUrl = 'http://remote-hub:3001/api/v1/media-files/jkl/stream?token=ccc'
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
       ok: true,
@@ -747,7 +755,7 @@ describe('playback-source: remote direct playback', () => {
         ok: true,
         data: {
           status: 'ready', mode: 'direct',
-          streamUrl: expectedUrl,
+          streamUrl: remoteUrl,
           expiresAt: new Date(Date.now() + 14400000).toISOString(),
           mediaFileId: 'jkl', container: 'mkv',
         },
@@ -760,7 +768,15 @@ describe('playback-source: remote direct playback', () => {
       headers: { Cookie: adminCookie },
     })
     const body = JSON.parse(res.body)
-    expect(body.data.source.streamUrl).toBe(expectedUrl)
+    const src = body.data.source
+    // When proxy is enabled, streamUrl is the proxy path; directStreamUrl holds the remote URL.
+    // When proxy is disabled, streamUrl is the remote URL.
+    if (src.proxyStreamUrl) {
+      expect(src.streamUrl).toContain('/api/v1/nodes/')
+      expect(src.directStreamUrl).toBe(remoteUrl)
+    } else {
+      expect(src.streamUrl).toBe(remoteUrl)
+    }
   })
 })
 

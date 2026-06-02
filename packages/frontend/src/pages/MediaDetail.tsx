@@ -165,6 +165,7 @@ interface PlayerProps {
   refreshError?: string | null
   isRefreshing?: boolean
   onManualRetry?: () => void
+  onProxyError?: () => void
 }
 
 function isLocalSource(source: PlaybackSource): source is LocalPlaybackSource {
@@ -184,6 +185,7 @@ function DirectPlayer({
   onEpisodeEnded,
   refreshError,
   onManualRetry,
+  onProxyError,
 }: PlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const sessionIdRef = useRef<string | null>(null)
@@ -335,7 +337,12 @@ function DirectPlayer({
     if (sessionIdRef.current) {
       updatePlaybackSession(sessionIdRef.current, { state: 'error' })
     }
-  }, [])
+    // If this is a proxy stream failure, notify the parent
+    if (isRemoteDirectSource(source) && source.proxyStreamUrl && onProxyError) {
+      onProxyError()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source, onProxyError])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -368,7 +375,9 @@ function DirectPlayer({
         {isRemoteDirectSource(source) ? (
           <>
             <span style={{ color: 'var(--accent)', fontWeight: 500 }}>
-              Direct Play from {source.nodeName}
+              {source.proxyStreamUrl
+                ? 'Playing through this Home'
+                : `Direct playback from ${source.nodeName}`}
             </span>
             <span
               style={{
@@ -386,6 +395,11 @@ function DirectPlayer({
               <span style={{ opacity: 0.6, fontSize: 9 }}>⬡</span>
               {source.nodeName}
             </span>
+            {source.proxyStreamUrl && (
+              <span style={{ fontSize: 11, color: 'var(--ink-3)', opacity: 0.7 }}>
+                This Home is relaying playback privately
+              </span>
+            )}
             {source.container && <span>{source.container.toUpperCase()}</span>}
             <span style={{ opacity: 0.5, fontSize: 11 }}>
               Expires {new Date(source.expiresAt).toLocaleTimeString()}
@@ -405,7 +419,7 @@ function DirectPlayer({
         ) : null}
       </div>
       {/* Informational warning for remote streams pointing to loopback */}
-      {isRemoteDirectSource(source) && source.warning && (
+      {isRemoteDirectSource(source) && source.warning && !source.proxyStreamUrl && (
         <div
           style={{
             fontSize: 12,
@@ -592,6 +606,7 @@ export function MediaDetail() {
   const [sourceNodeName, setSourceNodeName] = useState<string | null>(null)
   const [sourceLoading, setSourceLoading] = useState(true)
   const [isMissingFile, setIsMissingFile] = useState(false)
+  const [proxyError, setProxyError] = useState<string | null>(null)
 
   // Up Next panel (episodes only)
   const [upNextEpisode, setUpNextEpisode] = useState<PlayableEpisode | null>(null)
@@ -653,6 +668,13 @@ export function MediaDetail() {
     refreshError,
     isRefreshing,
   } = usePlaybackRefresh(refreshableSource, id ?? '')
+
+  // Proxy error: the local server couldn't reach the Trusted Home
+  function handleProxyError() {
+    setProxyError(
+      "This Home couldn’t reach the Trusted Home. The remote Home may be offline."
+    )
+  }
 
   // Manual retry: re-fetch the playback source from scratch
   function handleManualRetry() {
@@ -1131,16 +1153,34 @@ export function MediaDetail() {
         {sourceLoading ? (
           <PlayerLoading />
         ) : playbackSource ? (
-          <DirectPlayer
-            source={playbackSource}
-            mediaItemId={item.id}
-            mediaItemKind={item.kind}
-            initialPosition={savedPosition}
-            onProgressSaved={setWatchState}
-            onEpisodeEnded={item.kind === 'episode' ? handleEpisodeEnded : undefined}
-            refreshError={refreshError}
-            onManualRetry={handleManualRetry}
-          />
+          <>
+            <DirectPlayer
+              source={playbackSource}
+              mediaItemId={item.id}
+              mediaItemKind={item.kind}
+              initialPosition={savedPosition}
+              onProgressSaved={setWatchState}
+              onEpisodeEnded={item.kind === 'episode' ? handleEpisodeEnded : undefined}
+              refreshError={refreshError}
+              onManualRetry={handleManualRetry}
+              onProxyError={handleProxyError}
+            />
+            {proxyError && (
+              <div
+                style={{
+                  marginTop: 8,
+                  padding: '10px 14px',
+                  background: 'rgba(255, 95, 95, 0.08)',
+                  border: '1px solid rgba(255, 95, 95, 0.3)',
+                  borderRadius: 'var(--r-2)',
+                  fontSize: 13,
+                  color: 'var(--ink-2)',
+                }}
+              >
+                {proxyError}
+              </div>
+            )}
+          </>
         ) : (
           <PlayerUnavailable
             reason={sourceUnavailable ?? 'Unknown error'}

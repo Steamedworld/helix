@@ -22,7 +22,7 @@ import {
 } from '../api/nodes'
 import { getServerConfig } from '../api/config'
 import { getHealth } from '../api/health'
-import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic, InviteSummary, AcceptInviteResponse, AccessLibrarySummary, AccessUpdateGrant, SyncResponse, SyncDiagnosticsResponse, SyncDiagnosticsHomeEntry } from '../api/nodes'
+import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic, RemotePlaybackDiagnostic, InviteSummary, AcceptInviteResponse, AccessLibrarySummary, AccessUpdateGrant, SyncResponse, SyncDiagnosticsResponse, SyncDiagnosticsHomeEntry } from '../api/nodes'
 import type { ServerConfig } from '../api/config'
 import type { HealthResponse } from '../api/health'
 
@@ -196,6 +196,43 @@ function DiagnosticsPanel({ diagnostic }: DiagnosticsPanelProps) {
     >
       <strong>Direct playback not available.</strong>{' '}
       {diagnostic.warning ?? 'This home does not support direct playback.'}
+    </div>
+  )
+}
+
+// ─── Remote playback panel ────────────────────────────────────────────────────
+
+function RemotePlaybackPanel({ remotePlayback }: { remotePlayback: RemotePlaybackDiagnostic }) {
+  const modeLabel: Record<RemotePlaybackDiagnostic['recommendedMode'], string> = {
+    proxy: 'Proxy playback: available',
+    direct: 'Direct playback: available',
+    unavailable: 'Remote playback: unavailable',
+  }
+
+  const modeColor =
+    remotePlayback.recommendedMode === 'unavailable' ? 'var(--bad)'
+    : remotePlayback.recommendedMode === 'proxy' ? 'var(--ok)'
+    : 'var(--ink-2)'
+
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        fontSize: 12,
+        color: 'var(--ink-3)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+      }}
+    >
+      <span style={{ color: modeColor, fontWeight: 500 }}>
+        {modeLabel[remotePlayback.recommendedMode]}
+      </span>
+      {remotePlayback.warnings.map((w, i) => (
+        <span key={i} style={{ color: 'var(--ink-4)', fontSize: 11 }}>
+          {w}
+        </span>
+      ))}
     </div>
   )
 }
@@ -1754,6 +1791,9 @@ function TrustedHomeRow({ node, onDeleted, onUpdated, defaultOpenAccess = false 
       </div>
 
       {diagnostic && <DiagnosticsPanel diagnostic={diagnostic} />}
+      {diagnostic?.remotePlayback && (
+        <RemotePlaybackPanel remotePlayback={diagnostic.remotePlayback} />
+      )}
 
       {node.last_error && (
         <div style={{ fontSize: 12, color: 'var(--bad)' }}>{node.last_error}</div>
