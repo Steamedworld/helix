@@ -1,4 +1,5 @@
 import { join } from 'path'
+import { createHmac, randomBytes } from 'crypto'
 
 // ─── BASE_URL validation ──────────────────────────────────────────────────────
 
@@ -80,6 +81,40 @@ export function isPrivateUrl(url: string): boolean {
   }
 }
 
+/**
+ * Resolve the HMAC-SHA256 secret used to sign playback refresh tokens.
+ *
+ * Resolution order:
+ *   1. TRUSTED_HOME_PLAYBACK_REFRESH_SECRET — explicit, recommended.
+ *   2. MEDIA_TOKEN_SECRET is present — derive a domain-separated key via
+ *      HMAC(MEDIA_TOKEN_SECRET, "playback_refresh"). This ensures the same
+ *      root secret cannot be used interchangeably across token types.
+ *   3. Development only (NODE_ENV !== 'production') — generate a random
+ *      per-process secret (tokens will not survive restarts).
+ *   4. Production without any secret — throws a startup error.
+ *
+ * The returned secret is a hex string safe for use as an HMAC key.
+ */
+export function resolvePlaybackRefreshSecret(): string {
+  if (process.env.TRUSTED_HOME_PLAYBACK_REFRESH_SECRET) {
+    return process.env.TRUSTED_HOME_PLAYBACK_REFRESH_SECRET
+  }
+  if (process.env.MEDIA_TOKEN_SECRET) {
+    // Domain-separate using HMAC so the derived key cannot be used for streams
+    return createHmac('sha256', process.env.MEDIA_TOKEN_SECRET)
+      .update('playback_refresh')
+      .digest('hex')
+  }
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'TRUSTED_HOME_PLAYBACK_REFRESH_SECRET (or MEDIA_TOKEN_SECRET) must be set in production. ' +
+      'Generate a strong secret and set TRUSTED_HOME_PLAYBACK_REFRESH_SECRET.'
+    )
+  }
+  // Development fallback — random per-process key (tokens do not survive restarts)
+  return randomBytes(32).toString('hex')
+}
+
 export const config = {
   port: Number(process.env.PORT ?? 3001),
   host: process.env.HOST ?? '0.0.0.0',
@@ -117,4 +152,23 @@ export const config = {
   // Trusted Home playback proxy
   trustedHomePlaybackProxyEnabled: (process.env.TRUSTED_HOME_PLAYBACK_PROXY_ENABLED ?? 'true') !== 'false',
   trustedHomeProxyRequestTimeoutMs: Number(process.env.TRUSTED_HOME_PROXY_REQUEST_TIMEOUT_MS ?? 30000),
+
+  // Signed playback refresh tokens
+  //
+  // trustedHomePlaybackRefreshSecret — HMAC-SHA256 key used to sign and verify the
+  //   short-lived refresh tokens embedded in PlaybackSource.refreshUrl.
+  //   Resolution order:
+  //     1. TRUSTED_HOME_PLAYBACK_REFRESH_SECRET (dedicated env var — recommended)
+  //     2. Derived from MEDIA_TOKEN_SECRET via HMAC(secret, "playback_refresh") —
+  //        domain-separated so the same root secret cannot be used directly.
+  //     3. In development only: a random per-process secret is generated.
+  //        In production (NODE_ENV=production) without an explicit secret this
+  //        throws at startup to prevent accidental insecurity.
+  //
+  // trustedHomePlaybackRefreshTokenTtlMs — lifetime of each refresh token (ms).
+  //   Default 10 minutes. Clients should call the refresh endpoint before this
+  //   expires; they receive a new token (rotated nonce/iat/exp) on every refresh.
+  trustedHomePlaybackRefreshTokenTtlMs: Number(
+    process.env.TRUSTED_HOME_PLAYBACK_REFRESH_TOKEN_TTL_MS ?? 600000
+  ),
 }

@@ -11,7 +11,13 @@ import { syncInProgress } from '../services/federation/trustedHomeSyncScheduler'
 import { classifySyncError } from '../services/federation/syncErrorClassifier'
 import { canViewLibrary, canPlayLibrary } from '../lib/permissions'
 import { fetchRemoteCapabilities, type NodeCapabilities } from '../services/federation/capabilities'
-import { isLoopbackUrl, isPrivateUrl, config } from '../config'
+import { isLoopbackUrl, isPrivateUrl, config, resolvePlaybackRefreshSecret } from '../config'
+import {
+  signPlaybackRefreshToken,
+  verifyPlaybackRefreshToken,
+  deriveSessionBinding,
+} from '../services/federation/playbackRefreshToken'
+import { COOKIE_NAME } from '../middleware/auth'
 
 type NodeRow = typeof nodes.$inferSelect
 
@@ -1158,28 +1164,125 @@ export async function nodeRoutes(
    * Returns a fresh PlaybackSource for a remote media item.
    * Called by the player when the existing signed URL is about to expire.
    *
+   * Auth resolution (evaluated in order; the first valid path wins):
+   *
+   *   Path A — Signed refresh token (?rt=<token>):
+   *     - Token is verified with verifyPlaybackRefreshToken
+   *     - Scope check: payload.nodeId === params.nodeId && payload.mediaId === params.mediaId
+   *       (checked BEFORE permission lookup to prevent oracle attacks)
+   *     - userId extracted from payload.sub; can_play still enforced
+   *     - Returns 401 on any token error (all error variants map to the same 401 — no oracle)
+   *
+   *   Path B — Session cookie (no ?rt param):
+   *     - Standard session auth via requireAuth; userId from session
+   *
+   *   Neither present — 401.
+   *
    * Security:
-   *   - Requires session auth (same as proxy stream)
+   *   - Returns 503 if proxy is disabled
    *   - Verifies node is a remote Trusted Home
    *   - Verifies mediaItem.library belongs to nodeId (cross-node confusion prevention)
-   *   - Checks can_play permission for the remote library (admins bypass)
-   *   - Returns 503 if proxy is disabled
-   *   - Response MUST NOT contain: decrypted token, Authorization value, remote base URL,
-   *     filesystem path, raw upstream error, stack trace
+   *   - Checks can_play permission even with a valid signed token
+   *   - Response MUST NOT contain: decrypted federation token, Authorization value,
+   *     remote base URL, filesystem path, raw upstream error, stack trace, signing secret
+   *   - Refresh response contains a fresh signed token (rotated nonce/iat/exp)
+   *   - All token comparison uses timingSafeEqual (constant-time)
+   *   - Token error details NEVER logged beyond {nonce, nodeId, mediaId, error}
    */
-  app.get<{ Params: { nodeId: string; mediaId: string } }>(
+  app.get<{
+    Params: { nodeId: string; mediaId: string }
+    Querystring: { rt?: string }
+  }>(
     '/:nodeId/media/:mediaId/playback-source',
-    { preHandler: requireAuth },
+    // No preHandler — auth is resolved manually below to support token-only path
     async (req, reply) => {
+      // ── Step 1: feature gate ────────────────────────────────────────────────
       if (!config.trustedHomePlaybackProxyEnabled) {
         reply.status(503)
         return err('Trusted Home playback proxy is disabled')
       }
 
       const { nodeId, mediaId } = req.params
-      const user = req.user!
+      const rtParam = req.query.rt
 
-      // 1. Find node — must be a remote Trusted Home
+      // ── Step 2: auth resolution ─────────────────────────────────────────────
+      let resolvedUserId: string
+      let resolvedSessionBinding: string
+
+      if (rtParam) {
+        // Path A: signed refresh token
+        const signingSecret = resolvePlaybackRefreshSecret()
+        const verifyResult = verifyPlaybackRefreshToken(rtParam, signingSecret)
+
+        if (!verifyResult.ok) {
+          // Map ALL token errors to generic 401 — no oracle (never reveal expired vs tampered)
+          reply.status(401)
+          return err('Authentication required')
+        }
+
+        const tokenPayload = verifyResult.payload
+
+        // Scope check BEFORE permission lookup (prevents oracle attacks)
+        if (tokenPayload.nodeId !== nodeId || tokenPayload.mediaId !== mediaId) {
+          reply.status(401)
+          return err('Authentication required')
+        }
+
+        resolvedUserId = tokenPayload.sub
+        resolvedSessionBinding = tokenPayload.sid
+
+      } else {
+        // Path B: session cookie
+        const rawSessionToken = req.cookies?.[COOKIE_NAME]
+        if (!rawSessionToken) {
+          reply.status(401)
+          return err('Authentication required')
+        }
+
+        const { validateSession } = await import('../services/auth/sessions')
+        const sessionResult = await validateSession(db, rawSessionToken)
+        if (!sessionResult) {
+          reply.status(401)
+          return err('Authentication required')
+        }
+
+        // Load user and verify not disabled
+        const [sessionUser] = await db
+          .select({ id: users.id, disabled: users.disabled, username: users.username, role: users.role })
+          .from(users)
+          .where(eq(users.id, sessionResult.userId))
+          .limit(1)
+
+        if (!sessionUser || sessionUser.disabled !== 0 || !sessionUser.username) {
+          reply.status(401)
+          return err('Authentication required')
+        }
+
+        resolvedUserId = sessionUser.id
+        // Derive session binding from the raw token so future refresh tokens bind to this session
+        resolvedSessionBinding = deriveSessionBinding(rawSessionToken)
+      }
+
+      // ── Step 3: resolve user record for permission check ────────────────────
+      const [userRecord] = await db
+        .select({ id: users.id, role: users.role, display_name: users.display_name, username: users.username })
+        .from(users)
+        .where(eq(users.id, resolvedUserId))
+        .limit(1)
+
+      if (!userRecord || !userRecord.username) {
+        reply.status(401)
+        return err('Authentication required')
+      }
+
+      const resolvedUser = {
+        id: userRecord.id,
+        username: userRecord.username,
+        displayName: userRecord.display_name,
+        role: userRecord.role as 'admin' | 'user',
+      }
+
+      // ── Step 4: find node — must be a remote Trusted Home ──────────────────
       const [node] = await db.select().from(nodes).where(eq(nodes.id, nodeId))
       if (!node) {
         reply.status(404)
@@ -1190,7 +1293,7 @@ export async function nodeRoutes(
         return err('Node not found')
       }
 
-      // 2. Find media item — must belong to this node (cross-node confusion prevention)
+      // ── Step 5: find media item — must belong to this node ─────────────────
       const [item] = await db
         .select({ id: mediaItems.id, library_id: mediaItems.library_id })
         .from(mediaItems)
@@ -1207,23 +1310,23 @@ export async function nodeRoutes(
         return err('Media item not found')
       }
 
-      // 3. Check can_play permission (admins bypass)
-      const allowed = await canPlayLibrary(user, item.library_id, db)
+      // ── Step 6: enforce can_play even with a valid signed token ─────────────
+      const allowed = await canPlayLibrary(resolvedUser, item.library_id, db)
       if (!allowed) {
         reply.status(403)
         return err('Playback not permitted for this library')
       }
 
-      // 4. Build a fresh PlaybackSource using the existing source selection logic.
-      //    We call the federation playback-intent endpoint server-side.
-      let rawToken: string
+      // ── Step 7: decrypt federation token (server-side only — never browser) ─
+      let rawFederationToken: string
       try {
-        rawToken = decryptApiKey(node.api_token_encrypted, dataDir)
+        rawFederationToken = decryptApiKey(node.api_token_encrypted, dataDir)
       } catch {
         reply.status(502)
         return err('Unable to access media from this Home')
       }
 
+      // ── Step 8: fetch fresh playback intent from remote ─────────────────────
       interface PlaybackIntentResult {
         status: 'ready' | 'unavailable' | 'unsupported'
         streamUrl?: string
@@ -1240,7 +1343,7 @@ export async function nodeRoutes(
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${rawToken}`,
+            Authorization: `Bearer ${rawFederationToken}`,
           },
           body: JSON.stringify({ mediaItemId: mediaId, requestedMode: 'direct' }),
           signal: AbortSignal.timeout(15000),
@@ -1259,21 +1362,34 @@ export async function nodeRoutes(
         return err('Media is not available for playback from this Home')
       }
 
-      // After the guard above, TypeScript narrows intentResult — help it along
       const readyResult = intentResult as Required<Pick<PlaybackIntentResult, 'streamUrl' | 'expiresAt'>> & PlaybackIntentResult
 
-      // 5. Build fresh proxy stream URL (the primary streamUrl — token never sent to browser)
+      // ── Step 9: build proxy stream URL ─────────────────────────────────────
       const proxyStreamUrl = `/api/v1/nodes/${nodeId}/media/${mediaId}/stream`
 
-      // 6. Compute refresh metadata
+      // ── Step 10: compute refresh metadata ──────────────────────────────────
       const now = new Date()
       const expiry = new Date(readyResult.expiresAt)
       const ttlSeconds = Math.max(0, Math.floor((expiry.getTime() - now.getTime()) / 1000))
       const fraction = ttlSeconds < 120 ? 0.5 : 0.75
       const refreshAfter = new Date(now.getTime() + ttlSeconds * fraction * 1000).toISOString()
 
-      // 7. Determine fallback — only expose directStreamUrl if node base_url is NOT private
-      //    This is a best-effort heuristic. If uncertain, we include a warning.
+      // ── Step 11: sign a FRESH refresh token (rotated nonce/iat/exp) ─────────
+      const signingSecret = resolvePlaybackRefreshSecret()
+      const freshRefreshToken = signPlaybackRefreshToken(
+        {
+          sub: resolvedUserId,
+          sid: resolvedSessionBinding,
+          nodeId,
+          mediaId,
+        },
+        signingSecret,
+        config.trustedHomePlaybackRefreshTokenTtlMs
+      )
+      // refreshUrl carries the signed token — it is scoped, time-limited, tamper-resistant
+      const refreshUrl = `/api/v1/nodes/${nodeId}/media/${mediaId}/playback-source?rt=${freshRefreshToken}`
+
+      // ── Step 12: determine fallback — only expose directStreamUrl when not private
       const warnings: string[] = []
       let fallbackStreamUrl: string | undefined
 
@@ -1283,12 +1399,14 @@ export async function nodeRoutes(
         warnings.push('Remote Home address appears to be on a private network — browser may not be able to reach it directly.')
       }
 
-      // 8. Build the PlaybackSource response — MUST NOT contain: token, Authorization,
-      //    remote base URL beyond streamUrl contents, filesystem path, upstream error body
+      // ── Step 13: build response ─────────────────────────────────────────────
+      // MUST NOT contain: federation token, Authorization value, filesystem path,
+      // remote base URL (beyond the directStreamUrl from the remote node itself),
+      // signing secret, raw upstream error, stack trace
       const source = {
         mode: 'trusted_home_proxy' as const,
         streamUrl: proxyStreamUrl,
-        refreshUrl: `/api/v1/nodes/${nodeId}/media/${mediaId}/playback-source`,
+        refreshUrl,
         recommended: true,
         expiresAt: readyResult.expiresAt,
         refreshAfter,
@@ -1300,8 +1418,7 @@ export async function nodeRoutes(
           supportsFallback: !!fallbackStreamUrl,
           supportsTranscode: false as const,
         },
-        // Also carry forward the fields the player expects from RemoteDirectPlaybackSource
-        // so existing player code continues to work
+        // Fields expected by RemoteDirectPlaybackSource shape in the player
         code: 'remote_direct' as const,
         sourceType: 'remote_direct' as const,
         nodeId,

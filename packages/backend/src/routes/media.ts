@@ -5,9 +5,10 @@ import { ok, err } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
 import type { MediaItemKind } from '@helix/shared'
 import { getPlaybackSource } from '../services/federation/sourceSelection'
-import { makeRequireAuth } from '../middleware/auth'
+import { makeRequireAuth, COOKIE_NAME } from '../middleware/auth'
 import { canViewLibrary, canPlayLibrary, getViewableLibraryIds } from '../lib/permissions'
 import { signArtworkToken } from '../lib/signedTokens'
+import { deriveSessionBinding } from '../services/federation/playbackRefreshToken'
 
 function artworkUrl(
   mediaItemId: string,
@@ -236,7 +237,12 @@ export async function mediaRoutes(
       return err('Playback not permitted for this library')
     }
 
-    const result = await getPlaybackSource(req.params.id, db, localNodeId, baseUrl ?? null, user.id, dataDir)
+    // Derive session binding from the raw cookie token so refreshUrl tokens are session-scoped.
+    // deriveSessionBinding hashes the raw token — it is never placed in the payload directly.
+    const rawSessionToken = req.cookies?.[COOKIE_NAME]
+    const sessionBinding = rawSessionToken ? deriveSessionBinding(rawSessionToken) : undefined
+
+    const result = await getPlaybackSource(req.params.id, db, localNodeId, baseUrl ?? null, user.id, dataDir, sessionBinding)
 
     // Strip filesystem path from local source — clients have no need for it
     // and leaking server paths is a security hygiene issue.

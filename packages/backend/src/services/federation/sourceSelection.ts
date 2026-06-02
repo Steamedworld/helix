@@ -5,7 +5,8 @@ import { mediaFiles, mediaVersions, nodes, mediaItems } from '../../db/schema'
 import { signStreamToken } from '../../lib/signedTokens'
 import type { NodeCapabilities } from './capabilities'
 import { decryptApiKey } from '../integrations/encryption'
-import { isLoopbackUrl, isPrivateUrl, config } from '../../config'
+import { isLoopbackUrl, isPrivateUrl, config, resolvePlaybackRefreshSecret } from '../../config'
+import { signPlaybackRefreshToken } from './playbackRefreshToken'
 
 // ─── Refresh metadata helpers ─────────────────────────────────────────────────
 
@@ -78,6 +79,10 @@ export interface RemoteDirectPlaybackSource {
   /**
    * Endpoint to call to get a fresh PlaybackSource when the proxy URL may be expiring.
    * Only present when proxyStreamUrl is set.
+   *
+   * Contains a short-lived HMAC-SHA256 signed token (?rt=...) scoped to the user,
+   * session, node, and media item. The token is time-limited and tamper-resistant.
+   * The frontend treats this URL as opaque — it must not parse or modify the ?rt param.
    */
   refreshUrl?: string
   /**
@@ -251,7 +256,9 @@ export async function getPlaybackSource(
   localNodeId: string,
   baseUrl: string | null,
   userId?: string,
-  dataDir?: string
+  dataDir?: string,
+  /** Session binding hash (SHA-256(rawToken)[0..31]) for signing refreshUrl tokens. */
+  sessionBinding?: string
 ): Promise<PlaybackSourceOrUnavailable> {
   const [item] = await db
     .select({ kind: mediaItems.kind })
@@ -360,10 +367,31 @@ export async function getPlaybackSource(
               ? `/api/v1/nodes/${remoteNodeId}/media/${mediaItemId}/stream`
               : undefined
 
-            // Refresh URL — endpoint for the player to get a fresh PlaybackSource
-            const refreshUrl = proxyStreamUrl
-              ? `/api/v1/nodes/${remoteNodeId}/media/${mediaItemId}/playback-source`
-              : undefined
+            // Refresh URL — endpoint for the player to get a fresh PlaybackSource.
+            // When userId and sessionBinding are available, embed a short-lived signed
+            // token (?rt=...) so the endpoint can authenticate without a session cookie.
+            // The token is scoped to this user, session, node, and media item.
+            let refreshUrl: string | undefined
+            if (proxyStreamUrl) {
+              const baseRefreshPath = `/api/v1/nodes/${remoteNodeId}/media/${mediaItemId}/playback-source`
+              if (userId && sessionBinding) {
+                try {
+                  const signingSecret = resolvePlaybackRefreshSecret()
+                  const rtToken = signPlaybackRefreshToken(
+                    { sub: userId, sid: sessionBinding, nodeId: remoteNodeId, mediaId: mediaItemId },
+                    signingSecret,
+                    config.trustedHomePlaybackRefreshTokenTtlMs
+                  )
+                  refreshUrl = `${baseRefreshPath}?rt=${rtToken}`
+                } catch {
+                  // If signing fails (e.g. misconfigured secret), fall back to plain URL
+                  refreshUrl = baseRefreshPath
+                }
+              } else {
+                // No session binding available — plain URL (session cookie required at refresh time)
+                refreshUrl = baseRefreshPath
+              }
+            }
 
             // Fallback direct URL — only expose if node.base_url is NOT a private/loopback
             // address. This is a best-effort heuristic: if the remote node is on a private IP,
