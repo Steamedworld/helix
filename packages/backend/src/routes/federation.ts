@@ -1112,4 +1112,116 @@ export async function federationRoutes(
       return ok({ accepted: true })
     }
   )
+
+  // ── Source-side remote progress read ──────────────────────────────────────────
+
+  /**
+   * GET /federation/media/:id/remote-progress
+   *
+   * Returns the most recent remote watch-progress record for a media item,
+   * scoped to the calling node (identified via federation token + X-Caller-Node-Id).
+   *
+   * Auth: federation Bearer token.
+   * Validation order:
+   *   1. Federation auth verified by requireFederationToken (401 if invalid)
+   *   2. Caller node must be remote + trusted + have progress_sync_enabled && allow_progress_receive → 403
+   *   3. Media item must belong to local node (proxy loop prevention) → 404
+   *   4. Query remote_watch_progress for caller node + media item
+   *
+   * NEVER returns: remote_viewer_hash, user IDs, paths, tokens, credentials,
+   * raw errors, stack traces, or upstream response body.
+   *
+   * Aggregate: if multiple viewer hashes exist for the same caller + media,
+   * returns the most recently updated row (v1 per-node aggregate).
+   */
+  app.get<{ Params: { id: string } }>(
+    '/media/:id/remote-progress',
+    { preHandler: requireFederationToken },
+    async (req, reply) => {
+      const mediaItemId = req.params.id
+
+      // ── Step 1: identify caller node ───────────────────────────────────────────
+      const callerNodeIdHeader = (req.headers['x-caller-node-id'] as string | undefined)?.trim() ?? ''
+
+      let callerNode: typeof nodes.$inferSelect | null = null
+      if (callerNodeIdHeader) {
+        const [row] = await db
+          .select()
+          .from(nodes)
+          .where(and(eq(nodes.id, callerNodeIdHeader), eq(nodes.kind, 'remote')))
+          .limit(1)
+        callerNode = row ?? null
+      }
+
+      if (!callerNode) {
+        reply.status(403)
+        return err('Caller node not identified — provide X-Caller-Node-Id header')
+      }
+
+      // ── Step 2: check bilateral opt-in ─────────────────────────────────────────
+      if (!callerNode.progress_sync_enabled || !callerNode.allow_progress_receive) {
+        reply.status(403)
+        return err('Progress sync not enabled for this connection.')
+      }
+
+      // ── Step 3: find local media item — must belong to local node ───────────────
+      const [item] = await db
+        .select({ id: mediaItems.id })
+        .from(mediaItems)
+        .innerJoin(libraries, eq(mediaItems.library_id, libraries.id))
+        .where(
+          and(
+            eq(mediaItems.id, mediaItemId),
+            eq(libraries.node_id, localNodeId)
+          )
+        )
+        .limit(1)
+
+      if (!item) {
+        reply.status(404)
+        return err('Media item not found')
+      }
+
+      // ── Step 4: query remote_watch_progress — aggregate by most recent updatedAt ─
+      // Multiple viewer hashes possible; return most recently updated row (v1 aggregate).
+      const rows = await db
+        .select({
+          position_seconds: remoteWatchProgress.position_seconds,
+          duration_seconds: remoteWatchProgress.duration_seconds,
+          watched: remoteWatchProgress.watched,
+          updated_at: remoteWatchProgress.updated_at,
+        })
+        .from(remoteWatchProgress)
+        .where(
+          and(
+            eq(remoteWatchProgress.source_node_id, callerNode.id),
+            eq(remoteWatchProgress.media_item_id, mediaItemId)
+          )
+        )
+
+      if (rows.length === 0) {
+        return ok({
+          mediaId: mediaItemId,
+          remoteProgress: { available: false as const },
+        })
+      }
+
+      // Pick the most recently updated row
+      const best = rows.reduce((a, b) =>
+        new Date(a.updated_at).getTime() >= new Date(b.updated_at).getTime() ? a : b
+      )
+
+      // MUST NOT include: remote_viewer_hash, user IDs, paths, tokens
+      return ok({
+        mediaId: mediaItemId,
+        remoteProgress: {
+          available: true as const,
+          positionSeconds: best.position_seconds,
+          durationSeconds: best.duration_seconds ?? null,
+          watched: best.watched === 1,
+          updatedAt: best.updated_at,
+        },
+      })
+    }
+  )
 }

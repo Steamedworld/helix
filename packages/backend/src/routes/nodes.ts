@@ -1201,6 +1201,162 @@ export async function nodeRoutes(
     handleNodeMediaStream
   )
 
+  // ─── Viewer-side remote progress proxy ────────────────────────────────────────
+
+  /**
+   * GET /nodes/:nodeId/media/:mediaId/remote-progress
+   *
+   * Proxies a remote watch-progress read from a Trusted Home to the authenticated user.
+   * The response represents what the source Home has stored for progress pushed from us.
+   *
+   * Auth: session cookie (standard user auth).
+   *
+   * Security:
+   *   - Requires session auth
+   *   - Node must be a remote Trusted Home
+   *   - Media item must belong to nodeId (cross-node confusion prevention)
+   *   - User must have can_play for the library (admins bypass)
+   *   - Node must have progress_sync_enabled && allow_progress_push (sync relationship established)
+   *   - Upstream URL built ONLY from stored node.base_url (SSRF prevention)
+   *   - Federation token is server-side only — never in browser response
+   *   - Upstream 401/403 → 502 with safe message (no auth detail leaked)
+   *   - Upstream 404 → { available: false } (not an error)
+   *   - Network/timeout/5xx → { available: false, error: 'source_unavailable' }
+   *   - NEVER includes: federation token, Authorization value, upstream body on error,
+   *     stack trace, remote base_url, filesystem path
+   */
+  app.get<{ Params: { nodeId: string; mediaId: string } }>(
+    '/:nodeId/media/:mediaId/remote-progress',
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      const { nodeId, mediaId } = req.params
+      const user = req.user!
+
+      // 1. Find node — must be remote Trusted Home
+      const [node] = await db.select().from(nodes).where(eq(nodes.id, nodeId))
+      if (!node) {
+        reply.status(404)
+        return err('Node not found')
+      }
+      if (node.kind !== 'remote' || !node.base_url || !node.api_token_encrypted) {
+        reply.status(404)
+        return err('Node not found')
+      }
+
+      // 2. Find media item — must belong to this node
+      const [item] = await db
+        .select({ id: mediaItems.id, library_id: mediaItems.library_id })
+        .from(mediaItems)
+        .innerJoin(libraries, eq(mediaItems.library_id, libraries.id))
+        .where(
+          and(
+            eq(mediaItems.id, mediaId),
+            eq(libraries.node_id, nodeId)
+          )
+        )
+
+      if (!item) {
+        reply.status(404)
+        return err('Media item not found')
+      }
+
+      // 3. Check can_play permission
+      const allowed = await canPlayLibrary(user, item.library_id, db)
+      if (!allowed) {
+        reply.status(403)
+        return err('Playback not permitted for this library')
+      }
+
+      // 4. Require progress sync relationship to be established (push means we send TO source)
+      if (!node.progress_sync_enabled || !node.allow_progress_push) {
+        // No sync relationship — return available:false (not an error)
+        return ok({ available: false as const })
+      }
+
+      // 5. Decrypt federation token (server-side only — never in response)
+      let rawToken: string
+      try {
+        rawToken = decryptApiKey(node.api_token_encrypted, dataDir)
+      } catch {
+        reply.status(502)
+        return err('Unable to access remote progress from this Home')
+      }
+
+      // 6. Build upstream URL from stored node.base_url ONLY (SSRF prevention)
+      const upstreamUrl = `${node.base_url}/api/v1/federation/media/${mediaId}/remote-progress`
+
+      // 7. Make upstream request
+      const controller = new AbortController()
+      const timeoutId = setTimeout(
+        () => controller.abort(),
+        config.trustedHomeProxyRequestTimeoutMs
+      )
+
+      let upstreamRes: Response
+      try {
+        upstreamRes = await fetch(upstreamUrl, {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${rawToken}`,
+            'X-Caller-Node-Id': localNodeId,
+          },
+          signal: controller.signal,
+        })
+      } catch {
+        clearTimeout(timeoutId)
+        // Network/timeout failure — safe degradation, do not surface details
+        return ok({ available: false as const, error: 'source_unavailable' as const })
+      } finally {
+        clearTimeout(timeoutId)
+      }
+
+      // 8. Map upstream status codes
+      if (upstreamRes.status === 401 || upstreamRes.status === 403) {
+        // Auth error — do NOT leak details
+        reply.status(502)
+        return err('Unable to access remote progress from this Home')
+      }
+
+      if (upstreamRes.status === 404) {
+        // No remote progress — not an error
+        return ok({ available: false as const })
+      }
+
+      if (upstreamRes.status >= 500 || !upstreamRes.ok) {
+        // Remote error — safe degradation
+        return ok({ available: false as const, error: 'source_unavailable' as const })
+      }
+
+      // 9. Parse upstream response — safely, never include raw error
+      let upstreamBody: { ok: boolean; data?: { mediaId?: string; remoteProgress?: { available: boolean; positionSeconds?: number; durationSeconds?: number | null; watched?: boolean; updatedAt?: string } } }
+      try {
+        upstreamBody = await upstreamRes.json() as typeof upstreamBody
+      } catch {
+        return ok({ available: false as const, error: 'source_unavailable' as const })
+      }
+
+      if (!upstreamBody.ok || !upstreamBody.data?.remoteProgress) {
+        return ok({ available: false as const, error: 'source_unavailable' as const })
+      }
+
+      const rp = upstreamBody.data.remoteProgress
+
+      if (!rp.available) {
+        return ok({ available: false as const })
+      }
+
+      // 10. Return safe progress fields only — NEVER federation token, Authorization,
+      //     base_url, upstream body on error, stack trace, or filesystem path
+      return ok({
+        available: true as const,
+        positionSeconds: typeof rp.positionSeconds === 'number' ? rp.positionSeconds : undefined,
+        durationSeconds: typeof rp.durationSeconds === 'number' ? rp.durationSeconds : undefined,
+        watched: typeof rp.watched === 'boolean' ? rp.watched : undefined,
+        updatedAt: typeof rp.updatedAt === 'string' ? rp.updatedAt : undefined,
+      })
+    }
+  )
+
   // ─── Playback source refresh endpoint ─────────────────────────────────────────
 
   /**

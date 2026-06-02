@@ -388,3 +388,57 @@ export function updateNodeSettings(nodeId: string, settings: NodeSettingsUpdateR
     body: JSON.stringify(settings),
   })
 }
+
+// ─── Remote progress ───────────────────────────────────────────────────────────
+
+export interface RemoteProgressResponse {
+  available: boolean
+  positionSeconds?: number
+  durationSeconds?: number
+  watched?: boolean
+  updatedAt?: string
+  error?: 'source_unavailable'
+}
+
+export function getRemoteProgress(nodeId: string, mediaId: string) {
+  return apiFetch<RemoteProgressResponse>(
+    `/api/v1/nodes/${nodeId}/media/${mediaId}/remote-progress`
+  )
+}
+
+// ─── Playback diagnostics (extended sync diagnostics) ─────────────────────────
+
+export interface PlaybackDiagnosticsRefreshTokenHealth {
+  state: 'explicit_secret' | 'derived_fallback' | 'dev_random' | 'missing'
+  ttlMs: number
+  recommendation: string | null
+}
+
+export interface PlaybackDiagnosticsResponse {
+  proxyEnabled: boolean
+  recentProxyFailures: {
+    remote_unreachable: number
+    remote_unauthorized: number
+    range_failed: number
+    proxy_disabled: number
+    unknown: number
+  }
+  refreshTokenHealth: PlaybackDiagnosticsRefreshTokenHealth
+  homesWithPlaybackIssue: number
+  homesWithProxyAvailable: number
+}
+
+export interface MediaTokenHealthEntry {
+  state: 'explicit_secret' | 'not_configured'
+  recommendation: string | null
+}
+
+export interface SecretsHealthResponseExtended {
+  playbackRefreshToken: RefreshSecretHealthEntry
+  mediaToken?: MediaTokenHealthEntry
+}
+
+export interface SyncDiagnosticsResponseExtended extends SyncDiagnosticsResponse {
+  secretsHealth?: SecretsHealthResponseExtended
+  playbackDiagnostics?: PlaybackDiagnosticsResponse
+}

@@ -23,7 +23,7 @@ import {
 } from '../api/nodes'
 import { getServerConfig } from '../api/config'
 import { getHealth } from '../api/health'
-import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic, RemotePlaybackDiagnostic, PlaybackIssueDiagnostic, InviteSummary, AcceptInviteResponse, AccessLibrarySummary, AccessUpdateGrant, SyncResponse, SyncDiagnosticsResponse, SyncDiagnosticsHomeEntry, RefreshSecretHealthEntry } from '../api/nodes'
+import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic, RemotePlaybackDiagnostic, PlaybackIssueDiagnostic, InviteSummary, AcceptInviteResponse, AccessLibrarySummary, AccessUpdateGrant, SyncResponse, SyncDiagnosticsResponse, SyncDiagnosticsHomeEntry, RefreshSecretHealthEntry, SyncDiagnosticsResponseExtended, PlaybackDiagnosticsResponse } from '../api/nodes'
 import type { ServerConfig } from '../api/config'
 import type { HealthResponse } from '../api/health'
 
@@ -623,6 +623,114 @@ function SyncDiagnosticsPanel({ diagnostics }: SyncDiagnosticsPanelProps) {
       {trustedHomeSync.length === 0 && (
         <div style={{ fontSize: 12, color: 'var(--ink-4)' }}>
           No trusted homes connected.
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Playback health panel ────────────────────────────────────────────────────
+
+function PlaybackHealthPanel({ playbackDiagnostics }: { playbackDiagnostics: PlaybackDiagnosticsResponse }) {
+  const { proxyEnabled, recentProxyFailures, refreshTokenHealth, homesWithPlaybackIssue, homesWithProxyAvailable } = playbackDiagnostics
+
+  const refreshStateLabel: Record<string, string> = {
+    explicit_secret: 'Explicit key (secure)',
+    derived_fallback: 'Derived fallback ⚠',
+    dev_random: 'Random per-restart ⚠',
+    missing: 'Not configured ✗',
+  }
+
+  const totalFailures = Object.values(recentProxyFailures).reduce((a, b) => a + b, 0)
+
+  return (
+    <div
+      style={{
+        marginTop: 10,
+        background: 'var(--bg-2)',
+        borderRadius: 'var(--r-1)',
+        padding: '10px 12px',
+        fontSize: 12,
+        color: 'var(--ink-3)',
+        lineHeight: 1.6,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+      }}
+    >
+      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink-2)', marginBottom: 4 }}>
+        Playback health
+      </div>
+      <div>
+        Remote playback proxy:{' '}
+        <span style={{ color: proxyEnabled ? 'var(--ok)' : 'var(--bad)', fontWeight: 500 }}>
+          {proxyEnabled ? 'enabled' : 'disabled'}
+        </span>
+        {!proxyEnabled && (
+          <span style={{ color: 'var(--ink-4)', marginLeft: 6, fontSize: 11 }}>
+            (set TRUSTED_HOME_PLAYBACK_PROXY_ENABLED=true to enable)
+          </span>
+        )}
+      </div>
+      <div>
+        Homes with active playback issue:{' '}
+        <span style={{ color: homesWithPlaybackIssue > 0 ? 'var(--bad)' : 'var(--ok)', fontWeight: 500 }}>
+          {homesWithPlaybackIssue}
+        </span>
+        <span style={{ color: 'var(--ink-4)', marginLeft: 4 }}>of {homesWithProxyAvailable} with proxy available</span>
+      </div>
+      <div>
+        Refresh token:{' '}
+        <span
+          style={{
+            fontWeight: 500,
+            color: refreshTokenHealth.state === 'explicit_secret' ? 'var(--ok)'
+              : refreshTokenHealth.state === 'missing' ? 'var(--bad)'
+              : '#e6a817',
+          }}
+        >
+          {refreshStateLabel[refreshTokenHealth.state] ?? refreshTokenHealth.state}
+        </span>
+      </div>
+      {(refreshTokenHealth.state === 'derived_fallback' || refreshTokenHealth.state === 'dev_random') && (
+        <div
+          style={{
+            fontSize: 11,
+            color: '#e6a817',
+            background: 'oklch(0.78 0.14 65 / 0.07)',
+            border: '1px solid oklch(0.78 0.14 65 / 0.25)',
+            borderRadius: 'var(--r-1)',
+            padding: '4px 8px',
+            marginTop: 2,
+          }}
+        >
+          {refreshTokenHealth.state === 'derived_fallback'
+            ? 'Set TRUSTED_HOME_PLAYBACK_REFRESH_SECRET for explicit key isolation.'
+            : 'Random per-process key in use (development only). Tokens do not survive server restarts.'}
+        </div>
+      )}
+      {totalFailures > 0 && (
+        <div style={{ marginTop: 2 }}>
+          <div style={{ color: 'var(--ink-4)', fontSize: 11, marginBottom: 2 }}>Proxy failure codes (active issues):</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {Object.entries(recentProxyFailures)
+              .filter(([, count]) => count > 0)
+              .map(([code, count]) => (
+                <span
+                  key={code}
+                  style={{
+                    fontSize: 11,
+                    padding: '1px 7px',
+                    background: 'oklch(0.70 0.13 25 / 0.07)',
+                    border: '1px solid oklch(0.70 0.13 25 / 0.20)',
+                    borderRadius: 10,
+                    color: 'var(--bad)',
+                  }}
+                >
+                  {code}: {count}
+                </span>
+              ))}
+          </div>
         </div>
       )}
     </div>
@@ -1919,24 +2027,85 @@ function TrustedHomeRow({ node, onDeleted, onUpdated, defaultOpenAccess = false 
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 24, fontSize: 12, color: 'var(--ink-4)' }}>
-        <span>Last seen: <RelativeTime ts={node.last_seen_at} /></span>
-        <span>Last sync: <RelativeTime ts={node.last_sync_at} /></span>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          Direct Play: <DirectPlaybackStatus capabilities={node.capabilities ?? null} />
-        </span>
+      {/* ── Remote Playback section ──────────────────────────────────── */}
+      <div
+        style={{
+          borderTop: '1px solid var(--border)',
+          paddingTop: 8,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 4,
+        }}
+      >
+        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--ink-4)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 }}>
+          Remote Playback
+        </div>
+        <div style={{ display: 'flex', gap: 24, fontSize: 12, color: 'var(--ink-4)' }}>
+          <span>Last seen: <RelativeTime ts={node.last_seen_at} /></span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            Direct Play: <DirectPlaybackStatus capabilities={node.capabilities ?? null} />
+          </span>
+        </div>
+        {diagnostic && <DiagnosticsPanel diagnostic={diagnostic} />}
+        {diagnostic?.remotePlayback && (
+          <RemotePlaybackPanel
+            remotePlayback={diagnostic.remotePlayback}
+            lastPlaybackIssue={node.lastPlaybackIssue}
+          />
+        )}
+        {!diagnostic && node.lastPlaybackIssue && (
+          <div
+            style={{
+              marginTop: 2,
+              padding: '5px 9px',
+              background: 'oklch(0.70 0.13 25 / 0.07)',
+              border: '1px solid oklch(0.70 0.13 25 / 0.20)',
+              borderRadius: 'var(--r-1)',
+              fontSize: 11,
+              color: 'var(--bad)',
+            }}
+          >
+            Last playback issue: {node.lastPlaybackIssue.safeMessage}
+          </div>
+        )}
       </div>
 
-      {diagnostic && <DiagnosticsPanel diagnostic={diagnostic} />}
-      {diagnostic?.remotePlayback && (
-        <RemotePlaybackPanel
-          remotePlayback={diagnostic.remotePlayback}
-          lastPlaybackIssue={node.lastPlaybackIssue}
-        />
-      )}
+      {/* ── Progress Sync section ─────────────────────────────────────── */}
+      <div
+        style={{
+          borderTop: '1px solid var(--border)',
+          paddingTop: 8,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 4,
+        }}
+      >
+        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--ink-4)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 }}>
+          Progress Sync
+        </div>
+        <ProgressSyncStatus node={node} onUpdated={onUpdated} />
+        <p style={{ fontSize: 11, color: 'var(--ink-4)', margin: 0, lineHeight: 1.5 }}>
+          Both Homes must opt in before progress sync works.
+        </p>
+      </div>
 
-      {/* Progress sync settings — admin only, per-node bilateral opt-in */}
-      <ProgressSyncStatus node={node} onUpdated={onUpdated} />
+      {/* ── Connection Health section ─────────────────────────────────── */}
+      <div
+        style={{
+          borderTop: '1px solid var(--border)',
+          paddingTop: 8,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 4,
+        }}
+      >
+        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--ink-4)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 }}>
+          Connection Health
+        </div>
+        <div style={{ display: 'flex', gap: 24, fontSize: 12, color: 'var(--ink-4)' }}>
+          <span>Last sync: <RelativeTime ts={node.last_sync_at} /></span>
+        </div>
+      </div>
 
       {node.last_error && (
         <div style={{ fontSize: 12, color: 'var(--bad)' }}>{node.last_error}</div>
@@ -2048,7 +2217,7 @@ export function Nodes() {
     }
   })
   const [showDiagnostics, setShowDiagnostics] = useState(false)
-  const [diagnostics, setDiagnostics] = useState<SyncDiagnosticsResponse | null>(null)
+  const [diagnostics, setDiagnostics] = useState<SyncDiagnosticsResponseExtended | null>(null)
   const [diagnosticsError, setDiagnosticsError] = useState(false)
 
   useEffect(() => {
@@ -2200,6 +2369,9 @@ export function Nodes() {
               <>
                 <SyncDiagnosticsPanel diagnostics={diagnostics} />
                 <SecretsHealthWarning health={diagnostics.secretsHealth?.playbackRefreshToken} />
+                {diagnostics.playbackDiagnostics && (
+                  <PlaybackHealthPanel playbackDiagnostics={diagnostics.playbackDiagnostics} />
+                )}
               </>
             ) : (
               <div style={{ fontSize: 12, color: 'var(--ink-4)' }}>Loading…</div>

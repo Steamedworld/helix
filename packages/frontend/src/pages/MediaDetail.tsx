@@ -10,11 +10,14 @@ import {
 import { searchMetadata, matchMetadata, refreshMetadata } from '../api/metadata'
 import { getNextEpisode } from '../api/tv'
 import { usePlaybackRefresh } from '../hooks/usePlaybackRefresh'
+import { getRemoteProgress } from '../api/nodes'
+import { deriveRemoteProgressSuggestion } from '../services/progressReconciliation'
 import type { MediaItemDetail } from '../api/media'
 import type { PlaybackSource, PlaybackCode, LocalPlaybackSource, RemoteDirectPlaybackSource } from '../api/playback'
 import type { MetadataCandidate } from '../api/metadata'
 import type { PlayableEpisode } from '../api/tv'
 import type { WatchState } from '@helix/shared'
+import type { RemoteProgressResponse } from '../api/nodes'
 
 // Save progress at most every N milliseconds
 const SAVE_DEBOUNCE_MS = 5000
@@ -639,6 +642,10 @@ export function MediaDetail() {
   const [isMissingFile, setIsMissingFile] = useState(false)
   const [proxyError, setProxyError] = useState<string | null>(null)
 
+  // Remote progress (for remote Trusted Home items)
+  const [remoteProgress, setRemoteProgress] = useState<RemoteProgressResponse | null>(null)
+  const [remoteProgressNodeId, setRemoteProgressNodeId] = useState<string | null>(null)
+
   // Up Next panel (episodes only)
   const [upNextEpisode, setUpNextEpisode] = useState<PlayableEpisode | null>(null)
   const [showFinished, setShowFinished] = useState(false)
@@ -686,6 +693,33 @@ export function MediaDetail() {
       setSourceLoading(false)
     })
   }, [id])
+
+  // Remote progress fetch: quietly load remote progress for remote Trusted Home items.
+  // On success with a "use_remote" suggestion, we surface an action to the user.
+  // On failure (any error), we set available:false silently — never break playback.
+  useEffect(() => {
+    if (!id) return
+    // Only fetch once we know the source is a remote item
+    if (!sourceCode || sourceCode !== 'remote_direct') return
+    if (!rawPlaybackSource || rawPlaybackSource.code !== 'remote_direct') return
+    const remoteSource = rawPlaybackSource as RemoteDirectPlaybackSource
+    if (!remoteSource.nodeId) return
+
+    const nodeId = remoteSource.nodeId
+    setRemoteProgressNodeId(nodeId)
+
+    getRemoteProgress(nodeId, id).then((res) => {
+      if (res.ok) {
+        setRemoteProgress(res.data)
+      } else {
+        // Fetch failed — silently degrade
+        setRemoteProgress({ available: false })
+      }
+    }).catch(() => {
+      setRemoteProgress({ available: false })
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, sourceCode, rawPlaybackSource?.code])
 
   // Playback refresh: wraps the raw source with proactive token refresh logic.
   // Only active for local and remote_direct sources that carry refreshAfter metadata.
@@ -785,6 +819,21 @@ export function MediaDetail() {
     setShowUpNextPanel(false)
     setUpNextEpisode(null)
     setShowFinished(false)
+  }
+
+  // User-initiated: apply remote progress position (never auto-applied)
+  async function handleUseRemotePosition() {
+    if (!id || !remoteProgress?.available) return
+    if (typeof remoteProgress.positionSeconds !== 'number') return
+    const res = await upsertWatchState(id, {
+      position_seconds: remoteProgress.positionSeconds,
+      duration_seconds: remoteProgress.durationSeconds,
+      completed: remoteProgress.watched ?? false,
+    })
+    if (res.ok) {
+      setWatchState(res.data)
+      setRemoteProgress(null) // dismiss suggestion after applying
+    }
   }
 
   async function handleRefreshMetadata() {
@@ -1274,17 +1323,72 @@ export function MediaDetail() {
                 : `${Math.round(watchState.position_seconds)}s watched`}
             </p>
             {/* Federated progress sync status — quiet, non-obtrusive */}
-            {watchState.progress_push_status === 'synced' && (
-              <p style={{ fontSize: 11, color: 'var(--ink-4)' }}>Progress synced</p>
-            )}
-            {(watchState.progress_push_status === 'failed' ||
-              watchState.progress_push_status === 'source_unavailable') && (
-              <p style={{ fontSize: 11, color: 'var(--ink-4)' }}>Progress sync unavailable</p>
-            )}
-            {(!watchState.progress_push_status ||
-              watchState.progress_push_status === 'not_enabled') && (
-              <p style={{ fontSize: 11, color: 'var(--ink-4)' }}>Progress stored locally</p>
-            )}
+            {(() => {
+              // Derive remote progress suggestion for display
+              const localSnapshot = watchState ? {
+                positionSeconds: watchState.position_seconds,
+                durationSeconds: watchState.duration_seconds ?? null,
+                watched: watchState.completed,
+                updatedAt: watchState.updated_at ?? null,
+              } : null
+              // Build a typed RemoteInput from the response — available:true gives a ProgressSnapshot,
+              // available:false (or null) gives the no-remote sentinel.
+              const remoteInput: import('../services/progressReconciliation').ProgressSnapshot | { available: false } | null =
+                remoteProgress?.available && typeof remoteProgress.positionSeconds === 'number'
+                  ? {
+                      positionSeconds: remoteProgress.positionSeconds,
+                      durationSeconds: remoteProgress.durationSeconds ?? null,
+                      watched: remoteProgress.watched ?? false,
+                      updatedAt: remoteProgress.updatedAt ?? null,
+                    }
+                  : remoteProgress
+                    ? { available: false as const }
+                    : null
+              const suggestion = deriveRemoteProgressSuggestion(localSnapshot, remoteInput)
+
+              if (suggestion.suggestion === 'use_remote' && remoteProgress?.available && typeof remoteProgress.positionSeconds === 'number') {
+                return (
+                  <div
+                    style={{
+                      padding: '8px 12px',
+                      background: 'rgba(100,120,200,0.08)',
+                      border: '1px solid rgba(100,120,200,0.25)',
+                      borderRadius: 'var(--r-2)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 6,
+                    }}
+                  >
+                    <p style={{ fontSize: 12, color: 'var(--ink-2)', fontWeight: 500 }}>
+                      Remote progress available — Resume from {Math.floor(remoteProgress.positionSeconds / 60)}m {Math.round(remoteProgress.positionSeconds % 60)}s
+                    </p>
+                    <button
+                      onClick={handleUseRemotePosition}
+                      className="btn btn-sm btn-primary"
+                      style={{ alignSelf: 'flex-start', fontSize: 12 }}
+                    >
+                      Use remote position
+                    </button>
+                    <p style={{ fontSize: 11, color: 'var(--ink-4)' }}>Remote progress available</p>
+                  </div>
+                )
+              }
+
+              // Standard sync status display
+              if (watchState.progress_push_status === 'synced') {
+                return <p style={{ fontSize: 11, color: 'var(--ink-4)' }}>Progress synced</p>
+              }
+              if (
+                watchState.progress_push_status === 'failed' ||
+                watchState.progress_push_status === 'source_unavailable'
+              ) {
+                return <p style={{ fontSize: 11, color: 'var(--ink-4)' }}>Progress sync unavailable</p>
+              }
+              if (!watchState.progress_push_status || watchState.progress_push_status === 'not_enabled') {
+                return <p style={{ fontSize: 11, color: 'var(--ink-4)' }}>Progress stored locally</p>
+              }
+              return null
+            })()}
           </div>
         ) : (
           <p style={{ fontSize: 13, color: 'var(--ink-3)' }}>Not started</p>

@@ -8,6 +8,11 @@ import { computeSyncSafetyEstimate } from '../services/federation/catalogSync'
 import { deriveSyncHealth } from '../services/federation/syncHealthRollup'
 import { config, getPlaybackRefreshSecretHealth } from '../config'
 
+// Safe label for MEDIA_TOKEN_SECRET health
+function getMediaTokenSecretHealth(): 'explicit_secret' | 'not_configured' {
+  return process.env.MEDIA_TOKEN_SECRET ? 'explicit_secret' : 'not_configured'
+}
+
 export async function adminRoutes(
   app: FastifyInstance,
   opts: { db: DrizzleDB }
@@ -179,6 +184,72 @@ export async function adminRoutes(
         state: playbackRefreshState,
         ...(playbackRefreshRecommendation !== null ? { recommendation: playbackRefreshRecommendation } : {}),
       },
+      mediaToken: {
+        state: getMediaTokenSecretHealth(),
+        recommendation:
+          getMediaTokenSecretHealth() === 'not_configured'
+            ? 'Set MEDIA_TOKEN_SECRET for signed media token signing key isolation.'
+            : null,
+      },
+    }
+
+    // ─── Playback diagnostics ───────────────────────────────────────────────────
+    // State only — MUST NOT expose secret values, node IDs in histograms, paths, tokens,
+    // raw errors, or env var contents.
+
+    const proxyEnabled = config.trustedHomePlaybackProxyEnabled
+
+    // Count remote nodes with active playback issue (code IS NOT NULL)
+    const homesWithIssueRows = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(nodes)
+      .where(sql`${nodes.kind} = 'remote' AND ${nodes.last_playback_issue_code} IS NOT NULL`)
+    const homesWithPlaybackIssue = Number(homesWithIssueRows[0].count)
+
+    // Count remote nodes with valid base_url (proxy potentially available)
+    const homesWithProxyRows = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(nodes)
+      .where(sql`${nodes.kind} = 'remote' AND ${nodes.base_url} IS NOT NULL`)
+    const homesWithProxyAvailable = Number(homesWithProxyRows[0].count)
+
+    // Aggregate last_playback_issue_code counts across all remote nodes (per-code histogram)
+    // NEVER include node IDs in the histogram
+    const issueCodeRows = await db
+      .select({
+        code: nodes.last_playback_issue_code,
+        count: sql<number>`count(*)`,
+      })
+      .from(nodes)
+      .where(sql`${nodes.kind} = 'remote' AND ${nodes.last_playback_issue_code} IS NOT NULL`)
+      .groupBy(nodes.last_playback_issue_code)
+
+    const recentProxyFailures: Record<string, number> = {
+      remote_unreachable: 0,
+      remote_unauthorized: 0,
+      range_failed: 0,
+      proxy_disabled: 0,
+      unknown: 0,
+    }
+    for (const row of issueCodeRows) {
+      const code = row.code ?? 'unknown'
+      if (code in recentProxyFailures) {
+        recentProxyFailures[code] = Number(row.count)
+      } else {
+        recentProxyFailures['unknown'] = (recentProxyFailures['unknown'] ?? 0) + Number(row.count)
+      }
+    }
+
+    const playbackDiagnostics = {
+      proxyEnabled,
+      recentProxyFailures,
+      refreshTokenHealth: {
+        state: playbackRefreshState,
+        ttlMs: config.trustedHomePlaybackRefreshTokenTtlMs,
+        recommendation: playbackRefreshRecommendation,
+      },
+      homesWithPlaybackIssue,
+      homesWithProxyAvailable,
     }
 
     return ok({
@@ -198,6 +269,7 @@ export async function adminRoutes(
       },
       trustedHomeSync,
       secretsHealth,
+      playbackDiagnostics,
     })
   })
 }

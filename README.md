@@ -8,6 +8,15 @@ A self-hosted media hub. Simpler than Plex, prettier than Jellyfin. Scans your l
 
 ---
 
+## Documentation
+
+- [Trusted Home overview](docs/TRUSTED_HOME.md)
+- [Remote Playback Security](docs/REMOTE_PLAYBACK_SECURITY.md)
+- [Federated Progress Sync](docs/FEDERATED_PROGRESS_SYNC.md)
+- [Production Configuration](docs/PRODUCTION_CONFIG.md)
+
+---
+
 ## Non-goals
 
 Helix is intentionally scoped. It does not and will not:
