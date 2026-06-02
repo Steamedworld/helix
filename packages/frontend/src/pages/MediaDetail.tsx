@@ -166,6 +166,7 @@ interface PlayerProps {
   isRefreshing?: boolean
   onManualRetry?: () => void
   onProxyError?: () => void
+  onSwitchToFallback?: () => void
 }
 
 function isLocalSource(source: PlaybackSource): source is LocalPlaybackSource {
@@ -186,6 +187,7 @@ function DirectPlayer({
   refreshError,
   onManualRetry,
   onProxyError,
+  onSwitchToFallback,
 }: PlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const sessionIdRef = useRef<string | null>(null)
@@ -432,6 +434,35 @@ function DirectPlayer({
           {source.warning}
         </div>
       )}
+      {/* Fallback button — only shown after proxy error, user-initiated, never auto-applied */}
+      {isRemoteDirectSource(source) && source.directStreamUrl && onSwitchToFallback && (
+        <div
+          style={{
+            marginTop: 6,
+            padding: '8px 12px',
+            background: 'rgba(100,120,200,0.07)',
+            border: '1px solid rgba(100,120,200,0.2)',
+            borderRadius: 'var(--r-2)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 4,
+          }}
+        >
+          <span style={{ fontSize: 12, color: 'var(--ink-2)', fontWeight: 500 }}>
+            Try direct playback from Trusted Home
+          </span>
+          <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+            Your browser may be able to reach that Home directly.
+          </span>
+          <button
+            onClick={onSwitchToFallback}
+            className="btn btn-sm btn-ghost"
+            style={{ alignSelf: 'flex-start', fontSize: 12, marginTop: 4 }}
+          >
+            Switch to direct playback
+          </button>
+        </div>
+      )}
       {/* Refresh error — only shown when expiry metadata is present (new server) */}
       {refreshError && source.refreshAfter && (
         <div
@@ -669,11 +700,34 @@ export function MediaDetail() {
     isRefreshing,
   } = usePlaybackRefresh(refreshableSource, id ?? '')
 
-  // Proxy error: the local server couldn't reach the Trusted Home
+  // Whether user has chosen to switch to direct fallback
+  const [usingFallback, setUsingFallback] = useState(false)
+  // The active source — may be switched to a fallback version with directStreamUrl as streamUrl
+  const [fallbackSource, setFallbackSource] = useState<typeof playbackSource>(null)
+
+  // Proxy error: the local server couldn’t reach the Trusted Home
   function handleProxyError() {
     setProxyError(
       "This Home couldn’t reach the Trusted Home. The remote Home may be offline."
     )
+  }
+
+  // User-initiated: switch to direct stream URL (never auto-applied)
+  function handleSwitchToFallback() {
+    if (!playbackSource) return
+    if (playbackSource.code !== 'remote_direct') return
+    if (!(playbackSource as RemoteDirectPlaybackSource).directStreamUrl) return
+    // Create a patched source that uses directStreamUrl as primary streamUrl
+    const switched = {
+      ...playbackSource,
+      streamUrl: playbackSource.directStreamUrl,
+      proxyStreamUrl: undefined,
+      refreshUrl: undefined,
+      directStreamUrl: undefined,
+    }
+    setFallbackSource(switched as typeof playbackSource)
+    setUsingFallback(true)
+    setProxyError(null)
   }
 
   // Manual retry: re-fetch the playback source from scratch
@@ -1155,7 +1209,7 @@ export function MediaDetail() {
         ) : playbackSource ? (
           <>
             <DirectPlayer
-              source={playbackSource}
+              source={usingFallback && fallbackSource ? fallbackSource : playbackSource}
               mediaItemId={item.id}
               mediaItemKind={item.kind}
               initialPosition={savedPosition}
@@ -1164,6 +1218,11 @@ export function MediaDetail() {
               refreshError={refreshError}
               onManualRetry={handleManualRetry}
               onProxyError={handleProxyError}
+              onSwitchToFallback={
+                !usingFallback && playbackSource?.code === 'remote_direct' && playbackSource.directStreamUrl
+                  ? handleSwitchToFallback
+                  : undefined
+              }
             />
             {proxyError && (
               <div

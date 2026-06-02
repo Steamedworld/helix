@@ -11,7 +11,7 @@ import { syncInProgress } from '../services/federation/trustedHomeSyncScheduler'
 import { classifySyncError } from '../services/federation/syncErrorClassifier'
 import { canViewLibrary, canPlayLibrary } from '../lib/permissions'
 import { fetchRemoteCapabilities, type NodeCapabilities } from '../services/federation/capabilities'
-import { isLoopbackUrl, config } from '../config'
+import { isLoopbackUrl, isPrivateUrl, config } from '../config'
 
 type NodeRow = typeof nodes.$inferSelect
 
@@ -20,11 +20,30 @@ function sanitizeNode(node: NodeRow) {
   const capabilities = node.capabilities_json
     ? (() => { try { return JSON.parse(node.capabilities_json) } catch { return null } })()
     : null
+
+  // Build lastPlaybackIssue diagnostic — MUST NOT include token, Authorization,
+  // remote URL, upstream response body, stack trace, or file path.
+  // Only expose when there is an active issue (code is non-null).
+  const lastPlaybackIssue = node.last_playback_issue_code
+    ? {
+        at: node.last_playback_issue_at ?? new Date().toISOString(),
+        mode: node.last_playback_issue_mode ?? 'trusted_home_proxy',
+        code: node.last_playback_issue_code as
+          | 'remote_unreachable'
+          | 'remote_unauthorized'
+          | 'range_failed'
+          | 'proxy_disabled'
+          | 'unknown',
+        safeMessage: node.last_playback_issue_message ?? 'Playback from Remote Home failed.',
+      }
+    : null
+
   return {
     ...rest,
     has_federation_token:
       node.kind === 'local' ? !!node.federation_token_hash : !!node.api_token_encrypted,
     capabilities,
+    lastPlaybackIssue,
   }
 }
 
@@ -862,6 +881,77 @@ export async function nodeRoutes(
   // ─── Trusted Home playback proxy ──────────────────────────────────────────────
 
   /**
+   * Classify a proxy upstream failure into a safe diagnostic code.
+   * Must not include token, URL, path, or upstream response body.
+   */
+  function classifyPlaybackError(fetchErr: unknown, upstreamStatus?: number): {
+    code: 'remote_unreachable' | 'remote_unauthorized' | 'range_failed' | 'proxy_disabled' | 'unknown'
+    safeMessage: string
+  } {
+    if (upstreamStatus === 401 || upstreamStatus === 403) {
+      return { code: 'remote_unauthorized', safeMessage: 'Remote Home rejected the playback request (auth error).' }
+    }
+    if (upstreamStatus === 416) {
+      return { code: 'range_failed', safeMessage: 'Remote Home could not satisfy the byte range request.' }
+    }
+    if (upstreamStatus !== undefined && upstreamStatus >= 500) {
+      return { code: 'remote_unreachable', safeMessage: 'Remote Home is temporarily unavailable.' }
+    }
+    if (fetchErr instanceof Error) {
+      const msg = fetchErr.message.toLowerCase()
+      if (msg.includes('abort') || msg.includes('timeout')) {
+        return { code: 'remote_unreachable', safeMessage: 'Remote Home did not respond in time.' }
+      }
+      if (msg.includes('econnrefused') || msg.includes('enotfound') || msg.includes('network')) {
+        return { code: 'remote_unreachable', safeMessage: 'Could not connect to Remote Home.' }
+      }
+    }
+    return { code: 'unknown', safeMessage: 'Playback from Remote Home failed.' }
+  }
+
+  /**
+   * Record a playback failure on the node row.
+   * MUST NOT store token, Authorization, remote URL, upstream response body, stack trace, or file path.
+   */
+  async function recordPlaybackIssue(
+    nodeId: string,
+    mode: string,
+    code: string,
+    safeMessage: string
+  ) {
+    try {
+      await db
+        .update(nodes)
+        .set({
+          last_playback_issue_at: new Date().toISOString(),
+          last_playback_issue_mode: mode,
+          last_playback_issue_code: code,
+          last_playback_issue_message: safeMessage,
+        })
+        .where(eq(nodes.id, nodeId))
+    } catch {
+      // Non-fatal — do not rethrow
+    }
+  }
+
+  /**
+   * Clear the active playback issue on success (preserve _at timestamp).
+   */
+  async function clearPlaybackIssue(nodeId: string) {
+    try {
+      await db
+        .update(nodes)
+        .set({
+          last_playback_issue_code: null,
+          last_playback_issue_message: null,
+        })
+        .where(eq(nodes.id, nodeId))
+    } catch {
+      // Non-fatal — do not rethrow
+    }
+  }
+
+  /**
    * GET  /nodes/:nodeId/media/:mediaId/stream
    * HEAD /nodes/:nodeId/media/:mediaId/stream
    *
@@ -877,6 +967,8 @@ export async function nodeRoutes(
    *   - Only forwards Range header upstream; never forwards auth or other browser headers
    *   - Strips all credential/auth headers from upstream response
    *   - Returns 503 if proxy feature is disabled
+   *   - Records playback failure diagnostics on upstream errors (never stores token/URL/path/body)
+   *   - Clears active playback issue on success
    */
   async function handleNodeMediaStream(
     req: import('fastify').FastifyRequest<{ Params: { nodeId: string; mediaId: string } }>,
@@ -965,6 +1057,8 @@ export async function nodeRoutes(
       )
     } catch (fetchErr) {
       clearTimeout(timeoutId)
+      const classified = classifyPlaybackError(fetchErr)
+      void recordPlaybackIssue(nodeId, 'trusted_home_proxy', classified.code, classified.safeMessage)
       reply.status(502)
       return err('Unable to reach this Home')
     } finally {
@@ -975,6 +1069,8 @@ export async function nodeRoutes(
     const upstreamStatus = upstreamRes.status
 
     if (upstreamStatus === 401 || upstreamStatus === 403) {
+      const classified = classifyPlaybackError(null, upstreamStatus)
+      void recordPlaybackIssue(nodeId, 'trusted_home_proxy', classified.code, classified.safeMessage)
       reply.status(502)
       return err('Unable to access media from this Home')
     }
@@ -988,16 +1084,22 @@ export async function nodeRoutes(
       // Forward 416 with Content-Range if present
       const cr = upstreamRes.headers.get('content-range')
       if (cr) reply.header('Content-Range', cr)
+      const classified = classifyPlaybackError(null, upstreamStatus)
+      void recordPlaybackIssue(nodeId, 'trusted_home_proxy', classified.code, classified.safeMessage)
       reply.status(416)
       return reply.send()
     }
 
     if (upstreamStatus >= 500) {
+      const classified = classifyPlaybackError(null, upstreamStatus)
+      void recordPlaybackIssue(nodeId, 'trusted_home_proxy', classified.code, classified.safeMessage)
       reply.status(502)
       return err('Remote Home is temporarily unavailable')
     }
 
     if (upstreamStatus !== 200 && upstreamStatus !== 206) {
+      const classified = classifyPlaybackError(null, upstreamStatus)
+      void recordPlaybackIssue(nodeId, 'trusted_home_proxy', classified.code, classified.safeMessage)
       reply.status(502)
       return err('Remote Home is temporarily unavailable')
     }
@@ -1012,6 +1114,9 @@ export async function nodeRoutes(
     }
 
     reply.status(upstreamStatus)
+
+    // Clear active playback issue on success
+    void clearPlaybackIssue(nodeId)
 
     // HEAD: headers only, no body
     if (req.method === 'HEAD') {
@@ -1043,5 +1148,172 @@ export async function nodeRoutes(
     '/:nodeId/media/:mediaId/stream',
     { preHandler: requireAuth },
     handleNodeMediaStream
+  )
+
+  // ─── Playback source refresh endpoint ─────────────────────────────────────────
+
+  /**
+   * GET /nodes/:nodeId/media/:mediaId/playback-source
+   *
+   * Returns a fresh PlaybackSource for a remote media item.
+   * Called by the player when the existing signed URL is about to expire.
+   *
+   * Security:
+   *   - Requires session auth (same as proxy stream)
+   *   - Verifies node is a remote Trusted Home
+   *   - Verifies mediaItem.library belongs to nodeId (cross-node confusion prevention)
+   *   - Checks can_play permission for the remote library (admins bypass)
+   *   - Returns 503 if proxy is disabled
+   *   - Response MUST NOT contain: decrypted token, Authorization value, remote base URL,
+   *     filesystem path, raw upstream error, stack trace
+   */
+  app.get<{ Params: { nodeId: string; mediaId: string } }>(
+    '/:nodeId/media/:mediaId/playback-source',
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      if (!config.trustedHomePlaybackProxyEnabled) {
+        reply.status(503)
+        return err('Trusted Home playback proxy is disabled')
+      }
+
+      const { nodeId, mediaId } = req.params
+      const user = req.user!
+
+      // 1. Find node — must be a remote Trusted Home
+      const [node] = await db.select().from(nodes).where(eq(nodes.id, nodeId))
+      if (!node) {
+        reply.status(404)
+        return err('Node not found')
+      }
+      if (node.kind !== 'remote' || !node.base_url || !node.api_token_encrypted) {
+        reply.status(404)
+        return err('Node not found')
+      }
+
+      // 2. Find media item — must belong to this node (cross-node confusion prevention)
+      const [item] = await db
+        .select({ id: mediaItems.id, library_id: mediaItems.library_id })
+        .from(mediaItems)
+        .innerJoin(libraries, eq(mediaItems.library_id, libraries.id))
+        .where(
+          and(
+            eq(mediaItems.id, mediaId),
+            eq(libraries.node_id, nodeId)
+          )
+        )
+
+      if (!item) {
+        reply.status(404)
+        return err('Media item not found')
+      }
+
+      // 3. Check can_play permission (admins bypass)
+      const allowed = await canPlayLibrary(user, item.library_id, db)
+      if (!allowed) {
+        reply.status(403)
+        return err('Playback not permitted for this library')
+      }
+
+      // 4. Build a fresh PlaybackSource using the existing source selection logic.
+      //    We call the federation playback-intent endpoint server-side.
+      let rawToken: string
+      try {
+        rawToken = decryptApiKey(node.api_token_encrypted, dataDir)
+      } catch {
+        reply.status(502)
+        return err('Unable to access media from this Home')
+      }
+
+      interface PlaybackIntentResult {
+        status: 'ready' | 'unavailable' | 'unsupported'
+        streamUrl?: string
+        expiresAt?: string
+        mediaFileId?: string
+        contentType?: string | null
+        container?: string | null
+      }
+
+      let intentResult: PlaybackIntentResult | null = null
+
+      try {
+        const res = await fetch(`${node.base_url}/api/v1/federation/playback-intent`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${rawToken}`,
+          },
+          body: JSON.stringify({ mediaItemId: mediaId, requestedMode: 'direct' }),
+          signal: AbortSignal.timeout(15000),
+        })
+        if (res.ok) {
+          const json = await res.json() as { ok: boolean; data: PlaybackIntentResult }
+          if (json.ok) intentResult = json.data
+        }
+      } catch {
+        reply.status(502)
+        return err('Unable to reach this Home')
+      }
+
+      if (!intentResult || intentResult.status !== 'ready' || !intentResult.streamUrl || !intentResult.expiresAt) {
+        reply.status(503)
+        return err('Media is not available for playback from this Home')
+      }
+
+      // After the guard above, TypeScript narrows intentResult — help it along
+      const readyResult = intentResult as Required<Pick<PlaybackIntentResult, 'streamUrl' | 'expiresAt'>> & PlaybackIntentResult
+
+      // 5. Build fresh proxy stream URL (the primary streamUrl — token never sent to browser)
+      const proxyStreamUrl = `/api/v1/nodes/${nodeId}/media/${mediaId}/stream`
+
+      // 6. Compute refresh metadata
+      const now = new Date()
+      const expiry = new Date(readyResult.expiresAt)
+      const ttlSeconds = Math.max(0, Math.floor((expiry.getTime() - now.getTime()) / 1000))
+      const fraction = ttlSeconds < 120 ? 0.5 : 0.75
+      const refreshAfter = new Date(now.getTime() + ttlSeconds * fraction * 1000).toISOString()
+
+      // 7. Determine fallback — only expose directStreamUrl if node base_url is NOT private
+      //    This is a best-effort heuristic. If uncertain, we include a warning.
+      const warnings: string[] = []
+      let fallbackStreamUrl: string | undefined
+
+      if (!isPrivateUrl(node.base_url)) {
+        fallbackStreamUrl = readyResult.streamUrl
+      } else {
+        warnings.push('Remote Home address appears to be on a private network — browser may not be able to reach it directly.')
+      }
+
+      // 8. Build the PlaybackSource response — MUST NOT contain: token, Authorization,
+      //    remote base URL beyond streamUrl contents, filesystem path, upstream error body
+      const source = {
+        mode: 'trusted_home_proxy' as const,
+        streamUrl: proxyStreamUrl,
+        refreshUrl: `/api/v1/nodes/${nodeId}/media/${mediaId}/playback-source`,
+        recommended: true,
+        expiresAt: readyResult.expiresAt,
+        refreshAfter,
+        tokenTtlSeconds: ttlSeconds,
+        warnings,
+        capabilities: {
+          supportsRange: true,
+          supportsRefresh: true,
+          supportsFallback: !!fallbackStreamUrl,
+          supportsTranscode: false as const,
+        },
+        // Also carry forward the fields the player expects from RemoteDirectPlaybackSource
+        // so existing player code continues to work
+        code: 'remote_direct' as const,
+        sourceType: 'remote_direct' as const,
+        nodeId,
+        nodeName: node.name,
+        proxyStreamUrl,
+        ...(fallbackStreamUrl ? { directStreamUrl: fallbackStreamUrl } : {}),
+        mediaFileId: readyResult.mediaFileId ?? '',
+        contentType: readyResult.contentType ?? null,
+        container: readyResult.container ?? null,
+      }
+
+      return ok(source)
+    }
   )
 }

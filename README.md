@@ -358,12 +358,22 @@ The browser contacts the Trusted Home server directly using a short-lived signed
 6. **No raw upstream errors** — all upstream failures map to safe messages; upstream error bodies and stack traces are never forwarded.
 7. **Abort on disconnect** — the upstream fetch is aborted when the browser disconnects; no dangling connections.
 
-#### Limitations
+#### Trusted Home Playback — Continuity
 
+Proxy playback sessions are durable for long watching sessions:
+
+- **Automatic refresh** — the player proactively refreshes its proxy source before the signed URL expires. For remote proxy sources, a dedicated `refreshUrl` is used (`GET /api/v1/nodes/:nodeId/media/:mediaId/playback-source`) instead of refetching the general playback-source endpoint. Refresh happens at 75% of the token TTL; on tab wake the player checks immediately if the window has passed.
+- **Remote watch progress** — progress is stored on your local Home against the local imported `media_item.id`. The source Home is never mutated. Continue Watching includes remote items where you have `can_view` access.
+- **Playback failure diagnostics** — when the proxy stream handler encounters an upstream failure, a safe diagnostic code and message are recorded on the node row (`last_playback_issue_code`, `last_playback_issue_message`). These are cleared automatically on the next successful stream. Admins can see the last issue on the Trusted Homes page. The diagnostic never includes tokens, remote URLs, upstream response bodies, stack traces, or file paths.
+- **Direct fallback (user-initiated)** — when the proxy fails and the source Home's address appears to be publicly reachable (not a private/loopback IP), the player offers a "Try direct playback" button. The user must explicitly click it — auto-fallback is intentionally not implemented. If the source Home is on a private network (10.x, 192.168.x, 172.16-31.x), no fallback URL is offered.
+
+**Limitations:**
 - No transcoding — the format must be natively supported by your browser.
 - In proxy mode, bandwidth passes through both Homes' connections.
 - The source Home must be reachable by your local Helix server's network (not necessarily from your browser).
 - If the source Home is offline, playback is unavailable regardless of mode.
+- Remote watch progress is stored locally only — it is not synced back to the source Home.
+- Direct fallback depends on browser reachability to the source Home's network address.
 
 #### syncStatus field
 

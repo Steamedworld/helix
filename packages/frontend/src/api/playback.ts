@@ -56,7 +56,16 @@ export interface RemoteDirectPlaybackSource {
    * The browser calls the local Helix server which relays the stream server-to-server.
    */
   proxyStreamUrl?: string
-  /** Direct stream URL from the remote node. Requires remote to be browser-reachable. */
+  /**
+   * Endpoint to call to get a fresh PlaybackSource before the proxy URL expires.
+   * Only present when proxyStreamUrl is set.
+   */
+  refreshUrl?: string
+  /**
+   * Direct stream URL from the remote node — only present when the source Home's
+   * address appears to be publicly reachable (not private/loopback).
+   * The player MUST NOT auto-switch to this URL — user must explicitly choose.
+   */
   directStreamUrl?: string
   /** Informational warning — does not block playback. Present when the stream URL
    *  points to a loopback address that remote browsers may not be able to reach. */

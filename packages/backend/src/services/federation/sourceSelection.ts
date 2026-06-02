@@ -5,7 +5,7 @@ import { mediaFiles, mediaVersions, nodes, mediaItems } from '../../db/schema'
 import { signStreamToken } from '../../lib/signedTokens'
 import type { NodeCapabilities } from './capabilities'
 import { decryptApiKey } from '../integrations/encryption'
-import { isLoopbackUrl, config } from '../../config'
+import { isLoopbackUrl, isPrivateUrl, config } from '../../config'
 
 // ─── Refresh metadata helpers ─────────────────────────────────────────────────
 
@@ -75,7 +75,15 @@ export interface RemoteDirectPlaybackSource {
    * The Trusted Home token never reaches the browser.
    */
   proxyStreamUrl?: string
-  /** Direct stream URL from the remote node (requires the remote to be browser-reachable). */
+  /**
+   * Endpoint to call to get a fresh PlaybackSource when the proxy URL may be expiring.
+   * Only present when proxyStreamUrl is set.
+   */
+  refreshUrl?: string
+  /**
+   * Direct stream URL from the remote node — only included when node.base_url is NOT a
+   * private/loopback address (best-effort heuristic). User must explicitly choose to switch.
+   */
   directStreamUrl?: string
   /** Informational warning — does not block playback. Present when the stream URL
    *  points to a loopback address that remote browsers may not be able to reach. */
@@ -352,6 +360,25 @@ export async function getPlaybackSource(
               ? `/api/v1/nodes/${remoteNodeId}/media/${mediaItemId}/stream`
               : undefined
 
+            // Refresh URL — endpoint for the player to get a fresh PlaybackSource
+            const refreshUrl = proxyStreamUrl
+              ? `/api/v1/nodes/${remoteNodeId}/media/${mediaItemId}/playback-source`
+              : undefined
+
+            // Fallback direct URL — only expose if node.base_url is NOT a private/loopback
+            // address. This is a best-effort heuristic: if the remote node is on a private IP,
+            // the browser on a different network cannot reach it directly.
+            // Auto-fallback is intentionally NOT implemented — user must choose to switch.
+            let fallbackDirectUrl: string | undefined
+            let fallbackWarning: string | undefined
+            if (proxyStreamUrl && remoteNode.base_url && !isPrivateUrl(remoteNode.base_url)) {
+              fallbackDirectUrl = intentResult.streamUrl
+            } else if (proxyStreamUrl && remoteNode.base_url && isPrivateUrl(remoteNode.base_url)) {
+              fallbackWarning =
+                `Remote Home address appears to be on a private network — ` +
+                `browser may not be able to reach it directly.`
+            }
+
             // For the primary streamUrl, prefer proxy when available
             const primaryStreamUrl = proxyStreamUrl ?? intentResult.streamUrl
 
@@ -368,8 +395,12 @@ export async function getPlaybackSource(
                 mediaFileId: intentResult.mediaFileId,
                 contentType: intentResult.contentType ?? null,
                 container: intentResult.container ?? null,
-                ...(proxyStreamUrl ? { proxyStreamUrl, directStreamUrl: intentResult.streamUrl } : {}),
-                ...(streamWarning ? { warning: streamWarning } : {}),
+                ...(proxyStreamUrl ? { proxyStreamUrl } : {}),
+                ...(refreshUrl ? { refreshUrl } : {}),
+                ...(fallbackDirectUrl ? { directStreamUrl: fallbackDirectUrl } : {}),
+                ...(streamWarning ? { warning: streamWarning }
+                  : fallbackWarning ? { warning: fallbackWarning }
+                  : {}),
               },
             }
           }

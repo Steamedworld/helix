@@ -1,11 +1,11 @@
 import type { FastifyInstance } from 'fastify'
 import { eq, and, inArray } from 'drizzle-orm'
-import { watchStates, mediaItems } from '../db/schema'
+import { watchStates, mediaItems, libraries, nodes } from '../db/schema'
 import { ok, err } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
 import { sql } from 'drizzle-orm'
 import { makeRequireAuth } from '../middleware/auth'
-import { canViewLibrary, getViewableLibraryIds } from '../lib/permissions'
+import { canViewLibrary, canPlayLibrary, getViewableLibraryIds } from '../lib/permissions'
 
 export async function watchStateRoutes(
   app: FastifyInstance,
@@ -48,6 +48,25 @@ export async function watchStateRoutes(
     if (!await canViewLibrary(user, item.library_id, db)) {
       reply.status(404)
       return err('Media item not found')
+    }
+
+    // For remote items (library belongs to a remote node), also require can_play.
+    // Progress is stored locally; the source Home is never mutated.
+    // Admins bypass this check.
+    if (user.role !== 'admin') {
+      const [lib] = await db
+        .select({ node_id: libraries.node_id })
+        .from(libraries)
+        .innerJoin(nodes, eq(libraries.node_id, nodes.id))
+        .where(and(eq(libraries.id, item.library_id), eq(nodes.kind, 'remote')))
+        .limit(1)
+      if (lib) {
+        // Item is from a remote node — require can_play
+        if (!await canPlayLibrary(user, item.library_id, db)) {
+          reply.status(403)
+          return err('Playback not permitted for this library')
+        }
+      }
     }
 
     const now = new Date().toISOString()

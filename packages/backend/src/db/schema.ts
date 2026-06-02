@@ -27,6 +27,11 @@ export const nodes = sqliteTable('nodes', {
   last_sync_error_at: text('last_sync_error_at'),
   last_sync_error_code: text('last_sync_error_code'),
   last_sync_error_message: text('last_sync_error_message'),
+  // Playback failure diagnostics — populated by the proxy stream handler
+  last_playback_issue_at: text('last_playback_issue_at'),
+  last_playback_issue_mode: text('last_playback_issue_mode'),
+  last_playback_issue_code: text('last_playback_issue_code'),
+  last_playback_issue_message: text('last_playback_issue_message'),
   created_at: text('created_at').notNull(),
   updated_at: text('updated_at').notNull(),
 })

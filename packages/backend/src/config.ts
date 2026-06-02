@@ -49,6 +49,37 @@ export function isLoopbackUrl(url: string): boolean {
   }
 }
 
+/**
+ * Returns true if the URL resolves to a private/non-routable address.
+ * Used as a heuristic to decide whether directStreamUrl should be offered as a
+ * browser-reachable fallback. When the source Home is on a private address,
+ * the browser (on a different network) cannot reach it directly.
+ *
+ * Addresses matched:
+ *   - Loopback (127.*, ::1, localhost)
+ *   - RFC-1918 private: 10.*, 192.168.*, 172.16-31.*
+ *   - Link-local: 169.254.*
+ */
+export function isPrivateUrl(url: string): boolean {
+  if (isLoopbackUrl(url)) return true
+  try {
+    const { hostname } = new URL(url)
+    const host = hostname.replace(/^\[|\]$/g, '')
+    // 10.x.x.x
+    if (/^10\./.test(host)) return true
+    // 192.168.x.x
+    if (/^192\.168\./.test(host)) return true
+    // 172.16-31.x.x
+    const m172 = host.match(/^172\.(\d+)\./)
+    if (m172 && Number(m172[1]) >= 16 && Number(m172[1]) <= 31) return true
+    // 169.254.x.x (link-local)
+    if (/^169\.254\./.test(host)) return true
+    return false
+  } catch {
+    return false
+  }
+}
+
 export const config = {
   port: Number(process.env.PORT ?? 3001),
   host: process.env.HOST ?? '0.0.0.0',

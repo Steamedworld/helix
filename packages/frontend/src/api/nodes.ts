@@ -16,6 +16,13 @@ export interface NodeCapabilities {
   directPlaybackRequiresBrowserReachability: true
 }
 
+export interface PlaybackIssueDiagnostic {
+  at: string
+  mode: string
+  code: 'remote_unreachable' | 'remote_unauthorized' | 'range_failed' | 'proxy_disabled' | 'unknown'
+  safeMessage: string
+}
+
 export interface NodeRecord {
   id: string
   name: string
@@ -27,6 +34,8 @@ export interface NodeRecord {
   last_error: string | null
   has_federation_token: boolean
   capabilities: NodeCapabilities | null
+  /** Present only when there is an active (uncleared) playback issue for this Home. */
+  lastPlaybackIssue: PlaybackIssueDiagnostic | null
   created_at: string
   updated_at: string
 }

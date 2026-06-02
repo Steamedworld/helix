@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { getPlaybackSource } from '../api/playback'
+import { apiFetch } from '../api/client'
 import type { LocalPlaybackSource, RemoteDirectPlaybackSource } from '../api/playback'
 
 export type RefreshableSource = LocalPlaybackSource | RemoteDirectPlaybackSource
@@ -17,10 +18,14 @@ export interface UsePlaybackRefreshResult {
  * Schedules a proactive playback-source refresh before the signed URL expires.
  *
  * - Uses `source.refreshAfter` to set a timer; does nothing when absent (old server compat).
+ * - For remote proxy sources, uses `source.refreshUrl` (the dedicated refresh endpoint)
+ *   rather than re-fetching the general playback-source endpoint. Falls back to the
+ *   general endpoint for local sources or when refreshUrl is absent.
  * - On tab wake (visibilitychange), refreshes immediately if the token is expired or the
  *   refresh window has passed.
  * - Enforces a minimum 30s gap between refresh calls regardless of how timers fire.
  * - Cleans up the timer on unmount or when mediaItemId changes.
+ * - Error messages are always sanitized — never expose token, URL, or upstream details.
  */
 export function usePlaybackRefresh(
   initialSource: RefreshableSource | null,
@@ -52,6 +57,8 @@ export function usePlaybackRefresh(
   }, [])
 
   // Core refresh call — fetches a fresh playback-source and updates state.
+  // For remote proxy sources with a refreshUrl, calls the dedicated refresh endpoint
+  // rather than the general playback-source endpoint.
   // Returns the new source on success, null on failure.
   const doRefresh = useCallback(async (): Promise<RefreshableSource | null> => {
     const now = Date.now()
@@ -62,21 +69,44 @@ export function usePlaybackRefresh(
     lastRefreshAtRef.current = now
     setIsRefreshing(true)
 
+    const currentSource = sourceRef.current
+    // Prefer the dedicated refresh endpoint when available (remote proxy sources)
+    const refreshUrl = currentSource?.code === 'remote_direct'
+      ? (currentSource as RemoteDirectPlaybackSource).refreshUrl
+      : undefined
+
     try {
-      const res = await getPlaybackSource(mediaItemId)
-      if (res.ok && !res.data.unavailable && res.data.source) {
-        const newSource = res.data.source as RefreshableSource
-        setSource(newSource)
-        setRefreshError(null)
-        setIsRefreshing(false)
-        return newSource
+      if (refreshUrl) {
+        // Use the refresh endpoint — returns a fresh PlaybackSource directly
+        const res = await apiFetch<RemoteDirectPlaybackSource>(refreshUrl)
+        if (res.ok) {
+          const newSource = res.data as RefreshableSource
+          setSource(newSource)
+          setRefreshError(null)
+          setIsRefreshing(false)
+          return newSource
+        } else {
+          setRefreshError("Couldn't refresh playback. Try restarting the video.")
+          setIsRefreshing(false)
+          return null
+        }
       } else {
-        setRefreshError('Refresh failed — playback may stop soon.')
-        setIsRefreshing(false)
-        return null
+        // Fall back to general playback-source endpoint (local sources, legacy)
+        const res = await getPlaybackSource(mediaItemId)
+        if (res.ok && !res.data.unavailable && res.data.source) {
+          const newSource = res.data.source as RefreshableSource
+          setSource(newSource)
+          setRefreshError(null)
+          setIsRefreshing(false)
+          return newSource
+        } else {
+          setRefreshError("Couldn't refresh playback. Try restarting the video.")
+          setIsRefreshing(false)
+          return null
+        }
       }
     } catch {
-      setRefreshError('Refresh failed — playback may stop soon.')
+      setRefreshError("Couldn't refresh playback. Try restarting the video.")
       setIsRefreshing(false)
       return null
     }

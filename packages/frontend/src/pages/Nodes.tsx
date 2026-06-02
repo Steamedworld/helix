@@ -22,7 +22,7 @@ import {
 } from '../api/nodes'
 import { getServerConfig } from '../api/config'
 import { getHealth } from '../api/health'
-import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic, RemotePlaybackDiagnostic, InviteSummary, AcceptInviteResponse, AccessLibrarySummary, AccessUpdateGrant, SyncResponse, SyncDiagnosticsResponse, SyncDiagnosticsHomeEntry } from '../api/nodes'
+import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic, RemotePlaybackDiagnostic, PlaybackIssueDiagnostic, InviteSummary, AcceptInviteResponse, AccessLibrarySummary, AccessUpdateGrant, SyncResponse, SyncDiagnosticsResponse, SyncDiagnosticsHomeEntry } from '../api/nodes'
 import type { ServerConfig } from '../api/config'
 import type { HealthResponse } from '../api/health'
 
@@ -202,7 +202,13 @@ function DiagnosticsPanel({ diagnostic }: DiagnosticsPanelProps) {
 
 // ─── Remote playback panel ────────────────────────────────────────────────────
 
-function RemotePlaybackPanel({ remotePlayback }: { remotePlayback: RemotePlaybackDiagnostic }) {
+function RemotePlaybackPanel({
+  remotePlayback,
+  lastPlaybackIssue,
+}: {
+  remotePlayback: RemotePlaybackDiagnostic
+  lastPlaybackIssue?: PlaybackIssueDiagnostic | null
+}) {
   const modeLabel: Record<RemotePlaybackDiagnostic['recommendedMode'], string> = {
     proxy: 'Proxy playback: available',
     direct: 'Direct playback: available',
@@ -233,6 +239,25 @@ function RemotePlaybackPanel({ remotePlayback }: { remotePlayback: RemotePlaybac
           {w}
         </span>
       ))}
+      {lastPlaybackIssue && (
+        <div
+          style={{
+            marginTop: 4,
+            padding: '5px 9px',
+            background: 'oklch(0.70 0.13 25 / 0.07)',
+            border: '1px solid oklch(0.70 0.13 25 / 0.20)',
+            borderRadius: 'var(--r-1)',
+            fontSize: 11,
+            color: 'var(--bad)',
+            lineHeight: 1.5,
+          }}
+        >
+          Last playback issue: {lastPlaybackIssue.safeMessage}
+          <span style={{ color: 'var(--ink-4)', marginLeft: 6 }}>
+            ({new Date(lastPlaybackIssue.at).toLocaleString()})
+          </span>
+        </div>
+      )}
     </div>
   )
 }
@@ -1792,7 +1817,10 @@ function TrustedHomeRow({ node, onDeleted, onUpdated, defaultOpenAccess = false 
 
       {diagnostic && <DiagnosticsPanel diagnostic={diagnostic} />}
       {diagnostic?.remotePlayback && (
-        <RemotePlaybackPanel remotePlayback={diagnostic.remotePlayback} />
+        <RemotePlaybackPanel
+          remotePlayback={diagnostic.remotePlayback}
+          lastPlaybackIssue={node.lastPlaybackIssue}
+        />
       )}
 
       {node.last_error && (
