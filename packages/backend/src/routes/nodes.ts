@@ -18,6 +18,7 @@ import {
   deriveSessionBinding,
 } from '../services/federation/playbackRefreshToken'
 import { COOKIE_NAME } from '../middleware/auth'
+import { recordAuditEvent } from '../services/federation/auditEvents'
 
 type NodeRow = typeof nodes.$inferSelect
 
@@ -206,6 +207,18 @@ export async function nodeRoutes(
 
     await db.update(nodes).set(updates).where(eq(nodes.id, req.params.id))
     const [updated] = await db.select().from(nodes).where(eq(nodes.id, req.params.id))
+
+    recordAuditEvent(db, {
+      action: 'trusted_home_settings_changed',
+      result: 'success',
+      reasonCode: 'settings_updated',
+      nodeId: req.params.id,
+      context: {
+        progressSyncEnabled: updated.progress_sync_enabled === 1,
+        allowProgressPush: updated.allow_progress_push === 1,
+        allowProgressReceive: updated.allow_progress_receive === 1,
+      },
+    })
 
     // Return only settings summary — NEVER credentials, tokens, or paths
     return ok({
@@ -1110,6 +1123,7 @@ export async function nodeRoutes(
       clearTimeout(timeoutId)
       const classified = classifyPlaybackError(fetchErr)
       void recordPlaybackIssue(nodeId, 'trusted_home_proxy', classified.code, classified.safeMessage)
+      recordAuditEvent(db, { action: 'playback_proxy_attempt', result: 'error', reasonCode: 'proxy_attempt_failed', nodeId })
       reply.status(502)
       return err('Unable to reach this Home')
     } finally {
@@ -1122,6 +1136,7 @@ export async function nodeRoutes(
     if (upstreamStatus === 401 || upstreamStatus === 403) {
       const classified = classifyPlaybackError(null, upstreamStatus)
       void recordPlaybackIssue(nodeId, 'trusted_home_proxy', classified.code, classified.safeMessage)
+      recordAuditEvent(db, { action: 'playback_proxy_attempt', result: 'error', reasonCode: 'proxy_attempt_failed', nodeId })
       reply.status(502)
       return err('Unable to access media from this Home')
     }
@@ -1137,6 +1152,7 @@ export async function nodeRoutes(
       if (cr) reply.header('Content-Range', cr)
       const classified = classifyPlaybackError(null, upstreamStatus)
       void recordPlaybackIssue(nodeId, 'trusted_home_proxy', classified.code, classified.safeMessage)
+      recordAuditEvent(db, { action: 'playback_proxy_attempt', result: 'error', reasonCode: 'proxy_attempt_failed', nodeId })
       reply.status(416)
       return reply.send()
     }
@@ -1144,6 +1160,7 @@ export async function nodeRoutes(
     if (upstreamStatus >= 500) {
       const classified = classifyPlaybackError(null, upstreamStatus)
       void recordPlaybackIssue(nodeId, 'trusted_home_proxy', classified.code, classified.safeMessage)
+      recordAuditEvent(db, { action: 'playback_proxy_attempt', result: 'error', reasonCode: 'proxy_attempt_failed', nodeId })
       reply.status(502)
       return err('Remote Home is temporarily unavailable')
     }
@@ -1151,6 +1168,7 @@ export async function nodeRoutes(
     if (upstreamStatus !== 200 && upstreamStatus !== 206) {
       const classified = classifyPlaybackError(null, upstreamStatus)
       void recordPlaybackIssue(nodeId, 'trusted_home_proxy', classified.code, classified.safeMessage)
+      recordAuditEvent(db, { action: 'playback_proxy_attempt', result: 'error', reasonCode: 'proxy_attempt_failed', nodeId })
       reply.status(502)
       return err('Remote Home is temporarily unavailable')
     }
@@ -1168,6 +1186,12 @@ export async function nodeRoutes(
 
     // Clear active playback issue on success
     void clearPlaybackIssue(nodeId)
+    // Only audit initial (non-continuation) requests — Range from byte 0 or no Range header
+    const rangeVal = req.headers.range ?? ''
+    const isInitialRequest = !rangeVal || rangeVal.startsWith('bytes=0-')
+    if (isInitialRequest) {
+      recordAuditEvent(db, { action: 'playback_proxy_attempt', result: 'success', reasonCode: 'proxy_attempt_success', nodeId })
+    }
 
     // HEAD: headers only, no body
     if (req.method === 'HEAD') {

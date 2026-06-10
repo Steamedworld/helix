@@ -294,6 +294,42 @@ export const federatedProgressOutbox = sqliteTable('federated_progress_outbox', 
   unique_node_media_event: uniqueIndex('idx_fpo_unique').on(t.node_id, t.media_id, t.client_event_id),
 }))
 
+/**
+ * Privacy-safe audit trail for Trusted Home operations.
+ *
+ * Best-effort, non-blocking — a write failure here MUST NOT break any primary operation.
+ *
+ * MUST NOT store: user_id, local user ID, federation token, remote_viewer_hash,
+ * raw URL, filesystem path, Authorization header, raw error body, stack trace,
+ * username, email, or credential material of any kind.
+ * node_id is a safe UUID reference (not a credential).
+ */
+export const trustedHomeAuditEvents = sqliteTable('trusted_home_audit_events', {
+  id: text('id').primaryKey(),
+  occurred_at: text('occurred_at').notNull(),
+  action: text('action', {
+    enum: [
+      'trusted_home_settings_changed',
+      'progress_push_enqueued',
+      'progress_push_synced',
+      'progress_push_abandoned',
+      'progress_push_failed',
+      'remote_progress_read_denied',
+      'remote_progress_received',
+      'playback_proxy_attempt',
+    ],
+  }).notNull(),
+  result: text('result', { enum: ['success', 'denied', 'skipped', 'error'] }).notNull(),
+  reason_code: text('reason_code'),
+  node_id: text('node_id'),
+  context_json: text('context_json'),
+  created_at: text('created_at').notNull(),
+}, (t) => ({
+  idx_occurred_at: index('idx_audit_occurred_at').on(t.occurred_at),
+  idx_action: index('idx_audit_action').on(t.action),
+  idx_node: index('idx_audit_node').on(t.node_id),
+}))
+
 export const remoteWatchProgress = sqliteTable('remote_watch_progress', {
   id: text('id').primaryKey(),
   source_node_id: text('source_node_id').notNull().references(() => nodes.id, { onDelete: 'cascade' }),

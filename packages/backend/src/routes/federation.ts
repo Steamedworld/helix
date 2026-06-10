@@ -12,6 +12,7 @@ import { makeLocalCapabilities } from '../services/federation/capabilities'
 import { signStreamToken } from '../lib/signedTokens'
 import { config } from '../config'
 import { remoteWatchProgress } from '../db/schema'
+import { recordAuditEvent } from '../services/federation/auditEvents'
 
 const CONTAINER_MIME: Record<string, string> = {
   mp4: 'video/mp4',
@@ -938,6 +939,7 @@ export async function federationRoutes(
       // the local node's allow_progress_receive setting. If no caller node found, we use
       // a generic hash. But we still check allow_progress_push per caller if identified.
       if (callerNode && !callerNode.allow_progress_push) {
+        recordAuditEvent(db, { action: 'remote_progress_received', result: 'denied', reasonCode: 'read_denied_no_sync', nodeId: callerNode.id })
         reply.status(403)
         return err('Progress sync not enabled for this connection.')
       }
@@ -953,6 +955,7 @@ export async function federationRoutes(
         .limit(1)
 
       if (!localNodeRow?.allow_progress_receive) {
+        recordAuditEvent(db, { action: 'remote_progress_received', result: 'denied', reasonCode: 'read_denied_no_sync', nodeId: callerNodeIdHeader || undefined })
         reply.status(403)
         return err('Progress sync not enabled for this connection.')
       }
@@ -1076,11 +1079,13 @@ export async function federationRoutes(
         const existingDate = new Date(existing.updated_at)
         if (existingDate > updatedAtDate) {
           // Stored is newer — skip (idempotent 200)
+          recordAuditEvent(db, { action: 'remote_progress_received', result: 'skipped', reasonCode: 'progress_stale_ignored', nodeId: callerIdForHash })
           return ok({ accepted: false, reason: 'stale update ignored' })
         }
 
         // Equal timestamps: prefer higher positionSeconds
         if (existingDate.getTime() === updatedAtDate.getTime() && existing.position_seconds >= positionSeconds) {
+          recordAuditEvent(db, { action: 'remote_progress_received', result: 'skipped', reasonCode: 'progress_stale_ignored', nodeId: callerIdForHash })
           return ok({ accepted: false, reason: 'stale update ignored' })
         }
 
@@ -1109,6 +1114,7 @@ export async function federationRoutes(
         })
       }
 
+      recordAuditEvent(db, { action: 'remote_progress_received', result: 'success', reasonCode: 'progress_received', nodeId: callerIdForHash })
       return ok({ accepted: true })
     }
   )
@@ -1154,12 +1160,14 @@ export async function federationRoutes(
       }
 
       if (!callerNode) {
+        recordAuditEvent(db, { action: 'remote_progress_read_denied', result: 'denied', reasonCode: 'read_denied_no_node' })
         reply.status(403)
         return err('Caller node not identified — provide X-Caller-Node-Id header')
       }
 
       // ── Step 2: check bilateral opt-in ─────────────────────────────────────────
       if (!callerNode.progress_sync_enabled || !callerNode.allow_progress_receive) {
+        recordAuditEvent(db, { action: 'remote_progress_read_denied', result: 'denied', reasonCode: 'read_denied_no_sync', nodeId: callerNode.id })
         reply.status(403)
         return err('Progress sync not enabled for this connection.')
       }

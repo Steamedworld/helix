@@ -20,10 +20,11 @@ import {
   updateNodeAccess,
   getSyncDiagnostics,
   updateNodeSettings,
+  getAuditEvents,
 } from '../api/nodes'
 import { getServerConfig } from '../api/config'
 import { getHealth } from '../api/health'
-import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic, RemotePlaybackDiagnostic, PlaybackIssueDiagnostic, InviteSummary, AcceptInviteResponse, AccessLibrarySummary, AccessUpdateGrant, SyncResponse, SyncDiagnosticsResponse, SyncDiagnosticsHomeEntry, RefreshSecretHealthEntry, SyncDiagnosticsResponseExtended, PlaybackDiagnosticsResponse } from '../api/nodes'
+import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic, RemotePlaybackDiagnostic, PlaybackIssueDiagnostic, InviteSummary, AcceptInviteResponse, AccessLibrarySummary, AccessUpdateGrant, SyncResponse, SyncDiagnosticsResponse, SyncDiagnosticsHomeEntry, RefreshSecretHealthEntry, SyncDiagnosticsResponseExtended, PlaybackDiagnosticsResponse, AuditEvent, AuditEventsResponse } from '../api/nodes'
 import type { ServerConfig } from '../api/config'
 import type { HealthResponse } from '../api/health'
 
@@ -1284,6 +1285,194 @@ function InviteList({ refreshKey }: InviteListProps) {
   )
 }
 
+// ─── Trusted Home Activity panel ─────────────────────────────────────────────
+
+const AUDIT_ACTION_LABELS: Record<string, string> = {
+  trusted_home_settings_changed: 'Settings changed',
+  progress_push_enqueued: 'Push enqueued',
+  progress_push_synced: 'Push synced',
+  progress_push_abandoned: 'Push abandoned',
+  progress_push_failed: 'Push failed',
+  remote_progress_read_denied: 'Read denied',
+  remote_progress_received: 'Progress received',
+  playback_proxy_attempt: 'Proxy attempt',
+}
+
+const AUDIT_RESULT_COLORS: Record<string, string> = {
+  success: 'var(--accent)',
+  denied: 'var(--bad)',
+  skipped: 'var(--ink-3)',
+  error: 'var(--bad)',
+}
+
+function AuditResultChip({ result }: { result: string }) {
+  return (
+    <span style={{ color: AUDIT_RESULT_COLORS[result] ?? 'var(--ink-3)', fontWeight: 600, fontSize: 11 }}>
+      {result}
+    </span>
+  )
+}
+
+function formatAuditTime(iso: string): string {
+  try {
+    const d = new Date(iso)
+    const diffMs = Date.now() - d.getTime()
+    const diffSecs = Math.floor(diffMs / 1000)
+    if (diffSecs < 60) return 'just now'
+    const diffMins = Math.floor(diffSecs / 60)
+    if (diffMins < 60) return `${diffMins}m ago`
+    const diffHours = Math.floor(diffMins / 60)
+    if (diffHours < 24) return `${diffHours}h ago`
+    return d.toLocaleDateString()
+  } catch {
+    return iso
+  }
+}
+
+interface TrustedHomeActivityProps {
+  nodes: NodeRecord[]
+}
+
+function TrustedHomeActivity({ nodes }: TrustedHomeActivityProps) {
+  const [open, setOpen] = useState(false)
+  const [data, setData] = useState<AuditEventsResponse | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [offset, setOffset] = useState(0)
+  const PAGE = 20
+
+  const nodeMap = new Map(nodes.map((n) => [n.id, n.name]))
+
+  function loadPage(off: number) {
+    setLoading(true)
+    setError(null)
+    getAuditEvents({ limit: PAGE, offset: off })
+      .then((res) => {
+        if (res.ok) setData(res.data)
+        else setError('Failed to load activity')
+      })
+      .catch(() => setError('Failed to load activity'))
+      .finally(() => setLoading(false))
+  }
+
+  function handleToggle() {
+    if (!open && !data) loadPage(0)
+    setOpen((o) => !o)
+  }
+
+  function handlePrev() {
+    const newOff = Math.max(0, offset - PAGE)
+    setOffset(newOff)
+    loadPage(newOff)
+  }
+
+  function handleNext() {
+    const newOff = offset + PAGE
+    setOffset(newOff)
+    loadPage(newOff)
+  }
+
+  const total = data?.total ?? 0
+  const canPrev = offset > 0
+  const canNext = offset + PAGE < total
+
+  return (
+    <div
+      className="surface"
+      style={{ marginTop: 12, padding: '12px 16px', background: 'var(--bg-3)' }}
+    >
+      <button
+        onClick={handleToggle}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          background: 'none',
+          border: 'none',
+          cursor: 'pointer',
+          color: 'var(--ink-2)',
+          fontSize: 12,
+          fontWeight: 600,
+          padding: 0,
+          width: '100%',
+          textAlign: 'left',
+        }}
+      >
+        <span style={{ fontSize: 10 }}>{open ? '▼' : '▶'}</span>
+        Trusted Home Activity
+        {total > 0 && (
+          <span style={{ marginLeft: 6, color: 'var(--ink-4)', fontWeight: 400 }}>
+            {total} events
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 12 }}>
+          {loading && <div style={{ fontSize: 12, color: 'var(--ink-4)' }}>Loading…</div>}
+          {error && <div style={{ fontSize: 12, color: 'var(--bad)' }}>{error}</div>}
+          {!loading && !error && data && (
+            <>
+              {data.events.length === 0 ? (
+                <div style={{ fontSize: 12, color: 'var(--ink-4)' }}>No audit events yet.</div>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                  <thead>
+                    <tr style={{ color: 'var(--ink-3)', textAlign: 'left' }}>
+                      <th style={{ padding: '4px 8px 4px 0', fontWeight: 600 }}>Time</th>
+                      <th style={{ padding: '4px 8px', fontWeight: 600 }}>Action</th>
+                      <th style={{ padding: '4px 8px', fontWeight: 600 }}>Result</th>
+                      <th style={{ padding: '4px 8px', fontWeight: 600 }}>Home</th>
+                      <th style={{ padding: '4px 8px', fontWeight: 600 }}>Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.events.map((ev: AuditEvent) => (
+                      <tr
+                        key={ev.id}
+                        style={{ borderTop: '1px solid var(--border)', verticalAlign: 'top' }}
+                      >
+                        <td style={{ padding: '4px 8px 4px 0', color: 'var(--ink-4)', whiteSpace: 'nowrap' }}>
+                          {formatAuditTime(ev.occurredAt)}
+                        </td>
+                        <td style={{ padding: '4px 8px', color: 'var(--ink-2)' }}>
+                          {AUDIT_ACTION_LABELS[ev.action] ?? ev.action}
+                        </td>
+                        <td style={{ padding: '4px 8px' }}>
+                          <AuditResultChip result={ev.result} />
+                        </td>
+                        <td style={{ padding: '4px 8px', color: 'var(--ink-3)' }}>
+                          {ev.nodeId ? (nodeMap.get(ev.nodeId) ?? ev.nodeId.slice(0, 8)) : '—'}
+                        </td>
+                        <td style={{ padding: '4px 8px', color: 'var(--ink-4)', fontFamily: 'monospace', fontSize: 10 }}>
+                          {ev.reasonCode ?? '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {(canPrev || canNext) && (
+                <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center', fontSize: 11 }}>
+                  <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={handlePrev} disabled={!canPrev}>
+                    ← Prev
+                  </button>
+                  <span style={{ color: 'var(--ink-4)' }}>
+                    {offset + 1}–{Math.min(offset + PAGE, total)} of {total}
+                  </span>
+                  <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={handleNext} disabled={!canNext}>
+                    Next →
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── This home section ────────────────────────────────────────────────────────
 
 interface ThisHomeSectionProps {
@@ -2456,6 +2645,9 @@ export function Nodes() {
             ))}
           </div>
         )}
+
+        {/* Trusted Home Activity audit panel (admin only) */}
+        <TrustedHomeActivity nodes={remoteNodes} />
 
         {/* Direct playback explainer */}
         <div

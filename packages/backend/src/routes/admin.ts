@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
-import { sql } from 'drizzle-orm'
-import { nodes, catalogTombstones, federatedProgressOutbox } from '../db/schema'
-import { ok } from '../lib/response'
+import { sql, desc, and, gt } from 'drizzle-orm'
+import { nodes, catalogTombstones, federatedProgressOutbox, trustedHomeAuditEvents } from '../db/schema'
+import { ok, err } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
 import { makeRequireAdmin } from '../middleware/auth'
 import { computeSyncSafetyEstimate } from '../services/federation/catalogSync'
@@ -333,6 +333,49 @@ export async function adminRoutes(
       lastErrorCodeCounts,
     }
 
+    // ─── Audit event aggregate (last 24h) ────────────────────────────────────────
+    // Aggregate counts only — NEVER include event IDs, node IDs in histograms,
+    // media IDs, user IDs, tokens, raw error bodies, paths, or stack traces.
+
+    const since24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString()
+
+    const auditCountRows = await db
+      .select({
+        action: trustedHomeAuditEvents.action,
+        result: trustedHomeAuditEvents.result,
+        count: sql<number>`count(*)`,
+      })
+      .from(trustedHomeAuditEvents)
+      .where(gt(trustedHomeAuditEvents.occurred_at, since24h))
+      .groupBy(trustedHomeAuditEvents.action, trustedHomeAuditEvents.result)
+
+    const auditMap: Record<string, Record<string, number>> = {}
+    for (const row of auditCountRows) {
+      if (!auditMap[row.action]) auditMap[row.action] = {}
+      auditMap[row.action][row.result] = Number(row.count)
+    }
+
+    function auditCount(action: string, result?: string): number {
+      if (!auditMap[action]) return 0
+      if (result) return auditMap[action][result] ?? 0
+      return Object.values(auditMap[action]).reduce((a, b) => a + b, 0)
+    }
+
+    const auditSummary = {
+      last24h: {
+        settingsChanges: auditCount('trusted_home_settings_changed', 'success'),
+        progressPushEnqueued: auditCount('progress_push_enqueued', 'success'),
+        progressPushSynced: auditCount('progress_push_synced', 'success'),
+        progressPushFailed: auditCount('progress_push_failed', 'error'),
+        progressPushAbandoned: auditCount('progress_push_abandoned', 'error'),
+        progressReadDenied: auditCount('remote_progress_read_denied', 'denied'),
+        progressReceived: auditCount('remote_progress_received', 'success'),
+        progressStaleIgnored: auditCount('remote_progress_received', 'skipped'),
+        playbackProxyAttempts: auditCount('playback_proxy_attempt', 'success'),
+        playbackProxyErrors: auditCount('playback_proxy_attempt', 'error'),
+      },
+    }
+
     return ok({
       tombstoneStats: {
         total,
@@ -352,6 +395,90 @@ export async function adminRoutes(
       secretsHealth,
       playbackDiagnostics,
       progressOutbox,
+      auditSummary,
+    })
+  })
+
+  // GET /admin/audit-events — paginated audit event read (admin only)
+  //
+  // Query params:
+  //   ?limit=50       — max rows to return (capped at 200, default 50)
+  //   ?offset=0       — pagination offset (default 0)
+  //   ?action=<str>   — filter by action
+  //
+  // Response MUST NOT include: user_id, federation token, raw error body,
+  // filesystem path, Authorization header, stack trace, username, email,
+  // credential material, or remote_viewer_hash.
+  app.get<{
+    Querystring: { limit?: string; offset?: string; action?: string }
+  }>('/admin/audit-events', { preHandler: requireAdmin }, async (req, reply) => {
+    const rawLimit = parseInt(req.query.limit ?? '50', 10)
+    const limit = Math.min(isNaN(rawLimit) || rawLimit < 1 ? 50 : rawLimit, 200)
+    const rawOffset = parseInt(req.query.offset ?? '0', 10)
+    const offset = isNaN(rawOffset) || rawOffset < 0 ? 0 : rawOffset
+    const actionFilter = req.query.action?.trim() || undefined
+
+    const VALID_ACTIONS = [
+      'trusted_home_settings_changed',
+      'progress_push_enqueued',
+      'progress_push_synced',
+      'progress_push_abandoned',
+      'progress_push_failed',
+      'remote_progress_read_denied',
+      'remote_progress_received',
+      'playback_proxy_attempt',
+    ]
+
+    if (actionFilter && !VALID_ACTIONS.includes(actionFilter)) {
+      reply.status(400)
+      return err(`Invalid action filter. Valid values: ${VALID_ACTIONS.join(', ')}`)
+    }
+
+    const whereClause = actionFilter
+      ? and(sql`${trustedHomeAuditEvents.action} = ${actionFilter}`)
+      : undefined
+
+    const [totalRow, events] = await Promise.all([
+      db
+        .select({ count: sql<number>`count(*)` })
+        .from(trustedHomeAuditEvents)
+        .where(whereClause),
+      db
+        .select({
+          id: trustedHomeAuditEvents.id,
+          occurred_at: trustedHomeAuditEvents.occurred_at,
+          action: trustedHomeAuditEvents.action,
+          result: trustedHomeAuditEvents.result,
+          reason_code: trustedHomeAuditEvents.reason_code,
+          node_id: trustedHomeAuditEvents.node_id,
+          context_json: trustedHomeAuditEvents.context_json,
+        })
+        .from(trustedHomeAuditEvents)
+        .where(whereClause)
+        .orderBy(desc(trustedHomeAuditEvents.occurred_at))
+        .limit(limit)
+        .offset(offset),
+    ])
+
+    return ok({
+      events: events.map((e) => ({
+        id: e.id,
+        occurredAt: e.occurred_at,
+        action: e.action,
+        result: e.result,
+        reasonCode: e.reason_code ?? null,
+        nodeId: e.node_id ?? null,
+        context: (() => {
+          try {
+            return e.context_json ? JSON.parse(e.context_json) : null
+          } catch {
+            return null
+          }
+        })(),
+      })),
+      total: Number(totalRow[0]?.count ?? 0),
+      limit,
+      offset,
     })
   })
 }

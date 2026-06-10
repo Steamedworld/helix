@@ -1,6 +1,7 @@
 import { eq, and } from 'drizzle-orm'
 import { federatedProgressOutbox } from '../../db/schema'
 import type { DrizzleDB } from '../../db/client'
+import { recordAuditEvent } from './auditEvents'
 
 // ─── Enqueue / upsert ─────────────────────────────────────────────────────────
 //
@@ -67,6 +68,7 @@ export async function enqueueProgressPush(
       created_at: now,
       updated_at: now,
     })
+    recordAuditEvent(db, { action: 'progress_push_enqueued', result: 'success', reasonCode: 'push_accepted', nodeId })
     return
   }
 
@@ -107,4 +109,5 @@ export async function enqueueProgressPush(
       updated_at: now,
     })
     .where(eq(federatedProgressOutbox.id, existing.id))
+  recordAuditEvent(db, { action: 'progress_push_enqueued', result: 'success', reasonCode: 'push_accepted', nodeId })
 }

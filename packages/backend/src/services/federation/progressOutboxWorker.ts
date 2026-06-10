@@ -5,6 +5,7 @@ import type { DrizzleDB } from '../../db/client'
 import { logger } from '../../lib/logger'
 import { decryptApiKey } from '../integrations/encryption'
 import { classifySyncError } from './syncErrorClassifier'
+import { recordAuditEvent } from './auditEvents'
 
 // ─── Config ────────────────────────────────────────────────────────────────────
 
@@ -198,6 +199,7 @@ async function processJob(
         updated_at: new Date().toISOString(),
       })
       .where(eq(federatedProgressOutbox.id, job.id))
+    recordAuditEvent(db, { action: 'progress_push_abandoned', result: 'error', reasonCode: 'push_abandoned_config_disabled', nodeId: job.node_id })
     return
   }
 
@@ -213,6 +215,7 @@ async function processJob(
         updated_at: new Date().toISOString(),
       })
       .where(eq(federatedProgressOutbox.id, job.id))
+    recordAuditEvent(db, { action: 'progress_push_abandoned', result: 'error', reasonCode: 'push_abandoned_config_disabled', nodeId: job.node_id })
     return
   }
 
@@ -276,6 +279,7 @@ async function processJob(
       .where(eq(federatedProgressOutbox.id, job.id))
     // Update the local watch_states row to 'synced' (best-effort)
     await updateLocalWatchStatePushStatus(db, job, 'synced', null)
+    recordAuditEvent(db, { action: 'progress_push_synced', result: 'success', reasonCode: 'push_synced', nodeId: job.node_id })
     logger.info({ nodeId: job.node_id, mediaId: job.media_id }, '[progressOutbox] Push synced')
   } else {
     const classified = classifySyncError({ status: res.status })
@@ -304,6 +308,7 @@ async function markJobResult(
         updated_at: nowTs,
       })
       .where(eq(federatedProgressOutbox.id, job.id))
+    recordAuditEvent(db, { action: 'progress_push_abandoned', result: 'error', reasonCode: 'push_abandoned_max_attempts', nodeId: job.node_id, context: { errorCode } })
   } else {
     await db
       .update(federatedProgressOutbox)
@@ -316,6 +321,7 @@ async function markJobResult(
         updated_at: nowTs,
       })
       .where(eq(federatedProgressOutbox.id, job.id))
+    recordAuditEvent(db, { action: 'progress_push_failed', result: 'error', reasonCode: 'push_failed', nodeId: job.node_id, context: { errorCode } })
   }
 }
 

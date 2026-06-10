@@ -441,4 +441,62 @@ export interface SecretsHealthResponseExtended {
 export interface SyncDiagnosticsResponseExtended extends SyncDiagnosticsResponse {
   secretsHealth?: SecretsHealthResponseExtended
   playbackDiagnostics?: PlaybackDiagnosticsResponse
+  auditSummary?: AuditSummaryResponse
+}
+
+// ─── Audit events ─────────────────────────────────────────────────────────────
+
+export type AuditAction =
+  | 'trusted_home_settings_changed'
+  | 'progress_push_enqueued'
+  | 'progress_push_synced'
+  | 'progress_push_abandoned'
+  | 'progress_push_failed'
+  | 'remote_progress_read_denied'
+  | 'remote_progress_received'
+  | 'playback_proxy_attempt'
+
+export type AuditResult = 'success' | 'denied' | 'skipped' | 'error'
+
+export interface AuditEvent {
+  id: string
+  occurredAt: string
+  action: AuditAction
+  result: AuditResult
+  reasonCode: string | null
+  nodeId: string | null
+  context: Record<string, string | number | boolean | null> | null
+}
+
+export interface AuditEventsResponse {
+  events: AuditEvent[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface AuditSummaryLast24h {
+  settingsChanges: number
+  progressPushEnqueued: number
+  progressPushSynced: number
+  progressPushFailed: number
+  progressPushAbandoned: number
+  progressReadDenied: number
+  progressReceived: number
+  progressStaleIgnored: number
+  playbackProxyAttempts: number
+  playbackProxyErrors: number
+}
+
+export interface AuditSummaryResponse {
+  last24h: AuditSummaryLast24h
+}
+
+export function getAuditEvents(opts?: { limit?: number; offset?: number; action?: AuditAction }) {
+  const params = new URLSearchParams()
+  if (opts?.limit !== undefined) params.set('limit', String(opts.limit))
+  if (opts?.offset !== undefined) params.set('offset', String(opts.offset))
+  if (opts?.action) params.set('action', opts.action)
+  const qs = params.toString()
+  return apiFetch<AuditEventsResponse>(`/api/v1/admin/audit-events${qs ? `?${qs}` : ''}`)
 }
