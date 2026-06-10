@@ -24,6 +24,7 @@ import { adminRoutes } from './routes/admin'
 import { enrichmentQueue } from './services/enrichmentQueue'
 import { createTrustedHomeSyncScheduler } from './services/federation/trustedHomeSyncScheduler'
 import { createTombstonePruner } from './services/federation/tombstonePruner'
+import { createProgressOutboxWorker } from './services/federation/progressOutboxWorker'
 import { syncRemoteNode } from './services/federation/catalogSync'
 import { err } from './lib/response'
 import type { DrizzleDB } from './db/client'
@@ -203,16 +204,28 @@ export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string
   // Tombstone pruner — runs once on startup then daily
   const tombstonePruner = createTombstonePruner(db, config.tombstoneRetentionDays)
 
+  // Federated progress outbox worker — bounded retry for push jobs
+  const progressOutboxWorker = createProgressOutboxWorker(db, {
+    intervalMs: config.progressOutboxWorkerIntervalMs,
+    maxAttempts: config.progressOutboxMaxAttempts,
+    requestTimeoutMs: config.trustedHomeProxyRequestTimeoutMs > 0
+      ? config.trustedHomeProxyRequestTimeoutMs
+      : 30000,
+    dataDir: resolvedDataDir,
+  })
+
   app.addHook('onReady', async () => {
     enrichmentQueue.start(db)
     trustedHomeSyncScheduler.start()
     tombstonePruner.start()
+    progressOutboxWorker.start()
   })
 
   app.addHook('onClose', async () => {
     enrichmentQueue.stop()
     await trustedHomeSyncScheduler.stop()
     await tombstonePruner.stop()
+    await progressOutboxWorker.stop()
   })
 
   // TV hierarchy routes

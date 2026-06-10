@@ -182,6 +182,10 @@ export const config = {
   trustedHomePlaybackProxyEnabled: (process.env.TRUSTED_HOME_PLAYBACK_PROXY_ENABLED ?? 'true') !== 'false',
   trustedHomeProxyRequestTimeoutMs: Number(process.env.TRUSTED_HOME_PROXY_REQUEST_TIMEOUT_MS ?? 30000),
 
+  // Federated progress outbox worker
+  progressOutboxWorkerIntervalMs: Number(process.env.PROGRESS_OUTBOX_WORKER_INTERVAL_MS ?? 30000),
+  progressOutboxMaxAttempts: Math.max(1, Number(process.env.PROGRESS_OUTBOX_MAX_ATTEMPTS ?? 3)),
+
   // Signed playback refresh tokens
   //
   // trustedHomePlaybackRefreshSecret — HMAC-SHA256 key used to sign and verify the

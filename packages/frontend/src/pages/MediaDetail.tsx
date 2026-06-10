@@ -12,6 +12,7 @@ import { getNextEpisode } from '../api/tv'
 import { usePlaybackRefresh } from '../hooks/usePlaybackRefresh'
 import { getRemoteProgress } from '../api/nodes'
 import { deriveRemoteProgressSuggestion } from '../services/progressReconciliation'
+import { progressPushStatusLabel } from '../services/progressPushStatusLabel'
 import type { MediaItemDetail } from '../api/media'
 import type { PlaybackSource, PlaybackCode, LocalPlaybackSource, RemoteDirectPlaybackSource } from '../api/playback'
 import type { MetadataCandidate } from '../api/metadata'
@@ -1375,17 +1376,11 @@ export function MediaDetail() {
               }
 
               // Standard sync status display
-              if (watchState.progress_push_status === 'synced') {
-                return <p style={{ fontSize: 11, color: 'var(--ink-4)' }}>Progress synced</p>
-              }
-              if (
-                watchState.progress_push_status === 'failed' ||
-                watchState.progress_push_status === 'source_unavailable'
-              ) {
-                return <p style={{ fontSize: 11, color: 'var(--ink-4)' }}>Progress sync unavailable</p>
-              }
-              if (!watchState.progress_push_status || watchState.progress_push_status === 'not_enabled') {
-                return <p style={{ fontSize: 11, color: 'var(--ink-4)' }}>Progress stored locally</p>
+              {
+                const label = progressPushStatusLabel(watchState.progress_push_status)
+                if (label !== null) {
+                  return <p style={{ fontSize: 11, color: 'var(--ink-4)' }}>{label}</p>
+                }
               }
               return null
             })()}

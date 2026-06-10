@@ -260,6 +260,40 @@ export const trustedHomeInvites = sqliteTable('trusted_home_invites', {
  * MUST NOT store: viewer session ID, local user IDs of the source Home,
  * filesystem paths, federation token values, or Authorization header contents.
  */
+/**
+ * Durable outbox for federated progress push jobs.
+ *
+ * Viewer-side: each row is a pending push to a source Trusted Home.
+ * Worker processes rows in status 'pending'/'failed' up to max_attempts.
+ *
+ * MUST NOT store: user_id, federation token, raw URL, username, email,
+ * filesystem path, Authorization header, or raw error body.
+ */
+export const federatedProgressOutbox = sqliteTable('federated_progress_outbox', {
+  id: text('id').primaryKey(),
+  node_id: text('node_id').notNull().references(() => nodes.id, { onDelete: 'cascade' }),
+  media_id: text('media_id').notNull(),
+  client_event_id: text('client_event_id').notNull(),
+  position_seconds: real('position_seconds').notNull(),
+  duration_seconds: real('duration_seconds'),
+  watched: integer('watched').notNull().default(0),
+  local_updated_at: text('local_updated_at').notNull(),
+  attempt_count: integer('attempt_count').notNull().default(0),
+  max_attempts: integer('max_attempts').notNull().default(3),
+  status: text('status', { enum: ['pending', 'in_progress', 'synced', 'failed', 'abandoned'] })
+    .notNull()
+    .default('pending'),
+  next_attempt_at: text('next_attempt_at').notNull(),
+  last_attempt_at: text('last_attempt_at'),
+  last_error_code: text('last_error_code'),
+  created_at: text('created_at').notNull(),
+  updated_at: text('updated_at').notNull(),
+}, (t) => ({
+  idx_status_next: index('idx_fpo_status_next').on(t.status, t.next_attempt_at),
+  idx_node: index('idx_fpo_node').on(t.node_id, t.status),
+  unique_node_media_event: uniqueIndex('idx_fpo_unique').on(t.node_id, t.media_id, t.client_event_id),
+}))
+
 export const remoteWatchProgress = sqliteTable('remote_watch_progress', {
   id: text('id').primaryKey(),
   source_node_id: text('source_node_id').notNull().references(() => nodes.id, { onDelete: 'cascade' }),

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { sql } from 'drizzle-orm'
-import { nodes, catalogTombstones } from '../db/schema'
+import { nodes, catalogTombstones, federatedProgressOutbox } from '../db/schema'
 import { ok } from '../lib/response'
 import type { DrizzleDB } from '../db/client'
 import { makeRequireAdmin } from '../middleware/auth'
@@ -252,6 +252,87 @@ export async function adminRoutes(
       homesWithProxyAvailable,
     }
 
+    // ─── Progress outbox aggregate diagnostics ──────────────────────────────────
+    // Aggregate counts only — NEVER include job IDs, node IDs, media IDs,
+    // payload details, user IDs, tokens, raw error bodies, paths, or stack traces.
+
+    const outboxStatusRows = await db
+      .select({
+        status: federatedProgressOutbox.status,
+        count: sql<number>`count(*)`,
+      })
+      .from(federatedProgressOutbox)
+      .groupBy(federatedProgressOutbox.status)
+
+    const outboxCounts: Record<string, number> = {
+      pending: 0,
+      in_progress: 0,
+      synced: 0,
+      failed: 0,
+      abandoned: 0,
+    }
+    for (const row of outboxStatusRows) {
+      if (row.status in outboxCounts) {
+        outboxCounts[row.status] = Number(row.count)
+      }
+    }
+
+    // Oldest pending job age bucket (helps spot stuck queues)
+    const oldestPendingRows = await db
+      .select({ oldest: sql<string | null>`min(${federatedProgressOutbox.next_attempt_at})` })
+      .from(federatedProgressOutbox)
+      .where(sql`${federatedProgressOutbox.status} IN ('pending', 'failed')`)
+
+    const oldestPendingAt = oldestPendingRows[0]?.oldest ?? null
+    let oldestPendingAgeBucket: 'under_1h' | '1h_to_6h' | 'over_6h' | null = null
+    if (oldestPendingAt) {
+      const ageMs = now.getTime() - new Date(oldestPendingAt).getTime()
+      if (ageMs < 3600_000) {
+        oldestPendingAgeBucket = 'under_1h'
+      } else if (ageMs < 21600_000) {
+        oldestPendingAgeBucket = '1h_to_6h'
+      } else {
+        oldestPendingAgeBucket = 'over_6h'
+      }
+    }
+
+    // Error code histogram (safe labels only — no job/node/media IDs)
+    const errorCodeRows = await db
+      .select({
+        code: federatedProgressOutbox.last_error_code,
+        count: sql<number>`count(*)`,
+      })
+      .from(federatedProgressOutbox)
+      .where(sql`${federatedProgressOutbox.last_error_code} IS NOT NULL`)
+      .groupBy(federatedProgressOutbox.last_error_code)
+
+    const lastErrorCodeCounts: Record<string, number> = {
+      remote_unreachable: 0,
+      auth_failed: 0,
+      timeout: 0,
+      network_error: 0,
+      config_disabled: 0,
+      unknown: 0,
+    }
+    for (const row of errorCodeRows) {
+      const code = row.code ?? 'unknown'
+      if (code in lastErrorCodeCounts) {
+        lastErrorCodeCounts[code] = Number(row.count)
+      } else {
+        lastErrorCodeCounts['unknown'] = (lastErrorCodeCounts['unknown'] ?? 0) + Number(row.count)
+      }
+    }
+
+    const progressOutbox = {
+      pending: outboxCounts.pending,
+      inProgress: outboxCounts.in_progress,
+      synced: outboxCounts.synced,
+      failed: outboxCounts.failed,
+      abandoned: outboxCounts.abandoned,
+      oldestPendingAgeBucket,
+      lastErrorCodeCounts,
+    }
+
     return ok({
       tombstoneStats: {
         total,
@@ -270,6 +351,7 @@ export async function adminRoutes(
       trustedHomeSync,
       secretsHealth,
       playbackDiagnostics,
+      progressOutbox,
     })
   })
 }
