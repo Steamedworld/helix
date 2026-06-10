@@ -24,6 +24,7 @@ import { adminRoutes } from './routes/admin'
 import { enrichmentQueue } from './services/enrichmentQueue'
 import { createTrustedHomeSyncScheduler } from './services/federation/trustedHomeSyncScheduler'
 import { createTombstonePruner } from './services/federation/tombstonePruner'
+import { createAuditPruner } from './services/federation/trustedHomeAuditPruner'
 import { createProgressOutboxWorker } from './services/federation/progressOutboxWorker'
 import { syncRemoteNode } from './services/federation/catalogSync'
 import { err } from './lib/response'
@@ -204,6 +205,9 @@ export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string
   // Tombstone pruner — runs once on startup then daily
   const tombstonePruner = createTombstonePruner(db, config.tombstoneRetentionDays)
 
+  // Audit event pruner — runs once on startup then daily
+  const auditPruner = createAuditPruner(db, config.auditRetentionDays)
+
   // Federated progress outbox worker — bounded retry for push jobs
   const progressOutboxWorker = createProgressOutboxWorker(db, {
     intervalMs: config.progressOutboxWorkerIntervalMs,
@@ -218,6 +222,7 @@ export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string
     enrichmentQueue.start(db)
     trustedHomeSyncScheduler.start()
     tombstonePruner.start()
+    auditPruner.start()
     progressOutboxWorker.start()
   })
 
@@ -225,6 +230,7 @@ export function buildServer(db: DrizzleDB, localNodeId: string, baseUrl?: string
     enrichmentQueue.stop()
     await trustedHomeSyncScheduler.stop()
     await tombstonePruner.stop()
+    await auditPruner.stop()
     await progressOutboxWorker.stop()
   })
 

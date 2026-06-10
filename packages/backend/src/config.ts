@@ -175,6 +175,15 @@ export const config = {
   // Tombstone retention
   tombstoneRetentionDays: Math.max(1, Number(process.env.TOMBSTONE_RETENTION_DAYS ?? 90)),
 
+  // Audit event retention
+  // Valid range: 1–3650 days. Invalid or out-of-range values are clamped to bounds.
+  // Default: 90 days. Set TRUSTED_HOME_AUDIT_RETENTION_DAYS to override.
+  auditRetentionDays: (() => {
+    const raw = Number(process.env.TRUSTED_HOME_AUDIT_RETENTION_DAYS ?? 90)
+    const n = isFinite(raw) && !isNaN(raw) ? raw : 90
+    return Math.min(3650, Math.max(1, Math.round(n)))
+  })(),
+
   // Public base URL — validated and normalized; null if not set
   baseUrl: configuredBaseUrl,
 

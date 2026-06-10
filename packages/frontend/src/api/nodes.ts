@@ -379,7 +379,7 @@ export interface NodeSettingsSummary {
 }
 
 export function getSyncDiagnostics() {
-  return apiFetch<SyncDiagnosticsResponse>('/api/v1/admin/sync-diagnostics')
+  return apiFetch<SyncDiagnosticsResponseExtended>('/api/v1/admin/sync-diagnostics')
 }
 
 export function updateNodeSettings(nodeId: string, settings: NodeSettingsUpdateRequest) {
@@ -490,6 +490,12 @@ export interface AuditSummaryLast24h {
 
 export interface AuditSummaryResponse {
   last24h: AuditSummaryLast24h
+  retentionDays: number
+  pruneCutoff: string
+  oldAuditEventsCount: number
+  lastPruneAt: string | null
+  lastPruneDeletedCount: number | null
+  lastPruneStatus: 'ok' | 'failed' | 'not_run'
 }
 
 export function getAuditEvents(opts?: { limit?: number; offset?: number; action?: AuditAction }) {

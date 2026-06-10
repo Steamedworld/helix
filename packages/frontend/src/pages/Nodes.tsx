@@ -24,7 +24,7 @@ import {
 } from '../api/nodes'
 import { getServerConfig } from '../api/config'
 import { getHealth } from '../api/health'
-import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic, RemotePlaybackDiagnostic, PlaybackIssueDiagnostic, InviteSummary, AcceptInviteResponse, AccessLibrarySummary, AccessUpdateGrant, SyncResponse, SyncDiagnosticsResponse, SyncDiagnosticsHomeEntry, RefreshSecretHealthEntry, SyncDiagnosticsResponseExtended, PlaybackDiagnosticsResponse, AuditEvent, AuditEventsResponse } from '../api/nodes'
+import type { NodeRecord, NodeCapabilities, DirectPlaybackDiagnostic, RemotePlaybackDiagnostic, PlaybackIssueDiagnostic, InviteSummary, AcceptInviteResponse, AccessLibrarySummary, AccessUpdateGrant, SyncResponse, SyncDiagnosticsResponse, SyncDiagnosticsHomeEntry, RefreshSecretHealthEntry, SyncDiagnosticsResponseExtended, PlaybackDiagnosticsResponse, AuditEvent, AuditEventsResponse, AuditSummaryResponse } from '../api/nodes'
 import type { ServerConfig } from '../api/config'
 import type { HealthResponse } from '../api/health'
 
@@ -1336,6 +1336,7 @@ interface TrustedHomeActivityProps {
 function TrustedHomeActivity({ nodes }: TrustedHomeActivityProps) {
   const [open, setOpen] = useState(false)
   const [data, setData] = useState<AuditEventsResponse | null>(null)
+  const [auditSummary, setAuditSummary] = useState<AuditSummaryResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [offset, setOffset] = useState(0)
@@ -1346,10 +1347,16 @@ function TrustedHomeActivity({ nodes }: TrustedHomeActivityProps) {
   function loadPage(off: number) {
     setLoading(true)
     setError(null)
-    getAuditEvents({ limit: PAGE, offset: off })
-      .then((res) => {
-        if (res.ok) setData(res.data)
+    Promise.all([
+      getAuditEvents({ limit: PAGE, offset: off }),
+      off === 0 ? getSyncDiagnostics() : Promise.resolve(null),
+    ])
+      .then(([evRes, diagRes]) => {
+        if (evRes.ok) setData(evRes.data)
         else setError('Failed to load activity')
+        if (diagRes && 'ok' in diagRes && diagRes.ok && diagRes.data.auditSummary) {
+          setAuditSummary(diagRes.data.auditSummary)
+        }
       })
       .catch(() => setError('Failed to load activity'))
       .finally(() => setLoading(false))
@@ -1409,6 +1416,32 @@ function TrustedHomeActivity({ nodes }: TrustedHomeActivityProps) {
 
       {open && (
         <div style={{ marginTop: 12 }}>
+          {auditSummary && (
+            <div style={{ display: 'flex', gap: 16, marginBottom: 10, fontSize: 11, color: 'var(--ink-4)', flexWrap: 'wrap' }}>
+              <span>Retention: <strong style={{ color: 'var(--ink-2)' }}>{auditSummary.retentionDays}d</strong></span>
+              <span>Prune cutoff: <strong style={{ color: 'var(--ink-2)' }}>{new Date(auditSummary.pruneCutoff).toLocaleDateString()}</strong></span>
+              {auditSummary.oldAuditEventsCount > 0 && (
+                <span style={{ color: 'var(--warn, #b8860b)' }}>
+                  {auditSummary.oldAuditEventsCount} events past cutoff (will be pruned)
+                </span>
+              )}
+              <span>
+                Last cleanup:{' '}
+                <strong style={{ color: auditSummary.lastPruneStatus === 'failed' ? 'var(--bad)' : 'var(--ink-2)' }}>
+                  {auditSummary.lastPruneStatus === 'ok'
+                    ? auditSummary.lastPruneAt
+                      ? new Date(auditSummary.lastPruneAt).toLocaleString()
+                      : 'OK'
+                    : auditSummary.lastPruneStatus === 'failed'
+                    ? 'Failed'
+                    : 'Not run yet'}
+                </strong>
+                {auditSummary.lastPruneStatus === 'ok' && auditSummary.lastPruneDeletedCount !== null && auditSummary.lastPruneDeletedCount > 0 && (
+                  <span style={{ color: 'var(--ink-4)', marginLeft: 4 }}>({auditSummary.lastPruneDeletedCount} deleted)</span>
+                )}
+              </span>
+            </div>
+          )}
           {loading && <div style={{ fontSize: 12, color: 'var(--ink-4)' }}>Loading…</div>}
           {error && <div style={{ fontSize: 12, color: 'var(--bad)' }}>{error}</div>}
           {!loading && !error && data && (

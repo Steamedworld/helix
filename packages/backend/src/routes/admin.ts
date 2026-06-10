@@ -7,6 +7,7 @@ import { makeRequireAdmin } from '../middleware/auth'
 import { computeSyncSafetyEstimate } from '../services/federation/catalogSync'
 import { deriveSyncHealth } from '../services/federation/syncHealthRollup'
 import { config, getPlaybackRefreshSecretHealth } from '../config'
+import { getAuditPruneState, pruneAuditEvents } from '../services/federation/trustedHomeAuditPruner'
 
 // Safe label for MEDIA_TOKEN_SECRET health
 function getMediaTokenSecretHealth(): 'explicit_secret' | 'not_configured' {
@@ -338,16 +339,24 @@ export async function adminRoutes(
     // media IDs, user IDs, tokens, raw error bodies, paths, or stack traces.
 
     const since24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString()
+    const auditRetentionDays = config.auditRetentionDays
+    const auditPruneCutoff = new Date(now.getTime() - auditRetentionDays * 24 * 60 * 60 * 1000).toISOString()
 
-    const auditCountRows = await db
-      .select({
-        action: trustedHomeAuditEvents.action,
-        result: trustedHomeAuditEvents.result,
-        count: sql<number>`count(*)`,
-      })
-      .from(trustedHomeAuditEvents)
-      .where(gt(trustedHomeAuditEvents.occurred_at, since24h))
-      .groupBy(trustedHomeAuditEvents.action, trustedHomeAuditEvents.result)
+    const [auditCountRows, oldAuditRows] = await Promise.all([
+      db
+        .select({
+          action: trustedHomeAuditEvents.action,
+          result: trustedHomeAuditEvents.result,
+          count: sql<number>`count(*)`,
+        })
+        .from(trustedHomeAuditEvents)
+        .where(gt(trustedHomeAuditEvents.occurred_at, since24h))
+        .groupBy(trustedHomeAuditEvents.action, trustedHomeAuditEvents.result),
+      db
+        .select({ count: sql<number>`count(*)` })
+        .from(trustedHomeAuditEvents)
+        .where(sql`${trustedHomeAuditEvents.occurred_at} < ${auditPruneCutoff}`),
+    ])
 
     const auditMap: Record<string, Record<string, number>> = {}
     for (const row of auditCountRows) {
@@ -360,6 +369,9 @@ export async function adminRoutes(
       if (result) return auditMap[action][result] ?? 0
       return Object.values(auditMap[action]).reduce((a, b) => a + b, 0)
     }
+
+    const oldAuditEventsCount = Number(oldAuditRows[0]?.count ?? 0)
+    const pruneState = getAuditPruneState()
 
     const auditSummary = {
       last24h: {
@@ -374,6 +386,12 @@ export async function adminRoutes(
         playbackProxyAttempts: auditCount('playback_proxy_attempt', 'success'),
         playbackProxyErrors: auditCount('playback_proxy_attempt', 'error'),
       },
+      retentionDays: auditRetentionDays,
+      pruneCutoff: auditPruneCutoff,
+      oldAuditEventsCount,
+      lastPruneAt: pruneState.lastPruneAt,
+      lastPruneDeletedCount: pruneState.lastPruneDeletedCount,
+      lastPruneStatus: pruneState.lastPruneStatus,
     }
 
     return ok({
@@ -480,5 +498,22 @@ export async function adminRoutes(
       limit,
       offset,
     })
+  })
+
+  // POST /admin/trusted-home-audit-events/prune — manually trigger audit event pruning (admin only)
+  //
+  // Deletes trusted_home_audit_events older than the configured retention window.
+  // Best-effort: returns pruned count on success, error message on failure.
+  // NEVER deletes from any other table.
+  app.post('/admin/trusted-home-audit-events/prune', { preHandler: requireAdmin }, async (_req, reply) => {
+    try {
+      const { pruned } = await pruneAuditEvents(db, config.auditRetentionDays)
+      const retentionDays = config.auditRetentionDays
+      const pruneCutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString()
+      return ok({ pruned, retentionDays, pruneCutoff })
+    } catch (e) {
+      reply.status(500)
+      return err('Prune failed. Check server logs for details.')
+    }
   })
 }
