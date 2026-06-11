@@ -6,7 +6,7 @@ import type { DrizzleDB } from '../db/client'
 import { makeRequireAdmin } from '../middleware/auth'
 import { computeSyncSafetyEstimate } from '../services/federation/catalogSync'
 import { deriveSyncHealth } from '../services/federation/syncHealthRollup'
-import { config, getPlaybackRefreshSecretHealth } from '../config'
+import { config, getPlaybackRefreshSecretHealth, getViewerIdentitySecretHealth } from '../config'
 import { getAuditPruneState, pruneAuditEvents } from '../services/federation/trustedHomeAuditPruner'
 
 // Safe label for MEDIA_TOKEN_SECRET health
@@ -180,6 +180,16 @@ export async function adminRoutes(
         ? 'No signing secret configured. Production startup will fail. Set TRUSTED_HOME_PLAYBACK_REFRESH_SECRET.'
         : null
 
+    const viewerIdentitySecretState = getViewerIdentitySecretHealth()
+    const viewerIdentitySecretRecommendation: string | null =
+      viewerIdentitySecretState === 'derived_fallback'
+        ? 'Set TRUSTED_HOME_VIEWER_IDENTITY_SECRET for explicit key isolation.'
+        : viewerIdentitySecretState === 'dev_random'
+        ? 'Deterministic dev key in use. Set TRUSTED_HOME_VIEWER_IDENTITY_SECRET or MEDIA_TOKEN_SECRET for stable per-user identity across restarts.'
+        : viewerIdentitySecretState === 'missing'
+        ? 'No viewer identity secret configured. Production startup will fail. Set TRUSTED_HOME_VIEWER_IDENTITY_SECRET.'
+        : null
+
     const secretsHealth = {
       playbackRefreshToken: {
         state: playbackRefreshState,
@@ -191,6 +201,10 @@ export async function adminRoutes(
           getMediaTokenSecretHealth() === 'not_configured'
             ? 'Set MEDIA_TOKEN_SECRET for signed media token signing key isolation.'
             : null,
+      },
+      viewerIdentitySecret: {
+        state: viewerIdentitySecretState,
+        ...(viewerIdentitySecretRecommendation !== null ? { recommendation: viewerIdentitySecretRecommendation } : {}),
       },
     }
 
@@ -213,6 +227,13 @@ export async function adminRoutes(
       .from(nodes)
       .where(sql`${nodes.kind} = 'remote' AND ${nodes.base_url} IS NOT NULL`)
     const homesWithProxyAvailable = Number(homesWithProxyRows[0].count)
+
+    // Count remote nodes with per-user progress identity allowed
+    const homesWithPerUserIdentityRows = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(nodes)
+      .where(sql`${nodes.kind} = 'remote' AND ${nodes.allow_progress_user_identity} = 1`)
+    const homesWithPerUserProgressIdentityAllowed = Number(homesWithPerUserIdentityRows[0].count)
 
     // Aggregate last_playback_issue_code counts across all remote nodes (per-code histogram)
     // NEVER include node IDs in the histogram
@@ -251,6 +272,7 @@ export async function adminRoutes(
       },
       homesWithPlaybackIssue,
       homesWithProxyAvailable,
+      homesWithPerUserProgressIdentityAllowed,
     }
 
     // ─── Progress outbox aggregate diagnostics ──────────────────────────────────

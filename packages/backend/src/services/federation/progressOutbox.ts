@@ -19,6 +19,9 @@ import { recordAuditEvent } from './auditEvents'
 //
 // NEVER stores: user_id, federation token, raw URL, username, email,
 // filesystem path, Authorization header, raw error body, or stack trace.
+//
+// viewerIdentityHash (optional): opaque per-user HMAC hash (user_v1 mode). NULL ⇒
+// node_v1 aggregate. This is the ONLY identity material stored — never the user_id.
 
 export async function enqueueProgressPush(
   db: DrizzleDB,
@@ -30,9 +33,11 @@ export async function enqueueProgressPush(
     durationSeconds: number | null
     watched: boolean
     localUpdatedAt: string
+    viewerIdentityHash?: string | null
   }
 ): Promise<void> {
   const { nodeId, mediaId, clientEventId, positionSeconds, durationSeconds, watched, localUpdatedAt } = opts
+  const viewerIdentityHash = opts.viewerIdentityHash ?? null
   const now = new Date().toISOString()
 
   // Check for an existing row
@@ -59,6 +64,7 @@ export async function enqueueProgressPush(
       duration_seconds: durationSeconds,
       watched: watched ? 1 : 0,
       local_updated_at: localUpdatedAt,
+      viewer_identity_hash: viewerIdentityHash,
       attempt_count: 0,
       max_attempts: 3,
       status: 'pending',
@@ -89,6 +95,7 @@ export async function enqueueProgressPush(
         duration_seconds: durationSeconds,
         watched: watched ? 1 : 0,
         local_updated_at: localUpdatedAt,
+        viewer_identity_hash: viewerIdentityHash,
         updated_at: now,
       })
       .where(eq(federatedProgressOutbox.id, existing.id))
@@ -103,6 +110,7 @@ export async function enqueueProgressPush(
       duration_seconds: durationSeconds,
       watched: watched ? 1 : 0,
       local_updated_at: localUpdatedAt,
+      viewer_identity_hash: viewerIdentityHash,
       attempt_count: 0,
       status: 'pending',
       next_attempt_at: now,

@@ -27,6 +27,7 @@ export type AuditReasonCode =
   | 'read_denied_no_node'
   | 'progress_received'
   | 'progress_stale_ignored'
+  | 'per_user_identity_downgraded'
   | 'proxy_attempt_success'
   | 'proxy_attempt_failed'
 

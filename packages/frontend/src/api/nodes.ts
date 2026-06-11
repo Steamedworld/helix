@@ -14,6 +14,8 @@ export interface NodeCapabilities {
   baseUrlConfigured: boolean
   publicBaseUrl?: string
   directPlaybackRequiresBrowserReachability: true
+  // Optional: older peer Homes do not send it — absent means unsupported.
+  supportsPerUserProgressIdentity?: boolean
 }
 
 export interface PlaybackIssueDiagnostic {
@@ -40,6 +42,7 @@ export interface NodeRecord {
   progressSyncEnabled: boolean
   allowProgressPush: boolean
   allowProgressReceive: boolean
+  allowProgressUserIdentity: boolean
   created_at: string
   updated_at: string
 }
@@ -367,6 +370,7 @@ export interface NodeSettingsUpdateRequest {
   progressSyncEnabled?: boolean
   allowProgressPush?: boolean
   allowProgressReceive?: boolean
+  allowProgressUserIdentity?: boolean
 }
 
 export interface NodeSettingsSummary {
@@ -376,6 +380,7 @@ export interface NodeSettingsSummary {
   progressSyncEnabled: boolean
   allowProgressPush: boolean
   allowProgressReceive: boolean
+  allowProgressUserIdentity: boolean
 }
 
 export function getSyncDiagnostics() {
@@ -393,6 +398,9 @@ export function updateNodeSettings(nodeId: string, settings: NodeSettingsUpdateR
 
 export interface RemoteProgressResponse {
   available: boolean
+  // Read mode used for this lookup: 'user' (per-user identity) or 'node' (aggregate).
+  // Safe label only — the viewer identity hash is never sent to the browser.
+  scope?: 'user' | 'node'
   positionSeconds?: number
   durationSeconds?: number
   watched?: boolean
@@ -426,6 +434,7 @@ export interface PlaybackDiagnosticsResponse {
   refreshTokenHealth: PlaybackDiagnosticsRefreshTokenHealth
   homesWithPlaybackIssue: number
   homesWithProxyAvailable: number
+  homesWithPerUserProgressIdentityAllowed: number
 }
 
 export interface MediaTokenHealthEntry {
@@ -436,6 +445,7 @@ export interface MediaTokenHealthEntry {
 export interface SecretsHealthResponseExtended {
   playbackRefreshToken: RefreshSecretHealthEntry
   mediaToken?: MediaTokenHealthEntry
+  viewerIdentitySecret?: RefreshSecretHealthEntry
 }
 
 export interface SyncDiagnosticsResponseExtended extends SyncDiagnosticsResponse {

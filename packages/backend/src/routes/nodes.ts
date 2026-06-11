@@ -11,7 +11,8 @@ import { syncInProgress } from '../services/federation/trustedHomeSyncScheduler'
 import { classifySyncError } from '../services/federation/syncErrorClassifier'
 import { canViewLibrary, canPlayLibrary } from '../lib/permissions'
 import { fetchRemoteCapabilities, type NodeCapabilities } from '../services/federation/capabilities'
-import { isLoopbackUrl, isPrivateUrl, config, resolvePlaybackRefreshSecret } from '../config'
+import { isLoopbackUrl, isPrivateUrl, config, resolvePlaybackRefreshSecret, resolveViewerIdentitySecret } from '../config'
+import { deriveViewerIdentityHash } from '../services/federation/viewerIdentity'
 import {
   signPlaybackRefreshToken,
   verifyPlaybackRefreshToken,
@@ -55,6 +56,7 @@ function sanitizeNode(node: NodeRow) {
     progressSyncEnabled: node.progress_sync_enabled === 1,
     allowProgressPush: node.allow_progress_push === 1,
     allowProgressReceive: node.allow_progress_receive === 1,
+    allowProgressUserIdentity: node.allow_progress_user_identity === 1,
   }
 }
 
@@ -185,6 +187,7 @@ export async function nodeRoutes(
       progressSyncEnabled: boolean
       allowProgressPush: boolean
       allowProgressReceive: boolean
+      allowProgressUserIdentity: boolean
     }>
   }>('/:id/settings', { preHandler: requireAdmin }, async (req, reply) => {
     const [node] = await db.select().from(nodes).where(eq(nodes.id, req.params.id))
@@ -204,6 +207,9 @@ export async function nodeRoutes(
     if (typeof req.body?.allowProgressReceive === 'boolean') {
       updates.allow_progress_receive = req.body.allowProgressReceive ? 1 : 0
     }
+    if (typeof req.body?.allowProgressUserIdentity === 'boolean') {
+      updates.allow_progress_user_identity = req.body.allowProgressUserIdentity ? 1 : 0
+    }
 
     await db.update(nodes).set(updates).where(eq(nodes.id, req.params.id))
     const [updated] = await db.select().from(nodes).where(eq(nodes.id, req.params.id))
@@ -217,6 +223,7 @@ export async function nodeRoutes(
         progressSyncEnabled: updated.progress_sync_enabled === 1,
         allowProgressPush: updated.allow_progress_push === 1,
         allowProgressReceive: updated.allow_progress_receive === 1,
+        allowProgressUserIdentity: updated.allow_progress_user_identity === 1,
       },
     })
 
@@ -228,6 +235,7 @@ export async function nodeRoutes(
       progressSyncEnabled: updated.progress_sync_enabled === 1,
       allowProgressPush: updated.allow_progress_push === 1,
       allowProgressReceive: updated.allow_progress_receive === 1,
+      allowProgressUserIdentity: updated.allow_progress_user_identity === 1,
     })
   })
 
@@ -1309,7 +1317,28 @@ export async function nodeRoutes(
       // 6. Build upstream URL from stored node.base_url ONLY (SSRF prevention)
       const upstreamUrl = `${node.base_url}/api/v1/federation/media/${mediaId}/remote-progress`
 
-      // 7. Make upstream request
+      // 7. Make upstream request — forward per-user viewer identity headers when enabled.
+      // Hash is recomputed server-side from user.id + localNodeId + secret (symmetric with push).
+      // Headers travel server-to-server only — never returned to the browser.
+      const upstreamHeaders: Record<string, string> = {
+        Authorization: `Bearer ${rawToken}`,
+        'X-Caller-Node-Id': localNodeId,
+      }
+      // scope is a safe label ('user' | 'node') describing which read mode was used.
+      // It never carries the hash and is the only identity-related field returned.
+      let identityScope: 'user' | 'node' = 'node'
+      if (node.allow_progress_user_identity) {
+        try {
+          const identityHash = deriveViewerIdentityHash(resolveViewerIdentitySecret(), localNodeId, user.id)
+          upstreamHeaders['X-Viewer-Identity-Kind'] = 'user'
+          upstreamHeaders['X-Viewer-Identity-Version'] = 'v1'
+          upstreamHeaders['X-Viewer-Identity-Hash'] = identityHash
+          identityScope = 'user'
+        } catch {
+          // Secret unavailable — degrade to node-mode read rather than failing the request
+        }
+      }
+
       const controller = new AbortController()
       const timeoutId = setTimeout(
         () => controller.abort(),
@@ -1320,10 +1349,7 @@ export async function nodeRoutes(
       try {
         upstreamRes = await fetch(upstreamUrl, {
           method: 'GET',
-          headers: {
-            Authorization: `Bearer ${rawToken}`,
-            'X-Caller-Node-Id': localNodeId,
-          },
+          headers: upstreamHeaders,
           signal: controller.signal,
         })
       } catch {
@@ -1370,9 +1396,11 @@ export async function nodeRoutes(
       }
 
       // 10. Return safe progress fields only — NEVER federation token, Authorization,
-      //     base_url, upstream body on error, stack trace, or filesystem path
+      //     base_url, upstream body on error, stack trace, or filesystem path.
+      //     scope is a mode label only — the viewer identity hash is never returned.
       return ok({
         available: true as const,
+        scope: identityScope,
         positionSeconds: typeof rp.positionSeconds === 'number' ? rp.positionSeconds : undefined,
         durationSeconds: typeof rp.durationSeconds === 'number' ? rp.durationSeconds : undefined,
         watched: typeof rp.watched === 'boolean' ? rp.watched : undefined,

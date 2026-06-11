@@ -36,6 +36,8 @@ export const nodes = sqliteTable('nodes', {
   progress_sync_enabled: integer('progress_sync_enabled').notNull().default(0),
   allow_progress_push: integer('allow_progress_push').notNull().default(0),
   allow_progress_receive: integer('allow_progress_receive').notNull().default(0),
+  // Per-user viewer identity — bilateral opt-in (default disabled). Both Homes must enable.
+  allow_progress_user_identity: integer('allow_progress_user_identity').notNull().default(0),
   created_at: text('created_at').notNull(),
   updated_at: text('updated_at').notNull(),
 })
@@ -283,6 +285,8 @@ export const federatedProgressOutbox = sqliteTable('federated_progress_outbox', 
   status: text('status', { enum: ['pending', 'in_progress', 'synced', 'failed', 'abandoned'] })
     .notNull()
     .default('pending'),
+  // Opaque HMAC viewer-identity hash for user_v1 mode. NULL ⇒ node_v1 (aggregate). No user_id ever stored.
+  viewer_identity_hash: text('viewer_identity_hash'),
   next_attempt_at: text('next_attempt_at').notNull(),
   last_attempt_at: text('last_attempt_at'),
   last_error_code: text('last_error_code'),
@@ -340,6 +344,8 @@ export const remoteWatchProgress = sqliteTable('remote_watch_progress', {
   watched: integer('watched').notNull().default(0),
   updated_at: text('updated_at').notNull(),
   client_event_id: text('client_event_id'),
+  // Read-scoping safety rail: 'node' (aggregate) or 'user' (per-user opaque hash). Not part of unique index.
+  viewer_identity_kind: text('viewer_identity_kind').notNull().default('node'),
   created_at: text('created_at').notNull(),
 }, (t) => ({
   unique_viewer_media: uniqueIndex('idx_remote_progress_unique').on(t.source_node_id, t.remote_viewer_hash, t.media_item_id),

@@ -9,6 +9,8 @@ import { canViewLibrary, canPlayLibrary, getViewableLibraryIds } from '../lib/pe
 import { createHash } from 'crypto'
 import { classifySyncError } from '../services/federation/syncErrorClassifier'
 import { enqueueProgressPush } from '../services/federation/progressOutbox'
+import { deriveViewerIdentityHash } from '../services/federation/viewerIdentity'
+import { resolveViewerIdentitySecret } from '../config'
 import { logger } from '../lib/logger'
 
 // ─── Classify enqueue error to a safe code ───────────────────────────────────
@@ -18,6 +20,21 @@ import { logger } from '../lib/logger'
 
 function classifyEnqueueError(e: unknown): string {
   return classifySyncError(e).code
+}
+
+// ─── Safe viewer identity derivation ─────────────────────────────────────────
+//
+// Derive the opaque per-user viewer identity hash, downgrading to node mode
+// (null) if the secret is unavailable (e.g. production without
+// TRUSTED_HOME_VIEWER_IDENTITY_SECRET or MEDIA_TOKEN_SECRET). Identity
+// derivation must never break a local progress write.
+
+function safeViewerIdentityHash(localNodeId: string, userId: string): string | null {
+  try {
+    return deriveViewerIdentityHash(resolveViewerIdentitySecret(), localNodeId, userId)
+  } catch {
+    return null
+  }
 }
 
 export async function watchStateRoutes(
@@ -146,7 +163,7 @@ export async function watchStateRoutes(
           .limit(1)
         if (lib && lib.node_id !== localNodeId) {
           const [sourceNode] = await db
-            .select({ id: nodes.id, progress_sync_enabled: nodes.progress_sync_enabled, allow_progress_push: nodes.allow_progress_push })
+            .select({ id: nodes.id, progress_sync_enabled: nodes.progress_sync_enabled, allow_progress_push: nodes.allow_progress_push, allow_progress_user_identity: nodes.allow_progress_user_identity })
             .from(nodes)
             .where(eq(nodes.id, lib.node_id))
             .limit(1)
@@ -160,6 +177,13 @@ export async function watchStateRoutes(
               .update(`${user.id}:${mediaItemId}`)
               .digest('hex')
               .slice(0, 16)
+
+            // Per-user viewer identity (user_v1) — only when the viewer has opted in
+            // for this peer. Opaque HMAC hash; never the raw user ID. Source enforces
+            // its own side and downgrades to node_v1 if it has not opted in.
+            const viewerIdentityHash = sourceNode.allow_progress_user_identity && localNodeId
+              ? safeViewerIdentityHash(localNodeId, user.id)
+              : null
 
             // Mark pending in watch_states before enqueue (synchronous DB write)
             await db.update(watchStates).set({
@@ -176,6 +200,7 @@ export async function watchStateRoutes(
               durationSeconds: duration_seconds ?? existing.duration_seconds ?? null,
               watched: savedCompleted,
               localUpdatedAt: now,
+              viewerIdentityHash,
             }).catch((enqueueErr) => {
               // Enqueue failure is non-fatal — log safe code, continue
               logger.warn(
@@ -216,7 +241,7 @@ export async function watchStateRoutes(
           .limit(1)
         if (lib && lib.node_id !== localNodeId) {
           const [sourceNode] = await db
-            .select({ id: nodes.id, progress_sync_enabled: nodes.progress_sync_enabled, allow_progress_push: nodes.allow_progress_push })
+            .select({ id: nodes.id, progress_sync_enabled: nodes.progress_sync_enabled, allow_progress_push: nodes.allow_progress_push, allow_progress_user_identity: nodes.allow_progress_user_identity })
             .from(nodes)
             .where(eq(nodes.id, lib.node_id))
             .limit(1)
@@ -230,6 +255,13 @@ export async function watchStateRoutes(
               .update(`${user.id}:${mediaItemId}`)
               .digest('hex')
               .slice(0, 16)
+
+            // Per-user viewer identity (user_v1) — only when the viewer has opted in
+            // for this peer. Opaque HMAC hash; never the raw user ID. Source enforces
+            // its own side and downgrades to node_v1 if it has not opted in.
+            const viewerIdentityHash = sourceNode.allow_progress_user_identity && localNodeId
+              ? safeViewerIdentityHash(localNodeId, user.id)
+              : null
 
             // Mark pending in watch_states before enqueue
             await db.update(watchStates).set({
@@ -246,6 +278,7 @@ export async function watchStateRoutes(
               durationSeconds: duration_seconds ?? null,
               watched: savedCompleted,
               localUpdatedAt: now,
+              viewerIdentityHash,
             }).catch((enqueueErr) => {
               // Enqueue failure is non-fatal — log safe code, continue
               logger.warn(

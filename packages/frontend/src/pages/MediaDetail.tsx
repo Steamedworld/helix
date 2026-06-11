@@ -1361,7 +1361,7 @@ export function MediaDetail() {
                     }}
                   >
                     <p style={{ fontSize: 12, color: 'var(--ink-2)', fontWeight: 500 }}>
-                      Remote progress available — Resume from {Math.floor(remoteProgress.positionSeconds / 60)}m {Math.round(remoteProgress.positionSeconds % 60)}s
+                      {remoteProgress.scope === 'user' ? 'Remote progress available for this profile' : 'Remote progress available'} — Resume from {Math.floor(remoteProgress.positionSeconds / 60)}m {Math.round(remoteProgress.positionSeconds % 60)}s
                     </p>
                     <button
                       onClick={handleUseRemotePosition}
@@ -1370,7 +1370,7 @@ export function MediaDetail() {
                     >
                       Use remote position
                     </button>
-                    <p style={{ fontSize: 11, color: 'var(--ink-4)' }}>Remote progress available</p>
+                    <p style={{ fontSize: 11, color: 'var(--ink-4)' }}>{remoteProgress.scope === 'user' ? 'Remote progress available for this profile' : 'Remote progress available'}</p>
                   </div>
                 )
               }

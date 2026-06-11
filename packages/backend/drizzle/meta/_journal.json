@@ -151,5 +151,13 @@
       "tag": "0018_audit_events",
       "breakpoints": true
     }
+    ,
+    {
+      "idx": 19,
+      "version": "5",
+      "when": 1749772800000,
+      "tag": "0019_per_user_viewer_identity",
+      "breakpoints": true
+    }
   ]
 }

@@ -144,6 +144,64 @@ export function resolvePlaybackRefreshSecret(): string {
   return randomBytes(32).toString('hex')
 }
 
+// ─── Per-user viewer identity secret ──────────────────────────────────────────
+
+/**
+ * Resolve the HMAC-SHA256 secret used to derive opaque per-user viewer identity
+ * hashes for federated progress sync. The secret lives ONLY on the viewer Home;
+ * the source Home never computes it.
+ *
+ * Resolution order:
+ *   1. TRUSTED_HOME_VIEWER_IDENTITY_SECRET — explicit, recommended.
+ *   2. MEDIA_TOKEN_SECRET present — derive a domain-separated key via
+ *      HMAC(MEDIA_TOKEN_SECRET, "viewer_identity_v1"). Stable across restarts.
+ *   3. Development only — a deterministic per-process dev key. Deliberately NOT
+ *      random: a random dev secret silently breaks per-user resume across restarts
+ *      and orphans rows on the source. Production without any secret throws.
+ *
+ * Returns a hex string safe for use as an HMAC key. NEVER logged or exposed.
+ */
+const DEV_VIEWER_IDENTITY_SECRET = createHmac('sha256', 'helix-dev-viewer-identity-v1')
+  .update('viewer_identity_v1')
+  .digest('hex')
+
+export function resolveViewerIdentitySecret(): string {
+  if (process.env.TRUSTED_HOME_VIEWER_IDENTITY_SECRET) {
+    return process.env.TRUSTED_HOME_VIEWER_IDENTITY_SECRET
+  }
+  if (process.env.MEDIA_TOKEN_SECRET) {
+    return createHmac('sha256', process.env.MEDIA_TOKEN_SECRET)
+      .update('viewer_identity_v1')
+      .digest('hex')
+  }
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'TRUSTED_HOME_VIEWER_IDENTITY_SECRET (or MEDIA_TOKEN_SECRET) must be set in production ' +
+      'to use per-user federated progress identity. Set TRUSTED_HOME_VIEWER_IDENTITY_SECRET.'
+    )
+  }
+  // Development fallback — deterministic (NOT random) so per-user resume survives restarts.
+  return DEV_VIEWER_IDENTITY_SECRET
+}
+
+/**
+ * Resolution state of the viewer identity signing key. Mirrors RefreshSecretHealth.
+ * NEVER returns the secret value, hash, or env var contents — only the state label.
+ *   dev_random here means "development deterministic fallback" (non-production).
+ */
+export function getViewerIdentitySecretHealth(): RefreshSecretHealth {
+  if (process.env.TRUSTED_HOME_VIEWER_IDENTITY_SECRET) {
+    return 'explicit_secret'
+  }
+  if (process.env.MEDIA_TOKEN_SECRET) {
+    return 'derived_fallback'
+  }
+  if (process.env.NODE_ENV === 'production') {
+    return 'missing'
+  }
+  return 'dev_random'
+}
+
 export const config = {
   port: Number(process.env.PORT ?? 3001),
   host: process.env.HOST ?? '0.0.0.0',

@@ -19,6 +19,11 @@ export interface NodeCapabilities {
   publicBaseUrl?: string
   // Documentation flag: direct playback requires the browser to reach this node directly.
   directPlaybackRequiresBrowserReachability: true
+
+  // Per-user progress identity (user_v1) — bilateral opt-in.
+  // Informational only: security enforcement is the bilateral flag pair, not this field.
+  // Optional: older peer Homes do not send it — absent means unsupported.
+  supportsPerUserProgressIdentity?: boolean
 }
 
 export function makeLocalCapabilities(nodeId: string, nodeName: string): NodeCapabilities {
@@ -40,6 +45,7 @@ export function makeLocalCapabilities(nodeId: string, nodeName: string): NodeCap
     baseUrlConfigured,
     publicBaseUrl: baseUrl ?? undefined,
     directPlaybackRequiresBrowserReachability: true,
+    supportsPerUserProgressIdentity: true,
   }
 }
 

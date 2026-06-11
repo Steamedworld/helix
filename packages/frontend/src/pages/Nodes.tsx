@@ -275,14 +275,13 @@ function ProgressSyncStatus({ node, onUpdated }: ProgressSyncStatusProps) {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
 
-  async function handleToggle(field: 'progressSyncEnabled' | 'allowProgressPush' | 'allowProgressReceive', value: boolean) {
+  async function handleToggle(field: 'progressSyncEnabled' | 'allowProgressPush' | 'allowProgressReceive' | 'allowProgressUserIdentity', value: boolean) {
     setSaving(true)
     setSaveError(null)
     const res = await updateNodeSettings(node.id, { [field]: value })
     setSaving(false)
     if (res.ok) {
-      // Merge updated settings into node
-      onUpdated({ ...node, progressSyncEnabled: res.data.progressSyncEnabled, allowProgressPush: res.data.allowProgressPush, allowProgressReceive: res.data.allowProgressReceive })
+      onUpdated({ ...node, progressSyncEnabled: res.data.progressSyncEnabled, allowProgressPush: res.data.allowProgressPush, allowProgressReceive: res.data.allowProgressReceive, allowProgressUserIdentity: res.data.allowProgressUserIdentity })
     } else {
       setSaveError(res.error ?? 'Failed to save setting')
     }
@@ -331,6 +330,26 @@ function ProgressSyncStatus({ node, onUpdated }: ProgressSyncStatusProps) {
             />
             <span>Allow receiving progress from this Home</span>
           </label>
+          {node.allowProgressPush && node.capabilities?.supportsPerUserProgressIdentity && (
+            <div style={{ marginLeft: 32, display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={node.allowProgressUserIdentity}
+                  disabled={saving}
+                  onChange={(e) => handleToggle('allowProgressUserIdentity', e.target.checked)}
+                />
+                <span>Use per-user progress identity</span>
+              </label>
+              {node.allowProgressUserIdentity && (
+                <div style={{ fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.4 }}>
+                  Per-user progress identity improves multi-user resume behavior.
+                  Actual user IDs, names, and emails are never sent to another Home.
+                  Both Homes must opt in.
+                </div>
+              )}
+            </div>
+          )}
         </>
       )}
       {saveError && (

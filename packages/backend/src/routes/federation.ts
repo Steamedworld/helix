@@ -13,6 +13,7 @@ import { signStreamToken } from '../lib/signedTokens'
 import { config } from '../config'
 import { remoteWatchProgress } from '../db/schema'
 import { recordAuditEvent } from '../services/federation/auditEvents'
+import { isValidViewerIdentityHash } from '../services/federation/viewerIdentity'
 
 const CONTAINER_MIME: Record<string, string> = {
   mp4: 'video/mp4',
@@ -899,6 +900,7 @@ export async function federationRoutes(
       watched: unknown
       updatedAt: unknown
       clientEventId?: unknown
+      viewerIdentity?: unknown
     }
   }>(
     '/media/:id/watch-progress',
@@ -983,7 +985,7 @@ export async function federationRoutes(
 
       // ── Step 4: validate request body ────────────────────────────────────────
       const body = req.body ?? {}
-      const { positionSeconds, durationSeconds, watched, updatedAt, clientEventId } = body
+      const { positionSeconds, durationSeconds, watched, updatedAt, clientEventId, viewerIdentity } = body
 
       if (
         typeof positionSeconds !== 'number' ||
@@ -1038,6 +1040,33 @@ export async function federationRoutes(
         safeClientEventId = clientEventId
       }
 
+      // ── Validate optional per-user viewer identity (user_v1) ───────────────────
+      // Strict: reject malformed/unsupported identity rather than coercing.
+      // The provided hash is an opaque HMAC — never re-hashed, never logged/audited.
+      let providedUserHash: string | null = null
+      if (viewerIdentity !== undefined && viewerIdentity !== null) {
+        if (typeof viewerIdentity !== 'object') {
+          reply.status(400)
+          return err('viewerIdentity must be an object')
+        }
+        const vi = viewerIdentity as { kind?: unknown; version?: unknown; hash?: unknown }
+        if (vi.kind !== 'node' && vi.kind !== 'user') {
+          reply.status(400)
+          return err('viewerIdentity.kind must be "node" or "user"')
+        }
+        if (vi.kind === 'user') {
+          if (vi.version !== 'v1') {
+            reply.status(400)
+            return err('viewerIdentity.version must be "v1"')
+          }
+          if (!isValidViewerIdentityHash(vi.hash)) {
+            reply.status(400)
+            return err('viewerIdentity.hash must be 32 lowercase hex characters')
+          }
+          providedUserHash = vi.hash
+        }
+      }
+
       // positionSeconds must not exceed durationSeconds * 1.01 (1% rounding tolerance)
       if (positionSeconds > durationSeconds * 1.01) {
         reply.status(422)
@@ -1056,7 +1085,22 @@ export async function federationRoutes(
       const hashInput = safeClientEventId
         ? `${callerIdForHash}:${safeClientEventId}`
         : callerIdForHash
-      const remoteViewerHash = createHash('sha256').update(hashInput).digest('hex').slice(0, 32)
+      const nodeViewerHash = createHash('sha256').update(hashInput).digest('hex').slice(0, 32)
+
+      // Decide identity mode. user_v1 only when the source (this Home) has opted in
+      // for this caller. One-sided opt-in → downgrade to node_v1 (no retry storm,
+      // no lost progress). The provided opaque hash is stored verbatim (no re-wrap).
+      let remoteViewerHash = nodeViewerHash
+      let viewerIdentityKind: 'node' | 'user' = 'node'
+      let identityDowngraded = false
+      if (providedUserHash) {
+        if (callerNode?.allow_progress_user_identity) {
+          remoteViewerHash = providedUserHash
+          viewerIdentityKind = 'user'
+        } else {
+          identityDowngraded = true
+        }
+      }
 
       // ── Step 6: upsert with conflict rules ──────────────────────────────────
       const updatedAtIso = updatedAtDate.toISOString()
@@ -1097,6 +1141,7 @@ export async function federationRoutes(
             watched: watched ? 1 : 0,
             updated_at: updatedAtIso,
             client_event_id: safeClientEventId,
+            viewer_identity_kind: viewerIdentityKind,
           })
           .where(eq(remoteWatchProgress.id, existing.id))
       } else {
@@ -1110,11 +1155,18 @@ export async function federationRoutes(
           watched: watched ? 1 : 0,
           updated_at: updatedAtIso,
           client_event_id: safeClientEventId,
+          viewer_identity_kind: viewerIdentityKind,
           created_at: now,
         })
       }
 
-      recordAuditEvent(db, { action: 'remote_progress_received', result: 'success', reasonCode: 'progress_received', nodeId: callerIdForHash })
+      if (identityDowngraded) {
+        // One-sided opt-in: per-user identity was requested but this Home has not
+        // opted in. Progress stored in node_v1 mode; record the downgrade (no hash).
+        recordAuditEvent(db, { action: 'remote_progress_received', result: 'skipped', reasonCode: 'per_user_identity_downgraded', nodeId: callerIdForHash })
+      } else {
+        recordAuditEvent(db, { action: 'remote_progress_received', result: 'success', reasonCode: 'progress_received', nodeId: callerIdForHash })
+      }
       return ok({ accepted: true })
     }
   )
@@ -1190,7 +1242,66 @@ export async function federationRoutes(
         return err('Media item not found')
       }
 
-      // ── Step 4: query remote_watch_progress — aggregate by most recent updatedAt ─
+      // ── Step 4: optional per-user viewer identity (header-only transport) ───────
+      // The hash travels ONLY in server-to-server headers — never a query parameter
+      // (no leaking into access/proxy logs or referrers).
+      const idKindHeader = (req.headers['x-viewer-identity-kind'] as string | undefined)?.trim() ?? ''
+      const idVersionHeader = (req.headers['x-viewer-identity-version'] as string | undefined)?.trim() ?? ''
+      const idHashHeader = (req.headers['x-viewer-identity-hash'] as string | undefined)?.trim() ?? ''
+
+      if (idKindHeader === 'user') {
+        // Per-user read requested. Require valid identity AND source-side opt-in.
+        // On any miss/invalid/not-allowed → available:false with NO aggregate fallback
+        // (falling back would leak another household member's position).
+        if (
+          idVersionHeader !== 'v1' ||
+          !isValidViewerIdentityHash(idHashHeader) ||
+          !callerNode.allow_progress_user_identity
+        ) {
+          return ok({
+            mediaId: mediaItemId,
+            remoteProgress: { available: false as const },
+          })
+        }
+
+        const [userRow] = await db
+          .select({
+            position_seconds: remoteWatchProgress.position_seconds,
+            duration_seconds: remoteWatchProgress.duration_seconds,
+            watched: remoteWatchProgress.watched,
+            updated_at: remoteWatchProgress.updated_at,
+          })
+          .from(remoteWatchProgress)
+          .where(
+            and(
+              eq(remoteWatchProgress.source_node_id, callerNode.id),
+              eq(remoteWatchProgress.media_item_id, mediaItemId),
+              eq(remoteWatchProgress.viewer_identity_kind, 'user'),
+              eq(remoteWatchProgress.remote_viewer_hash, idHashHeader)
+            )
+          )
+          .limit(1)
+
+        if (!userRow) {
+          return ok({
+            mediaId: mediaItemId,
+            remoteProgress: { available: false as const },
+          })
+        }
+
+        return ok({
+          mediaId: mediaItemId,
+          remoteProgress: {
+            available: true as const,
+            positionSeconds: userRow.position_seconds,
+            durationSeconds: userRow.duration_seconds ?? null,
+            watched: userRow.watched === 1,
+            updatedAt: userRow.updated_at,
+          },
+        })
+      }
+
+      // ── Node mode (default, unchanged) — aggregate by most recent updatedAt ──────
       // Multiple viewer hashes possible; return most recently updated row (v1 aggregate).
       const rows = await db
         .select({

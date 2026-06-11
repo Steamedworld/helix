@@ -236,12 +236,17 @@ async function processJob(
   // Build URL from DB-stored base_url only — no user-supplied input
   const upstreamUrl = `${node.base_url}/api/v1/federation/media/${job.media_id}/watch-progress`
 
+  // Per-user viewer identity (user_v1) — forward the stored opaque hash only when present.
+  // The hash is carried in the PUT body (server-to-server). Never logged or audited.
   const body = JSON.stringify({
     positionSeconds: job.position_seconds,
     durationSeconds: job.duration_seconds ?? undefined,
     watched: job.watched === 1,
     updatedAt: job.local_updated_at,
     clientEventId: job.client_event_id,
+    ...(job.viewer_identity_hash
+      ? { viewerIdentity: { kind: 'user', version: 'v1', hash: job.viewer_identity_hash } }
+      : {}),
   })
 
   let res: Response
