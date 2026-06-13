@@ -341,13 +341,12 @@ function ProgressSyncStatus({ node, onUpdated }: ProgressSyncStatusProps) {
                 />
                 <span>Use per-user progress identity</span>
               </label>
-              {node.allowProgressUserIdentity && (
-                <div style={{ fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.4 }}>
-                  Per-user progress identity improves multi-user resume behavior.
-                  Actual user IDs, names, and emails are never sent to another Home.
-                  Both Homes must opt in.
-                </div>
-              )}
+              <div style={{ fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.4 }}>
+                Per-user progress identity improves multi-user resume behavior.
+                Actual user IDs, names, and emails are never sent. Both Homes must opt in.
+                Per-user identity affects future progress sync only.
+                Secret rotation may reset per-user resume continuity.
+              </div>
             </div>
           )}
         </>
@@ -361,18 +360,61 @@ function ProgressSyncStatus({ node, onUpdated }: ProgressSyncStatusProps) {
 
 // ─── Secrets health warning ───────────────────────────────────────────────────
 
-function SecretsHealthWarning({ health }: { health: RefreshSecretHealthEntry | undefined }) {
-  if (!health) return null
-  if (health.state === 'explicit_secret') return null
+// Presentational warning for a signing-key health state. Defaults to the playback
+// refresh key messaging; pass `messages` to reuse it for another secret (e.g. the
+// viewer identity key). Renders nothing when the key is healthy (explicit_secret).
+type SecretHealthMessages = {
+  derived_fallback: string
+  dev_random: string
+  missing: string
+}
 
-  const message =
-    health.state === 'derived_fallback'
-      ? 'Playback refresh key is using a derived fallback. Set TRUSTED_HOME_PLAYBACK_REFRESH_SECRET for isolation.'
-      : health.state === 'dev_random'
-      ? 'Playback refresh key is randomly generated each restart (development mode). Tokens do not survive server restarts.'
-      : health.state === 'missing'
-      ? 'No playback refresh signing secret is configured. Production startup will fail.'
-      : null
+const PLAYBACK_REFRESH_HEALTH_MESSAGES: SecretHealthMessages = {
+  derived_fallback: 'Playback refresh key is using a derived fallback. Set TRUSTED_HOME_PLAYBACK_REFRESH_SECRET for isolation.',
+  dev_random: 'Playback refresh key is randomly generated each restart (development mode). Tokens do not survive server restarts.',
+  missing: 'No playback refresh signing secret is configured. Production startup will fail.',
+}
+
+const VIEWER_IDENTITY_HEALTH_MESSAGES: SecretHealthMessages = {
+  derived_fallback: 'Per-user identity key is using a derived fallback. Set TRUSTED_HOME_VIEWER_IDENTITY_SECRET for isolation.',
+  dev_random: 'Per-user identity key is a deterministic development key. Set TRUSTED_HOME_VIEWER_IDENTITY_SECRET or MEDIA_TOKEN_SECRET so per-user resume stays stable across restarts.',
+  missing: 'No per-user identity signing secret is configured. Production startup will fail if per-user identity is enabled.',
+}
+
+// Pure selector: maps a secret-health state to its operator-facing message, or
+// null when the key is healthy / state is unknown. Exported for unit testing.
+export function pickSecretHealthMessage(
+  state: RefreshSecretHealthEntry['state'] | undefined,
+  messages: SecretHealthMessages
+): string | null {
+  switch (state) {
+    case 'derived_fallback':
+      return messages.derived_fallback
+    case 'dev_random':
+      return messages.dev_random
+    case 'missing':
+      return messages.missing
+    default:
+      // explicit_secret (healthy) or unknown → no warning
+      return null
+  }
+}
+
+export const SECRET_HEALTH_MESSAGES = {
+  playbackRefresh: PLAYBACK_REFRESH_HEALTH_MESSAGES,
+  viewerIdentity: VIEWER_IDENTITY_HEALTH_MESSAGES,
+}
+
+function SecretsHealthWarning({
+  health,
+  messages = PLAYBACK_REFRESH_HEALTH_MESSAGES,
+}: {
+  health: RefreshSecretHealthEntry | undefined
+  messages?: SecretHealthMessages
+}) {
+  if (!health) return null
+
+  const message = pickSecretHealthMessage(health.state, messages)
 
   if (!message) return null
 
@@ -2610,6 +2652,10 @@ export function Nodes() {
               <>
                 <SyncDiagnosticsPanel diagnostics={diagnostics} />
                 <SecretsHealthWarning health={diagnostics.secretsHealth?.playbackRefreshToken} />
+                <SecretsHealthWarning
+                  health={diagnostics.secretsHealth?.viewerIdentitySecret}
+                  messages={VIEWER_IDENTITY_HEALTH_MESSAGES}
+                />
                 {diagnostics.playbackDiagnostics && (
                   <PlaybackHealthPanel playbackDiagnostics={diagnostics.playbackDiagnostics} />
                 )}

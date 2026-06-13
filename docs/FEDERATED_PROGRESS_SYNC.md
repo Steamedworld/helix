@@ -21,7 +21,14 @@ The following are **never** included in a progress push:
 - Stack traces or raw error messages
 - Any credential-like value
 
-Viewer identity on the source home is derived as a one-way hash of the caller's node ID. Multiple users on the viewer home map to a single per-node viewer identity at the source. This is a deliberate v1 simplification.
+## Viewer identity modes
+
+There are two identity modes for stored progress at the source home:
+
+- **Node aggregate (default):** Viewer identity is a one-way hash of the caller's node ID. All users on the viewer home map to a single per-node identity at the source. This is the default and requires no extra configuration.
+- **Per-user identity (opt-in, both sides):** Each user on the viewer home is represented by a stable, opaque HMAC hash so that two people sharing a viewer home get separate remote resume points. See `docs/TRUSTED_HOME.md` → "Per-user viewer identity" for the full model, transport, and downgrade rules. The hash is derived server-side from `HMAC(secret, localNodeId + userId)` and is never reversible by the source — it carries no user ID, username, email, or profile name.
+
+Per-user identity is **off by default**, admin-only, and used only when **both** homes have enabled `allow_progress_user_identity` for the connection. One-sided opt-in safely downgrades to node-aggregate mode.
 
 ## Bilateral opt-in model
 
@@ -68,7 +75,8 @@ The reconciliation result is a **suggestion only**. Applying it requires the use
 
 ## Known limitations
 
-- v1 uses a per-node aggregate — if multiple users on the viewer home watch the same item, only the most recent record is returned.
-- There is no automatic merge, real-time sync, or durable retry for failed pushes.
-- Push is fire-and-forget — if the source home is unreachable, the push is dropped (not retried).
-- Per-user identity across homes is not supported in v1.
+- In node-aggregate mode, if multiple users on the viewer home watch the same item, only the most recent record is returned. Per-user identity (opt-in) addresses this.
+- There is no automatic merge between node-mode and per-user rows, no real-time sync, and no cross-node fanout.
+- Reconciliation is a suggestion only — progress is never overwritten automatically (automatic progress merge is a deferred phase).
+- Pushes are durably queued in the progress outbox with bounded retry; after the attempt budget is exhausted a job is abandoned (a safe audit event is recorded, never the payload).
+- Rotating the viewer identity secret resets per-user continuity and leaves prior per-user rows on the source as orphan opaque hashes (they age out via audit/normal retention; they are never reversible).
