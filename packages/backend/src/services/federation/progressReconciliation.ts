@@ -134,3 +134,124 @@ export function deriveRemoteProgressSuggestion(
   // 11. Otherwise: keep local
   return { suggestion: 'keep_local', reason: 'local_wins' }
 }
+
+// ─── Best-resume merge (Automatic Progress Merge v1) ──────────────────────────
+//
+// Selects a single "best resume" candidate across local progress, per-user
+// remote progress, and node-aggregate remote progress. This is automatic
+// *candidate selection* only — it never mutates any progress. Applying the
+// result is always user-initiated.
+//
+// Security: pure function. Output contains only safe scalars (position,
+// duration, watched, updatedAt) and enum labels — never a viewer hash, user
+// ID, username, email, token, path, URL, raw error, or debug internal.
+
+export type ResumeSource = 'local' | 'remote_user' | 'remote_node' | 'none'
+export type ResumeAction = 'use_local' | 'suggest_remote' | 'no_progress'
+export type ResumeConfidence = 'high' | 'medium' | 'low'
+export type ResumeReasonCode = ReconciliationResult['reason'] | 'no_progress'
+
+export interface BestResumeResult {
+  source: ResumeSource
+  action: ResumeAction
+  positionSeconds: number | null
+  durationSeconds: number | null
+  watched: boolean
+  updatedAt: string | null
+  reasonCode: ResumeReasonCode
+  confidence: ResumeConfidence
+}
+
+/**
+ * Derive the single best resume candidate.
+ *
+ * Precedence:
+ *   1. A valid, meaningfully-ahead per-user remote → suggest remote_user (high).
+ *   2. Node aggregate, ONLY when no meaningful per-user candidate exists and the
+ *      aggregate is clearly ahead → suggest remote_node (medium). A present and
+ *      valid per-user candidate always blocks the node-aggregate fallback — a
+ *      per-user scope must never be silently replaced by a household aggregate.
+ *   3. Local progress present → use_local (high).
+ *   4. Nothing usable → no_progress (low).
+ *
+ * All threshold logic (overrun, watched %, duration mismatch, staleness, tiny
+ * differences, meaningfully-ahead) is delegated to deriveRemoteProgressSuggestion
+ * so the conservative rules stay in one place.
+ */
+export function deriveBestResume(
+  local: ProgressSnapshot | null,
+  remoteUser: RemoteInput,
+  remoteNode: RemoteInput
+): BestResumeResult {
+  const userEval = deriveRemoteProgressSuggestion(local, remoteUser)
+  const nodeEval = deriveRemoteProgressSuggestion(local, remoteNode)
+
+  // A per-user candidate is "meaningful" if it is present and its data is valid
+  // (not rejected as malformed/missing). Only a non-meaningful (absent or
+  // malformed) per-user candidate permits a node-aggregate fallback.
+  const userDataInvalid =
+    userEval.reason === 'no_remote' ||
+    userEval.reason === 'missing_data' ||
+    userEval.reason === 'invalid_overrun' ||
+    userEval.reason === 'invalid_threshold'
+  const userMeaningful = isProgressSnapshot(remoteUser) && !userDataInvalid
+
+  // 1. Valid, meaningfully-ahead per-user remote.
+  if (userEval.suggestion === 'use_remote' && isProgressSnapshot(remoteUser)) {
+    return {
+      source: 'remote_user',
+      action: 'suggest_remote',
+      positionSeconds: remoteUser.positionSeconds,
+      durationSeconds: remoteUser.durationSeconds,
+      watched: remoteUser.watched,
+      updatedAt: remoteUser.updatedAt,
+      reasonCode: userEval.reason,
+      confidence: 'high',
+    }
+  }
+
+  // 2. Node aggregate — only when no meaningful per-user candidate exists.
+  if (!userMeaningful && nodeEval.suggestion === 'use_remote' && isProgressSnapshot(remoteNode)) {
+    return {
+      source: 'remote_node',
+      action: 'suggest_remote',
+      positionSeconds: remoteNode.positionSeconds,
+      durationSeconds: remoteNode.durationSeconds,
+      watched: remoteNode.watched,
+      updatedAt: remoteNode.updatedAt,
+      reasonCode: nodeEval.reason,
+      confidence: 'medium',
+    }
+  }
+
+  // 3. Keep local.
+  if (local !== null) {
+    const reason: ResumeReasonCode = isProgressSnapshot(remoteUser)
+      ? userEval.reason
+      : isProgressSnapshot(remoteNode)
+        ? nodeEval.reason
+        : 'no_remote'
+    return {
+      source: 'local',
+      action: 'use_local',
+      positionSeconds: local.positionSeconds,
+      durationSeconds: local.durationSeconds,
+      watched: local.watched,
+      updatedAt: local.updatedAt,
+      reasonCode: reason,
+      confidence: 'high',
+    }
+  }
+
+  // 4. Nothing usable.
+  return {
+    source: 'none',
+    action: 'no_progress',
+    positionSeconds: null,
+    durationSeconds: null,
+    watched: false,
+    updatedAt: null,
+    reasonCode: 'no_progress',
+    confidence: 'low',
+  }
+}

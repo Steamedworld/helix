@@ -11,7 +11,8 @@ import { searchMetadata, matchMetadata, refreshMetadata } from '../api/metadata'
 import { getNextEpisode } from '../api/tv'
 import { usePlaybackRefresh } from '../hooks/usePlaybackRefresh'
 import { getRemoteProgress } from '../api/nodes'
-import { deriveRemoteProgressSuggestion } from '../services/progressReconciliation'
+import { deriveBestResume, resumeRecommendationCopy } from '../services/progressReconciliation'
+import type { ProgressSnapshot } from '../services/progressReconciliation'
 import { progressPushStatusLabel } from '../services/progressPushStatusLabel'
 import type { MediaItemDetail } from '../api/media'
 import type { PlaybackSource, PlaybackCode, LocalPlaybackSource, RemoteDirectPlaybackSource } from '../api/playback'
@@ -1311,6 +1312,62 @@ export function MediaDetail() {
       {/* Watch state */}
       <section style={{ marginBottom: 28 }}>
         <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12, color: 'var(--ink-1)' }}>Watch Progress</h2>
+        {/* Resume recommendation — best-of(local, remote_user, remote_node).
+            Shown whenever a remote resume is suggested, regardless of whether
+            local progress exists. Never auto-applied: the user clicks to resume,
+            which goes through the normal progress-write flow. */}
+        {(() => {
+          const localSnapshot: ProgressSnapshot | null = watchState ? {
+            positionSeconds: watchState.position_seconds,
+            durationSeconds: watchState.duration_seconds ?? null,
+            watched: watchState.completed,
+            updatedAt: watchState.updated_at ?? null,
+          } : null
+          // The API returns a single, already-scoped remote snapshot. Route it to
+          // the per-user slot when scope==='user', otherwise treat it as node
+          // aggregate. Per-user reads never carry node-aggregate data (security).
+          const remoteSnap: ProgressSnapshot | null =
+            remoteProgress?.available && typeof remoteProgress.positionSeconds === 'number'
+              ? {
+                  positionSeconds: remoteProgress.positionSeconds,
+                  durationSeconds: remoteProgress.durationSeconds ?? null,
+                  watched: remoteProgress.watched ?? false,
+                  updatedAt: remoteProgress.updatedAt ?? null,
+                }
+              : null
+          const remoteUserInput = remoteSnap && remoteProgress?.scope === 'user' ? remoteSnap : null
+          const remoteNodeInput = remoteSnap && remoteProgress?.scope !== 'user' ? remoteSnap : null
+          const best = deriveBestResume(localSnapshot, remoteUserInput, remoteNodeInput)
+          if (best.action !== 'suggest_remote') return null
+          const copy = resumeRecommendationCopy(best)
+          return (
+            <div
+              style={{
+                padding: '8px 12px',
+                marginBottom: 8,
+                background: 'rgba(100,120,200,0.08)',
+                border: '1px solid rgba(100,120,200,0.25)',
+                borderRadius: 'var(--r-2)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 6,
+              }}
+            >
+              <p style={{ fontSize: 12, color: 'var(--ink-2)', fontWeight: 500 }}>
+                {copy.headline}{copy.sublabel ? ` — ${copy.sublabel}` : ''}
+              </p>
+              {copy.cta && (
+                <button
+                  onClick={handleUseRemotePosition}
+                  className="btn btn-sm btn-primary"
+                  style={{ alignSelf: 'flex-start', fontSize: 12 }}
+                >
+                  {copy.cta}
+                </button>
+              )}
+            </div>
+          )
+        })()}
         {watchState ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {progress !== null && (
@@ -1323,64 +1380,11 @@ export function MediaDetail() {
                 ? 'Watched'
                 : `${Math.round(watchState.position_seconds)}s watched`}
             </p>
-            {/* Federated progress sync status — quiet, non-obtrusive */}
+            {/* Federated progress push status — quiet, non-obtrusive */}
             {(() => {
-              // Derive remote progress suggestion for display
-              const localSnapshot = watchState ? {
-                positionSeconds: watchState.position_seconds,
-                durationSeconds: watchState.duration_seconds ?? null,
-                watched: watchState.completed,
-                updatedAt: watchState.updated_at ?? null,
-              } : null
-              // Build a typed RemoteInput from the response — available:true gives a ProgressSnapshot,
-              // available:false (or null) gives the no-remote sentinel.
-              const remoteInput: import('../services/progressReconciliation').ProgressSnapshot | { available: false } | null =
-                remoteProgress?.available && typeof remoteProgress.positionSeconds === 'number'
-                  ? {
-                      positionSeconds: remoteProgress.positionSeconds,
-                      durationSeconds: remoteProgress.durationSeconds ?? null,
-                      watched: remoteProgress.watched ?? false,
-                      updatedAt: remoteProgress.updatedAt ?? null,
-                    }
-                  : remoteProgress
-                    ? { available: false as const }
-                    : null
-              const suggestion = deriveRemoteProgressSuggestion(localSnapshot, remoteInput)
-
-              if (suggestion.suggestion === 'use_remote' && remoteProgress?.available && typeof remoteProgress.positionSeconds === 'number') {
-                return (
-                  <div
-                    style={{
-                      padding: '8px 12px',
-                      background: 'rgba(100,120,200,0.08)',
-                      border: '1px solid rgba(100,120,200,0.25)',
-                      borderRadius: 'var(--r-2)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 6,
-                    }}
-                  >
-                    <p style={{ fontSize: 12, color: 'var(--ink-2)', fontWeight: 500 }}>
-                      {remoteProgress.scope === 'user' ? 'Remote progress available for this profile' : 'Remote progress available'} — Resume from {Math.floor(remoteProgress.positionSeconds / 60)}m {Math.round(remoteProgress.positionSeconds % 60)}s
-                    </p>
-                    <button
-                      onClick={handleUseRemotePosition}
-                      className="btn btn-sm btn-primary"
-                      style={{ alignSelf: 'flex-start', fontSize: 12 }}
-                    >
-                      Use remote position
-                    </button>
-                    <p style={{ fontSize: 11, color: 'var(--ink-4)' }}>{remoteProgress.scope === 'user' ? 'Remote progress available for this profile' : 'Remote progress available'}</p>
-                  </div>
-                )
-              }
-
-              // Standard sync status display
-              {
-                const label = progressPushStatusLabel(watchState.progress_push_status)
-                if (label !== null) {
-                  return <p style={{ fontSize: 11, color: 'var(--ink-4)' }}>{label}</p>
-                }
+              const label = progressPushStatusLabel(watchState.progress_push_status)
+              if (label !== null) {
+                return <p style={{ fontSize: 11, color: 'var(--ink-4)' }}>{label}</p>
               }
               return null
             })()}
