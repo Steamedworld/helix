@@ -348,7 +348,6 @@ function DirectPlayer({
     if (isRemoteDirectSource(source) && source.proxyStreamUrl && onProxyError) {
       onProxyError()
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source, onProxyError])
 
   return (

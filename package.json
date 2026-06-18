@@ -9,10 +9,14 @@
     "start": "pnpm --filter @helix/backend start",
     "test": "pnpm --filter @helix/backend test && pnpm --filter @helix/frontend test",
     "typecheck": "pnpm --filter @helix/shared typecheck && pnpm --filter @helix/backend typecheck && pnpm --filter @helix/frontend typecheck",
-    "lint": "eslint packages/*/src --ext .ts,.tsx"
+    "lint": "eslint \"packages/*/src/**/*.{ts,tsx}\""
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "@eslint/js": "^9.39.4",
+    "@typescript-eslint/parser": "^8.61.1",
+    "concurrently": "^8.2.2",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react-hooks": "^5.2.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

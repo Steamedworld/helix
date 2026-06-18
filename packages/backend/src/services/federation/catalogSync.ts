@@ -494,16 +494,12 @@ export async function syncRemoteNode(
   if (attemptIncremental) {
     // Try incremental first
     let incRes: Response | null = null
-    try {
-      const url = `${baseUrl}/api/v1/federation/catalog?since=${encodeURIComponent(sinceIso!)}`
-      incRes = await fetch(url, {
-        headers: { Authorization: `Bearer ${rawToken}` },
-        signal: AbortSignal.timeout(30000),
-      })
-    } catch (e) {
-      // Network-level failure — propagate
-      throw e
-    }
+    // Network-level failures propagate to the caller (no local handling here).
+    const url = `${baseUrl}/api/v1/federation/catalog?since=${encodeURIComponent(sinceIso!)}`
+    incRes = await fetch(url, {
+      headers: { Authorization: `Bearer ${rawToken}` },
+      signal: AbortSignal.timeout(30000),
+    })
 
     if (incRes.status === 400) {
       // Remote does not support ?since — fall back to full sync
