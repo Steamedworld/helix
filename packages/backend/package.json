@@ -10,6 +10,7 @@
     "start": "node dist/backend/src/index.js",
     "test": "vitest run",
     "smoke:trusted-home": "tsx scripts/trusted-home-smoke.ts",
+    "release-check:trusted-home": "tsx scripts/trusted-home-release-check.ts",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate"

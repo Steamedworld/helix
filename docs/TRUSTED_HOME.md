@@ -47,6 +47,23 @@ Key properties:
 
 Enable it per connection under `Trusted Homes → <home> → Progress sync → Use per-user progress identity` (visible once progress push is enabled and the peer advertises support).
 
+## Release candidate gate
+
+Before shipping a Trusted Home release, run the consolidated readiness gate:
+
+```bash
+pnpm --filter @helix/backend release-check:trusted-home          # full gates
+pnpm --filter @helix/backend release-check:trusted-home --quick  # in-process only (smoke + docs scan)
+```
+
+It prints the operator release checklist and runs safe gates, exiting non-zero if any fails:
+
+- **smoke_harness** — the in-process federation smoke harness (above).
+- **docs_no_leak_scan** — static scan of `docs/*.md` for accidental secrets, bearer tokens, credentialed URLs, hash-like hex runs, or absolute user paths.
+- **typecheck / lint / build / backend_tests / frontend_tests** — the workspace gates (full mode only).
+
+Gate output is a safe per-gate pass/fail summary only — it never echoes raw child output, secrets, tokens, viewer hashes, URLs, or paths. The recommended release process: take a pre-upgrade backup, run the full gate, review admin diagnostics, then deploy. For the next step after a green gate, rehearse on two real Homes (see the manual checklist below).
+
 ## Automated smoke harness
 
 For a fast, deterministic, local-first sanity check of the federation stack (no real network, no secrets, no second machine required):
