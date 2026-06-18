@@ -11,7 +11,7 @@ import { syncInProgress } from '../services/federation/trustedHomeSyncScheduler'
 import { classifySyncError } from '../services/federation/syncErrorClassifier'
 import { canViewLibrary, canPlayLibrary } from '../lib/permissions'
 import { fetchRemoteCapabilities, type NodeCapabilities } from '../services/federation/capabilities'
-import { isLoopbackUrl, isPrivateUrl, config, resolvePlaybackRefreshSecret, resolveViewerIdentitySecret } from '../config'
+import { isLoopbackUrl, isPrivateUrl, config, resolvePlaybackRefreshSecret, resolveViewerIdentitySecret, resolveViewerIdentityPreviousSecret } from '../config'
 import { deriveViewerIdentityHash } from '../services/federation/viewerIdentity'
 import {
   signPlaybackRefreshToken,
@@ -1317,95 +1317,124 @@ export async function nodeRoutes(
       // 6. Build upstream URL from stored node.base_url ONLY (SSRF prevention)
       const upstreamUrl = `${node.base_url}/api/v1/federation/media/${mediaId}/remote-progress`
 
-      // 7. Make upstream request — forward per-user viewer identity headers when enabled.
-      // Hash is recomputed server-side from user.id + localNodeId + secret (symmetric with push).
-      // Headers travel server-to-server only — never returned to the browser.
-      const upstreamHeaders: Record<string, string> = {
-        Authorization: `Bearer ${rawToken}`,
-        'X-Caller-Node-Id': localNodeId,
-      }
-      // scope is a safe label ('user' | 'node') describing which read mode was used.
-      // It never carries the hash and is the only identity-related field returned.
-      let identityScope: 'user' | 'node' = 'node'
-      if (node.allow_progress_user_identity) {
+      // ── Read attempt helper — one server-to-server request for a given identity ──
+      // identityHash === null → node-aggregate read. Otherwise a user-mode read with
+      // the opaque hash carried in federation HEADERS only — never a URL query
+      // parameter, never logged, never audited, never returned to the browser.
+      type ReadOutcome =
+        | { kind: 'progress'; positionSeconds?: number; durationSeconds?: number; watched?: boolean; updatedAt?: string }
+        | { kind: 'unavailable' }        // definitive miss — no row for this identity
+        | { kind: 'source_unavailable' } // transient/remote/parse error
+        | { kind: 'auth_error' }         // 401/403
+
+      async function attemptRemoteProgressRead(identityHash: string | null): Promise<ReadOutcome> {
+        const headers: Record<string, string> = {
+          Authorization: `Bearer ${rawToken}`,
+          'X-Caller-Node-Id': localNodeId,
+        }
+        if (identityHash) {
+          headers['X-Viewer-Identity-Kind'] = 'user'
+          headers['X-Viewer-Identity-Version'] = 'v1'
+          headers['X-Viewer-Identity-Hash'] = identityHash
+        }
+
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), config.trustedHomeProxyRequestTimeoutMs)
+        let res: Response
         try {
-          const identityHash = deriveViewerIdentityHash(resolveViewerIdentitySecret(), localNodeId, user.id)
-          upstreamHeaders['X-Viewer-Identity-Kind'] = 'user'
-          upstreamHeaders['X-Viewer-Identity-Version'] = 'v1'
-          upstreamHeaders['X-Viewer-Identity-Hash'] = identityHash
-          identityScope = 'user'
+          res = await fetch(upstreamUrl, { method: 'GET', headers, signal: controller.signal })
         } catch {
-          // Secret unavailable — degrade to node-mode read rather than failing the request
+          return { kind: 'source_unavailable' }
+        } finally {
+          clearTimeout(timeoutId)
+        }
+
+        if (res.status === 401 || res.status === 403) return { kind: 'auth_error' }
+        if (res.status === 404) return { kind: 'unavailable' }
+        if (res.status >= 500 || !res.ok) return { kind: 'source_unavailable' }
+
+        let body: { ok: boolean; data?: { remoteProgress?: { available: boolean; positionSeconds?: number; durationSeconds?: number | null; watched?: boolean; updatedAt?: string } } }
+        try {
+          body = (await res.json()) as typeof body
+        } catch {
+          return { kind: 'source_unavailable' }
+        }
+        if (!body.ok || !body.data?.remoteProgress) return { kind: 'source_unavailable' }
+        const rp = body.data.remoteProgress
+        if (!rp.available) return { kind: 'unavailable' }
+        return {
+          kind: 'progress',
+          positionSeconds: typeof rp.positionSeconds === 'number' ? rp.positionSeconds : undefined,
+          durationSeconds: typeof rp.durationSeconds === 'number' ? rp.durationSeconds : undefined,
+          watched: typeof rp.watched === 'boolean' ? rp.watched : undefined,
+          updatedAt: typeof rp.updatedAt === 'string' ? rp.updatedAt : undefined,
         }
       }
 
-      const controller = new AbortController()
-      const timeoutId = setTimeout(
-        () => controller.abort(),
-        config.trustedHomeProxyRequestTimeoutMs
-      )
-
-      let upstreamRes: Response
-      try {
-        upstreamRes = await fetch(upstreamUrl, {
-          method: 'GET',
-          headers: upstreamHeaders,
-          signal: controller.signal,
-        })
-      } catch {
-        clearTimeout(timeoutId)
-        // Network/timeout failure — safe degradation, do not surface details
-        return ok({ available: false as const, error: 'source_unavailable' as const })
-      } finally {
-        clearTimeout(timeoutId)
+      // 7. Decide identity mode. scope is a safe label ('user' | 'node'); the hash is
+      //    derived server-side and never returned to the browser.
+      let identityScope: 'user' | 'node' = 'node'
+      let currentHash: string | null = null
+      if (node.allow_progress_user_identity) {
+        try {
+          currentHash = deriveViewerIdentityHash(resolveViewerIdentitySecret(), localNodeId, user.id)
+          identityScope = 'user'
+        } catch {
+          // Secret unavailable — degrade to node-mode read rather than failing.
+        }
       }
 
-      // 8. Map upstream status codes
-      if (upstreamRes.status === 401 || upstreamRes.status === 403) {
-        // Auth error — do NOT leak details
+      // identityKeyState is a safe continuity label only — never the hash or secret.
+      const toSafeProgress = (
+        o: Extract<ReadOutcome, { kind: 'progress' }>,
+        keyState?: 'current_secret_match' | 'previous_secret_match'
+      ) =>
+        ok({
+          available: true as const,
+          scope: identityScope,
+          ...(keyState ? { identityKeyState: keyState } : {}),
+          positionSeconds: o.positionSeconds,
+          durationSeconds: o.durationSeconds,
+          watched: o.watched,
+          updatedAt: o.updatedAt,
+        })
+
+      // 8. First attempt — current secret (or node mode).
+      const outcome = await attemptRemoteProgressRead(currentHash)
+      if (outcome.kind === 'auth_error') {
         reply.status(502)
         return err('Unable to access remote progress from this Home')
       }
-
-      if (upstreamRes.status === 404) {
-        // No remote progress — not an error
-        return ok({ available: false as const })
+      if (outcome.kind === 'progress') {
+        return toSafeProgress(outcome, identityScope === 'user' ? 'current_secret_match' : undefined)
       }
 
-      if (upstreamRes.status >= 500 || !upstreamRes.ok) {
-        // Remote error — safe degradation
+      // 9. Rotation continuity: in user mode, on a definitive miss, retry once with the
+      //    PREVIOUS secret if configured. Finds per-user rows written under the prior
+      //    key after a rotation. No bulk migration — the next progress push naturally
+      //    creates a current-secret row. The previous hash travels in headers only.
+      if (identityScope === 'user' && outcome.kind === 'unavailable') {
+        const prevSecret = resolveViewerIdentityPreviousSecret()
+        if (prevSecret) {
+          const prevHash = deriveViewerIdentityHash(prevSecret, localNodeId, user.id)
+          if (prevHash !== currentHash) {
+            const prevOutcome = await attemptRemoteProgressRead(prevHash)
+            if (prevOutcome.kind === 'auth_error') {
+              reply.status(502)
+              return err('Unable to access remote progress from this Home')
+            }
+            if (prevOutcome.kind === 'progress') {
+              return toSafeProgress(prevOutcome, 'previous_secret_match')
+            }
+          }
+        }
+      }
+
+      // 10. No usable progress — safe degradation. Never surface upstream details.
+      if (outcome.kind === 'source_unavailable') {
         return ok({ available: false as const, error: 'source_unavailable' as const })
       }
-
-      // 9. Parse upstream response — safely, never include raw error
-      let upstreamBody: { ok: boolean; data?: { mediaId?: string; remoteProgress?: { available: boolean; positionSeconds?: number; durationSeconds?: number | null; watched?: boolean; updatedAt?: string } } }
-      try {
-        upstreamBody = await upstreamRes.json() as typeof upstreamBody
-      } catch {
-        return ok({ available: false as const, error: 'source_unavailable' as const })
-      }
-
-      if (!upstreamBody.ok || !upstreamBody.data?.remoteProgress) {
-        return ok({ available: false as const, error: 'source_unavailable' as const })
-      }
-
-      const rp = upstreamBody.data.remoteProgress
-
-      if (!rp.available) {
-        return ok({ available: false as const })
-      }
-
-      // 10. Return safe progress fields only — NEVER federation token, Authorization,
-      //     base_url, upstream body on error, stack trace, or filesystem path.
-      //     scope is a mode label only — the viewer identity hash is never returned.
-      return ok({
-        available: true as const,
-        scope: identityScope,
-        positionSeconds: typeof rp.positionSeconds === 'number' ? rp.positionSeconds : undefined,
-        durationSeconds: typeof rp.durationSeconds === 'number' ? rp.durationSeconds : undefined,
-        watched: typeof rp.watched === 'boolean' ? rp.watched : undefined,
-        updatedAt: typeof rp.updatedAt === 'string' ? rp.updatedAt : undefined,
-      })
+      return ok({ available: false as const })
     }
   )
 

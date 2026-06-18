@@ -18,6 +18,7 @@ Set these before first run. Helix will refuse to start in production if a requir
 | `MEDIA_TOKEN_SECRET` | **Required for production** | HMAC-SHA256 key for signing media stream tokens. Also the derivation base for the two keys below when their dedicated vars are unset. Generate: `openssl rand -hex 32` |
 | `TRUSTED_HOME_PLAYBACK_REFRESH_SECRET` | **Recommended explicit secret** (required for production unless `MEDIA_TOKEN_SECRET` is set) | HMAC-SHA256 key for signing playback refresh tokens. Falls back to a domain-separated key derived from `MEDIA_TOKEN_SECRET`. |
 | `TRUSTED_HOME_VIEWER_IDENTITY_SECRET` | **Recommended explicit secret** (required for production *only if* per-user identity is enabled) | HMAC-SHA256 key for deriving opaque per-user viewer identity hashes. Falls back to a domain-separated key derived from `MEDIA_TOKEN_SECRET`. |
+| `TRUSTED_HOME_VIEWER_IDENTITY_PREVIOUS_SECRET` | **Optional** (rotation only) | The prior viewer identity secret, set temporarily during a key rotation so user-mode reads can still find per-user rows written under the old key. Explicit-only (no `MEDIA_TOKEN_SECRET` derivation). Remove after the rotation window. |
 
 ### Secret health classification
 
@@ -39,8 +40,20 @@ Rotating a signing secret is a deliberate operational event. Effects:
 | Secret rotated | Effect |
 |---|---|
 | `TRUSTED_HOME_PLAYBACK_REFRESH_SECRET` | All outstanding playback refresh URLs (`?rt=`) become invalid immediately. Active players transparently request a fresh token on next refresh; worst case is a single retry. Low blast radius (TTL is ~3 min). |
-| `TRUSTED_HOME_VIEWER_IDENTITY_SECRET` | Per-user continuity resets: previously derived per-user hashes no longer match, so per-user resume points appear to disappear. Prior per-user rows remain on the **source** home as orphan opaque hashes (never reversible) and age out via normal/audit retention. Node-aggregate progress is unaffected. |
+| `TRUSTED_HOME_VIEWER_IDENTITY_SECRET` | Per-user continuity resets: previously derived per-user hashes no longer match, so per-user resume points appear to disappear. Prior per-user rows remain on the **source** home as orphan opaque hashes (never reversible) and age out via normal/audit retention. Node-aggregate progress is unaffected. Use the rotation procedure below (with `TRUSTED_HOME_VIEWER_IDENTITY_PREVIOUS_SECRET`) to avoid losing continuity immediately. |
 | `MEDIA_TOKEN_SECRET` | Highest blast radius. Invalidates signed media stream tokens **and** any key derived from it — i.e. if either dedicated secret above is unset, rotating `MEDIA_TOKEN_SECRET` also rotates those derived keys, compounding the two effects above. Prefer setting all three explicitly so each can rotate independently. |
+
+### Viewer identity secret rotation procedure
+
+Rotating `TRUSTED_HOME_VIEWER_IDENTITY_SECRET` without `TRUSTED_HOME_VIEWER_IDENTITY_PREVIOUS_SECRET` immediately orphans all per-user rows on source homes. To rotate with continuity:
+
+1. Set the **old** secret as `TRUSTED_HOME_VIEWER_IDENTITY_PREVIOUS_SECRET`.
+2. Set the **new** secret as `TRUSTED_HOME_VIEWER_IDENTITY_SECRET`.
+3. Deploy. Pushes immediately use the new (current) secret. User-mode reads try the current key first, then fall back to the previous key on a miss — so existing resume points keep working.
+4. Let users naturally resume and watch. Each new progress write creates/updates a row under the current secret. There is **no** bulk migration.
+5. After a defined rotation window (long enough for active users to have written fresh progress), remove `TRUSTED_HOME_VIEWER_IDENTITY_PREVIOUS_SECRET`.
+
+Old opaque rows written under the previous key are never reversible and simply age out via progress retention (see Phase 2 retention). Admin diagnostics show `secretsHealth.viewerIdentitySecret.previousSecretConfigured: true` and a "remove after the rotation window" recommendation while a previous secret is configured.
 
 ## Optional tuning
 

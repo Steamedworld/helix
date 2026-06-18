@@ -354,6 +354,8 @@ export interface RefreshSecretHealthEntry {
   /** State label — never includes the secret value, hash, or env var contents */
   state: 'explicit_secret' | 'derived_fallback' | 'dev_random' | 'missing'
   recommendation?: string
+  /** Viewer identity only: whether a previous secret is configured for rotation continuity (label only). */
+  previousSecretConfigured?: boolean
 }
 
 export interface SecretsHealthResponse {
@@ -401,6 +403,9 @@ export interface RemoteProgressResponse {
   // Read mode used for this lookup: 'user' (per-user identity) or 'node' (aggregate).
   // Safe label only — the viewer identity hash is never sent to the browser.
   scope?: 'user' | 'node'
+  // Rotation continuity label only (never a hash/secret): which key matched the
+  // per-user row. 'previous_secret_match' indicates the row predates a secret rotation.
+  identityKeyState?: 'current_secret_match' | 'previous_secret_match'
   positionSeconds?: number
   durationSeconds?: number
   watched?: boolean

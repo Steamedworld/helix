@@ -6,7 +6,7 @@ import type { DrizzleDB } from '../db/client'
 import { makeRequireAdmin } from '../middleware/auth'
 import { computeSyncSafetyEstimate } from '../services/federation/catalogSync'
 import { deriveSyncHealth } from '../services/federation/syncHealthRollup'
-import { config, getPlaybackRefreshSecretHealth, getViewerIdentitySecretHealth } from '../config'
+import { config, getPlaybackRefreshSecretHealth, getViewerIdentitySecretHealth, isViewerIdentityPreviousSecretConfigured } from '../config'
 import { getAuditPruneState, pruneAuditEvents } from '../services/federation/trustedHomeAuditPruner'
 
 // Safe label for MEDIA_TOKEN_SECRET health
@@ -181,6 +181,9 @@ export async function adminRoutes(
         : null
 
     const viewerIdentitySecretState = getViewerIdentitySecretHealth()
+    const viewerIdentityPreviousSecretConfigured = isViewerIdentityPreviousSecretConfigured()
+    const rotationContinuityNote =
+      'Previous viewer identity secret is configured for rotation continuity. Remove after the rotation window.'
     const viewerIdentitySecretRecommendation: string | null =
       viewerIdentitySecretState === 'derived_fallback'
         ? 'Set TRUSTED_HOME_VIEWER_IDENTITY_SECRET for explicit key isolation.'
@@ -188,6 +191,8 @@ export async function adminRoutes(
         ? 'Deterministic dev key in use. Set TRUSTED_HOME_VIEWER_IDENTITY_SECRET or MEDIA_TOKEN_SECRET for stable per-user identity across restarts.'
         : viewerIdentitySecretState === 'missing'
         ? 'No viewer identity secret configured. Production startup will fail. Set TRUSTED_HOME_VIEWER_IDENTITY_SECRET.'
+        : viewerIdentityPreviousSecretConfigured
+        ? rotationContinuityNote
         : null
 
     const secretsHealth = {
@@ -204,6 +209,7 @@ export async function adminRoutes(
       },
       viewerIdentitySecret: {
         state: viewerIdentitySecretState,
+        previousSecretConfigured: viewerIdentityPreviousSecretConfigured,
         ...(viewerIdentitySecretRecommendation !== null ? { recommendation: viewerIdentitySecretRecommendation } : {}),
       },
     }

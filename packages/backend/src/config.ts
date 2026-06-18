@@ -185,6 +185,23 @@ export function resolveViewerIdentitySecret(): string {
 }
 
 /**
+ * Resolve the PREVIOUS viewer identity secret for rotation continuity, or null.
+ *
+ * Explicit-only: TRUSTED_HOME_VIEWER_IDENTITY_PREVIOUS_SECRET. There is no
+ * MEDIA_TOKEN_SECRET-derived previous key — the previous secret is purely an
+ * operator-supplied rotation aid that should be removed after the rotation
+ * window. NEVER logged, audited, exposed, or placed in a URL.
+ */
+export function resolveViewerIdentityPreviousSecret(): string | null {
+  return process.env.TRUSTED_HOME_VIEWER_IDENTITY_PREVIOUS_SECRET || null
+}
+
+/** Whether a previous viewer identity secret is configured (state label only — never the value). */
+export function isViewerIdentityPreviousSecretConfigured(): boolean {
+  return Boolean(process.env.TRUSTED_HOME_VIEWER_IDENTITY_PREVIOUS_SECRET)
+}
+
+/**
  * Resolution state of the viewer identity signing key. Mirrors RefreshSecretHealth.
  * NEVER returns the secret value, hash, or env var contents — only the state label.
  *   dev_random here means "development deterministic fallback" (non-production).

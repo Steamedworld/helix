@@ -30,6 +30,16 @@ There are two identity modes for stored progress at the source home:
 
 Per-user identity is **off by default**, admin-only, and used only when **both** homes have enabled `allow_progress_user_identity` for the connection. One-sided opt-in safely downgrades to node-aggregate mode.
 
+### Secret rotation continuity
+
+The viewer identity secret can be rotated without immediately losing per-user resume points. Set the old secret as `TRUSTED_HOME_VIEWER_IDENTITY_PREVIOUS_SECRET` and the new one as `TRUSTED_HOME_VIEWER_IDENTITY_SECRET`. Then:
+
+- **Pushes** always use the current secret only.
+- **User-mode reads** try the current key first; on a miss, if a previous secret is configured, the viewer home retries the read server-to-server with the previous-derived hash (carried in federation headers only — never a URL, never logged or audited).
+- When the previous key matches, the response carries a safe `identityKeyState: 'previous_secret_match'` label (never a hash).
+
+There is no bulk migration: the next progress write naturally creates a current-secret row, and the old opaque row ages out via retention. See `docs/PRODUCTION_CONFIG.md` for the full step-by-step rotation procedure.
+
 ## Bilateral opt-in model
 
 Progress sync requires explicit opt-in on both sides:
