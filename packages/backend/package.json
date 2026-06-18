@@ -9,6 +9,7 @@
     "build": "tsc && tsc-alias",
     "start": "node dist/backend/src/index.js",
     "test": "vitest run",
+    "smoke:trusted-home": "tsx scripts/trusted-home-smoke.ts",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate"

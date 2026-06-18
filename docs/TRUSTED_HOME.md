@@ -47,6 +47,18 @@ Key properties:
 
 Enable it per connection under `Trusted Homes → <home> → Progress sync → Use per-user progress identity` (visible once progress push is enabled and the peer advertises support).
 
+## Automated smoke harness
+
+For a fast, deterministic, local-first sanity check of the federation stack (no real network, no secrets, no second machine required):
+
+```bash
+pnpm --filter @helix/backend smoke:trusted-home
+```
+
+It boots one in-process Home against a temporary SQLite database, drives the real federation/source routes, and uses a stubbed source for the viewer-side proxy read. It prints a machine-readable JSON report plus a `✓/✗` line per check and exits non-zero if any check fails. Covered checks: readiness/health, federation token issuance, source-side progress write (node mode), per-user bilateral push + read, one-sided downgrade (push stored node-mode; user read returns `available:false` with no aggregate fallback), audit event creation, viewer-side proxy read + resume suggestion, diagnostics structure, and a no-leak scan over every federation/diagnostics/viewer response (federation token, viewer identity hash, secret, user ID, raw URL, and filesystem path must not appear). The same harness runs in CI via `tests/trustedHomeSmoke.test.ts`.
+
+The manual two-home checklist below remains the authoritative pre-production validation across two real Homes (it covers catalog visibility, real proxy playback, and signed refresh behavior that the single-process harness cannot fully exercise).
+
 ## Deployment smoke checklist (two homes)
 
 Run end-to-end after deploying or upgrading two connected homes (A = source with libraries, B = viewer). Each step should succeed before moving on.
