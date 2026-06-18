@@ -8,6 +8,7 @@ import { computeSyncSafetyEstimate } from '../services/federation/catalogSync'
 import { deriveSyncHealth } from '../services/federation/syncHealthRollup'
 import { config, getPlaybackRefreshSecretHealth, getViewerIdentitySecretHealth, isViewerIdentityPreviousSecretConfigured } from '../config'
 import { getAuditPruneState, pruneAuditEvents } from '../services/federation/trustedHomeAuditPruner'
+import { getProgressPruneState } from '../services/federation/trustedHomeProgressPruner'
 
 // Safe label for MEDIA_TOKEN_SECRET health
 function getMediaTokenSecretHealth(): 'explicit_secret' | 'not_configured' {
@@ -362,6 +363,20 @@ export async function adminRoutes(
       lastErrorCodeCounts,
     }
 
+    // ─── Progress data retention (aggregate-only — no payloads/hashes/IDs) ───────
+    const progressOutboxRetentionDays = config.progressOutboxRetentionDays
+    const remoteProgressRetentionDays = config.remoteProgressRetentionDays
+    const progressPruneState = getProgressPruneState()
+    const progressRetention = {
+      progressOutboxRetentionDays,
+      remoteProgressRetentionDays,
+      outboxPruneCutoff: new Date(now.getTime() - progressOutboxRetentionDays * 24 * 60 * 60 * 1000).toISOString(),
+      remoteProgressPruneCutoff: new Date(now.getTime() - remoteProgressRetentionDays * 24 * 60 * 60 * 1000).toISOString(),
+      lastProgressPruneAt: progressPruneState.lastProgressPruneAt,
+      lastProgressPruneDeletedCount: progressPruneState.lastProgressPruneDeletedCount,
+      lastProgressPruneStatus: progressPruneState.lastProgressPruneStatus,
+    }
+
     // ─── Audit event aggregate (last 24h) ────────────────────────────────────────
     // Aggregate counts only — NEVER include event IDs, node IDs in histograms,
     // media IDs, user IDs, tokens, raw error bodies, paths, or stack traces.
@@ -441,6 +456,7 @@ export async function adminRoutes(
       secretsHealth,
       playbackDiagnostics,
       progressOutbox,
+      progressRetention,
       auditSummary,
     })
   })

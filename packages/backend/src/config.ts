@@ -259,6 +259,22 @@ export const config = {
     return Math.min(3650, Math.max(1, Math.round(n)))
   })(),
 
+  // Progress outbox retention (terminal rows only: synced + abandoned).
+  // Valid range: 1–3650 days. Invalid/out-of-range values clamp to bounds. Default 30.
+  progressOutboxRetentionDays: (() => {
+    const raw = Number(process.env.TRUSTED_HOME_PROGRESS_OUTBOX_RETENTION_DAYS ?? 30)
+    const n = isFinite(raw) && !isNaN(raw) ? raw : 30
+    return Math.min(3650, Math.max(1, Math.round(n)))
+  })(),
+
+  // Remote watch progress retention (stale rows by updated_at).
+  // Valid range: 1–3650 days. Invalid/out-of-range values clamp to bounds. Default 365.
+  remoteProgressRetentionDays: (() => {
+    const raw = Number(process.env.TRUSTED_HOME_REMOTE_PROGRESS_RETENTION_DAYS ?? 365)
+    const n = isFinite(raw) && !isNaN(raw) ? raw : 365
+    return Math.min(3650, Math.max(1, Math.round(n)))
+  })(),
+
   // Public base URL — validated and normalized; null if not set
   baseUrl: configuredBaseUrl,
 

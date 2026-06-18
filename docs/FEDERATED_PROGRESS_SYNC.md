@@ -89,4 +89,8 @@ The reconciliation result is a **suggestion only**. Applying it requires the use
 - There is no automatic merge between node-mode and per-user rows, no real-time sync, and no cross-node fanout.
 - Reconciliation is a suggestion only — progress is never overwritten automatically (automatic progress merge is a deferred phase).
 - Pushes are durably queued in the progress outbox with bounded retry; after the attempt budget is exhausted a job is abandoned (a safe audit event is recorded, never the payload).
-- Rotating the viewer identity secret resets per-user continuity and leaves prior per-user rows on the source as orphan opaque hashes (they age out via audit/normal retention; they are never reversible).
+- Rotating the viewer identity secret resets per-user continuity and leaves prior per-user rows on the source as orphan opaque hashes (they age out via retention; they are never reversible).
+
+## Retention
+
+Progress tables are bounded by a daily background pruner. Terminal outbox rows (`synced`/`abandoned`) are pruned after `TRUSTED_HOME_PROGRESS_OUTBOX_RETENTION_DAYS` (default 30); pending/in-progress/retrying jobs are never pruned. Remote watch progress rows are pruned after `TRUSTED_HOME_REMOTE_PROGRESS_RETENTION_DAYS` (default 365), by `updated_at`. Pruning is time-based only — it never interprets viewer identity hashes or deletes by user. This is also what eventually clears orphan per-user rows left behind by a secret rotation.

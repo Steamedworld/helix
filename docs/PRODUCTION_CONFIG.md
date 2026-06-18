@@ -70,6 +70,8 @@ Old opaque rows written under the previous key are never reversible and simply a
 | `PROGRESS_OUTBOX_WORKER_INTERVAL_MS` | `30000` | Progress push outbox worker poll interval (ms) |
 | `PROGRESS_OUTBOX_MAX_ATTEMPTS` | `3` | Max delivery attempts before a progress push job is abandoned (clamped to ≥ 1) |
 | `TRUSTED_HOME_AUDIT_RETENTION_DAYS` | `90` | How long to retain Trusted Home audit events before pruning (clamped 1–3650; invalid values fall back to 90) |
+| `TRUSTED_HOME_PROGRESS_OUTBOX_RETENTION_DAYS` | `30` | How long to retain **terminal** progress outbox rows (synced/abandoned) before pruning (clamped 1–3650). Pending/in-progress/retrying jobs are never pruned. |
+| `TRUSTED_HOME_REMOTE_PROGRESS_RETENTION_DAYS` | `365` | How long to retain remote watch progress rows (by `updated_at`) before pruning (clamped 1–3650) |
 | `TOMBSTONE_RETENTION_DAYS` | `90` | How long to retain deletion records for incremental sync safety |
 | `PORT` | `3001` | HTTP port |
 | `HOST` | `0.0.0.0` | Bind address |
@@ -111,6 +113,7 @@ Alert on `syncStatus === "degraded"` for sync failures.
 - `secretsHealth` — state labels for all signing keys, including `playbackRefreshToken`, `mediaToken`, and `viewerIdentitySecret` (never exposes values)
 - `playbackDiagnostics` — proxy status, failure histogram (by code, no node IDs), token health, `homesWithPerUserProgressIdentityAllowed` count
 - `auditSummary` — last-24h audit event counts, retention days, prune cutoff, count past cutoff, and last prune status (aggregate only — no payloads, hashes, or IDs)
+- `progressRetention` — outbox/remote-progress retention days, prune cutoffs, and last progress-prune status/count (aggregate only — no payloads, hashes, media titles, or IDs)
 - `trustedHomeSync` — per-home sync status and next-sync estimate
 
 All diagnostic fields are aggregate or state-label only. They never contain raw URLs, tokens, viewer identity hashes, filesystem paths, request headers, raw upstream errors, stack traces, user IDs, usernames, or emails. `node_id` appears only as an opaque UUID reference.

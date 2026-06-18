@@ -76,6 +76,14 @@ Federation state lives in the SQLite database. The tables that matter operationa
 | `nodes` | Trusted node records + `federation_token_hash` (credential material) | **Critical** — losing it breaks every connection and requires re-inviting | No — back up |
 | `remote_watch_progress` | Progress stored at a source home (node-mode + per-user opaque hashes) | Valuable — losing it loses cross-home resume points | Tolerable loss (resume points only) |
 | `federated_progress_outbox` | Pending/in-flight progress pushes from this home | Transient — bounded-retry queue | Yes — safe to lose (see stale note) |
+
+### Progress data retention (automatic pruning)
+
+A background pruner (startup, then daily — same style as the audit/tombstone pruners) bounds long-term growth of the progress tables:
+
+- **Outbox:** only **terminal** rows are pruned — `synced` (delivered) and `abandoned` (gave up after max attempts) — older than `TRUSTED_HOME_PROGRESS_OUTBOX_RETENTION_DAYS` (default 30). `pending`, `in_progress`, and `failed` (retry-pending) jobs are **never** pruned, so no in-flight work is lost.
+- **Remote progress:** `remote_watch_progress` rows older than `TRUSTED_HOME_REMOTE_PROGRESS_RETENTION_DAYS` (default 365), by `updated_at`. Recent progress is preserved. Pruning is purely time-based — it never interprets viewer identity hashes and never deletes by user, profile, or username.
+- Pruning is best-effort and non-blocking; a failure is logged and retried on the next cycle. Aggregate state (cutoffs, last-prune time/count/status) is surfaced in `sync-diagnostics.progressRetention`.
 | `trusted_home_audit_events` | Privacy-safe audit trail | Operational record only | Yes — safe to lose |
 
 Guidance:
